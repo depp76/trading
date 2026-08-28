@@ -1,0 +1,40 @@
+# Secrets / environment
+.env
+
+# Virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Runtime logs
+app.log
+app_stdout.log
+app_stderr.log
+
+# Local state / cache (see CLAUDE.md "Local state / cache files") — runtime data,
+# not source. portfolio.db is the source of truth for trade history but is a
+# binary SQLite file that churns on every save; the auto-backup thread
+# (archive/auto_*) plus this git history are the safety nets for it instead.
+portfolio.db
+portfolio.db-wal
+portfolio.db-shm
+custom_settings.json
+universe_cache.json
+vkospi_cache.json
+trading_record.json
+
+# Legacy pre-SQLite state (still read once by trade_db._migrate_legacy_json)
+custom_history.json
+trade_overrides.json
+
+# Manual (archive/backup_*) and automatic (archive/auto_*) file-copy backups —
+# now redundant with git history; kept on disk locally but not tracked.
+archive/
+
+# Scratch space
+scratch/
+
+# Editor settings (uncomment if you don't want to share these across machines)
+# .vscode/

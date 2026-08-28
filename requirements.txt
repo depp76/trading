@@ -1,0 +1,12 @@
+pykrx
+pandas
+yfinance
+PyQt6
+finance-datareader
+yahooquery
+requests
+openpyxl
+mplcursors
+python-dotenv
+google-cloud-aiplatform
+google-genai
