@@ -1,4 +1,4 @@
-﻿# Portfolio Management — 발전 로드맵
+# Portfolio Management — 발전 로드맵
 
 > 기준일: 2026-08-28 (최초 작성 2026-08-21, 실제 코드 상태 재조사 후 갱신)  
 > 현재 상태: PyQt6 단일 사용자 데스크톱 앱 (한국/미국 주식 포트폴리오 추적)  
@@ -112,51 +112,91 @@
 
 ### 3-1. 아키텍처 — 파일 분리 (모듈화) — 미착수
 
-**현황 (2026-08-28 확인)**: `main.py`가 오히려 ~5,900 → ~6,250 줄로 더 커짐 (여전히 단일 파일).  
+**현황 (2026-08-28 재조사)**: `main.py` **6,490줄 / 285.9 KB / 22개 클래스** (단일 파일).  
 **문제**: 기능 탐색/수정이 어렵고, 충돌 없이 병렬 작업 불가
+
+#### 클래스별 규모 & 배치 계획
+
+| 클래스 | 라인 수 | 목표 파일 |
+|--------|------:|---------|
+| `TradingHistoryTab` | 1,780 | `ui/history_tab.py` |
+| `StockMaDialog` | 953 | `ui/dialogs.py` |
+| `MainWindow` | 834 | `main.py` (최소화 ~200줄) |
+| `TradingRecordTab` | 597 | `ui/assets_tab.py` |
+| `StockTable` | 565 | `ui/widgets.py` |
+| `StockTradeHistoryDialog` | 283 | `ui/dialogs.py` |
+| `PositionPriceFetchThread` | 213 | `threads/fetch_threads.py` |
+| `GroupedHeaderView` | 151 | `ui/widgets.py` |
+| `TradeEntryDialog` | 151 | `ui/dialogs.py` |
+| 나머지 13개 | ~226 | 각 해당 파일 |
 
 **목표 구조**:
 
 ```
 portfolio_mgmt/
-├── main.py              # 진입점 + MainWindow (최소화)
+├── main.py              # 진입점 + MainWindow (최소화, ~200줄)
 ├── ui/
-│   ├── universe_tab.py  # Trading Universe 탭
-│   ├── history_tab.py   # Trading History 탭
-│   ├── assets_tab.py    # Total Assets 탭
-│   ├── dialogs.py       # 입력/편집 다이얼로그
-│   └── widgets.py       # StockTable, GroupedHeaderView 등 공통 위젯
+│   ├── history_tab.py   # TradingHistoryTab (~1,800줄)
+│   ├── assets_tab.py    # TradingRecordTab (~600줄)
+│   ├── dialogs.py       # 7개 Dialog (~1,800줄)
+│   └── widgets.py       # StockTable, GroupedHeaderView 등 (~900줄)
 ├── threads/
-│   ├── fetch_threads.py # AllDataFetchThread, UniverseLightweightFetchThread 등
-│   └── realtime.py      # RealtimePriceThread, IndexMaThread 등
-├── data_fetcher.py      # (현행 유지, 점진적 분리)
+│   ├── fetch_threads.py # 7개 Thread (~500줄)
+│   └── realtime.py      # RealtimePriceThread 등 (~30줄)
+├── data_fetcher.py      # (현행 유지)
 └── trade_db.py          # (현행 유지)
 ```
 
-**진행 방식**: 
+#### 기대 효과 (2026-08-28 실측 분석)
+
+| 효과 | 현재 | 모듈화 후 |
+|------|------|---------|
+| 파일당 평균 크기 | 6,490줄 | ~800줄 (**-87%**) |
+| AI 컨텍스트 소비 | ~73,000 토큰 (main.py 전체) | ~9,000토큰 (관련 파일만) |
+| 병렬 작업 | 불가 (모두 main.py) | 파일별 독립 작업 가능 |
+| 테스트 가능 함수 | 제한적 (PyQt6 혼재) | +30~50개 추정 |
+
+**실측 결합도** (분리에 유리한 징후):
+- `TradingHistoryTab` → `MainWindow` 직접 참조: **0건** (시그널/슬롯만 사용)
+- `TradingHistoryTab` 내 `data_fetcher` 직접 호출: **0건** (스레드 경유)
+- 탭 내 `emit()` / `Signal` 사용: **3건** (이미 디커플링 설계)
+
+#### 단계별 구현 계획 (예상 기간: 8~10일)
+
+| Phase | 작업 | 기간 | 위험도 |
+|-------|------|------|-------|
+| 0 | 백업 + 디렉터리 구조 준비 | 0.5일 | 🟢 낮음 |
+| 1 | 스레드 8개 → `threads/` | 0.5~1일 | 🟢 낮음 |
+| 2 | 공통 위젯 → `ui/widgets.py` | 1일 | 🟡 중간 |
+| 3 | 다이얼로그 7개 → `ui/dialogs.py` | 1~1.5일 | 🟡 중간 |
+| 4 | 탭 분리 (`TradingRecordTab` → `TradingHistoryTab` 순) | 2~3일 | 🔴 높음 |
+| 5 | `MainWindow` 최소화 (~200줄) | 1~1.5일 | 🟡 중간 |
+
+**진행 원칙**:
 1. `archive/backup_<date>/` 백업 후 시작
-2. 클래스 단위로 하나씩 분리 → `py_compile` 확인 → GUI 구동 확인
+2. 클래스 1개 이동 → `py_compile` → `python -m pytest tests/ -v` → 앱 기동 확인
 3. 한 번에 전체 리팩터링 금지 (롤백 어려움)
+4. 순환 임포트 발생 시 `TYPE_CHECKING` 블록으로 해결
 
 ---
 
-### 3-2. 테스트 인프라 구축 — 미착수
+### 3-2. 테스트 인프라 구축 — ✅ 완료
 
-**현황 (2026-08-28 확인)**: `tests/` 디렉터리 없음. 여전히 `py_compile` + 수동
-smoke-test 스크립트로만 검증하는 방식 유지.  
-**방향**:
+**구현 내용 (2026-08-28)**: `tests/` 디렉터리 신설, `pytest` 설치 및 `requirements.txt`에 추가.
 
 ```
 tests/
-├── test_trade_db.py      # SQLite CRUD, 인덱스, 배치 upsert
-├── test_data_fetcher.py  # LRU 캐시, yf_quote_batch (mock 기반)
-├── test_backtest.py      # run_backtest_strategy 결과 일치 검증
-└── test_assets_calc.py   # 환율/KOSPI 캐시, 자산 계산 로직
+├── test_trade_db.py      # SQLite CRUD, 인덱스, 배치 upsert (TempDBMixin으로 실제 DB 격리)
+├── test_data_fetcher.py  # LRU 캐시 hit/miss/eviction, yf_quote_batch (mock 기반)
+├── test_backtest.py      # run_backtest_strategy 전략 신호, 엣지 케이스, 누적 수익률 정합성
+└── test_assets_calc.py   # 환율 캐시, safe_float, 날짜/양수 검증, 매수일>매도일 교차검증
 ```
 
-- `pytest` + `unittest.mock` 사용
-- GUI 테스트 제외 (headless 불가), 비즈니스 로직만
-- GitHub Actions 없이 로컬 `pytest` 실행으로도 충분
+- `pytest` + `unittest.mock` 사용, GUI(PyQt6) 테스트 제외
+- `TempDBMixin`이 `_DB_FILE` / `_CUSTOM_JSON` / `_OVERRIDES_JSON` 경로를 임시 파일로 교체해
+  레거시 마이그레이션이 실제 프로젝트 JSON을 읽지 못하도록 완전 격리
+- 로컬 실행: `python -m pytest tests/ -v`
+- **검증**: `76 passed in 3.66s` (100% pass rate)
 
 ---
 
@@ -300,7 +340,7 @@ KOSDAQ 조회 전체가 실패한 사례가 실제로 기록됨.
 | 2-4 | 자동 백업 | 높음 | 낮음 | — | ✅ 완료 |
 | 2-5 | 입력 유효성 검사 | 중 | 낮음 | — | ✅ 완료 |
 | 3-4B/C | AI 진단/자연어 필터 | 높음 | 중간 | — | ✅ 완료 |
-| 3-2 | 테스트 인프라 | 높음 | 중간 | ⭐⭐⭐ 높음 | 미착수 |
+| 3-2 | 테스트 인프라 | 높음 | 중간 | — | ✅ 완료 |
 | 3-4A | AI 종목 리포트 | 높음 | 중간 | ⭐⭐⭐ 높음 | 미착수 |
 | 3-1 | 모듈화 | 높음 | 높음 | ⭐⭐ 중간 | 미착수 |
 | 3-5 | 시세 fallback | 높음 | 중간 | ⭐⭐ 중간 | 부분 진행 |
@@ -320,3 +360,5 @@ KOSDAQ 조회 전체가 실패한 사례가 실제로 기록됨.
 | 2026-08-21 | 초안 작성 |
 | 2026-08-28 | 코드 재조사 후 진행 상황 갱신: 로깅 도입(2-1)·AI 진단·자연어 필터(3-4B/C) 완료 반영, 시세 fallback(3-5) 부분 진행 상태 반영(`fetch_kr_market_data` 장애 사례 기록), 우선순위 매트릭스에 상태 컬럼 추가 |
 | 2026-08-28 (2차) | 단기 개선 항목(2-1~2-5) 코드 구현 완료: 남은 무음 예외 로깅 교체, `_HIST_CACHE` hit/miss 모니터링, 상태바 진행 메시지, 자동 백업 스케줄러(`archive/auto_*`, 최근 7개 보관), 거래 입력 다이얼로그 실시간 검증(빨간 테두리+툴팁, 매수일>매도일 경고) 추가. 백업: `archive/backup_20260828_163743/` |
+| 2026-08-28 (3차) | 3-2 테스트 인프라 구축 완료: `tests/` 디렉터리 신설, `pytest` 설치 및 `requirements.txt` 추가, 4개 테스트 파일 작성 (76개 테스트 100% pass). `TempDBMixin`으로 실제 DB·JSON 완전 격리. |
+| 2026-08-28 (4차) | 3-1 모듈화 분석 반영: main.py 6,490줄/22개 클래스 실측, 클래스별 라인 수·배치 계획·결합도(TradingHistoryTab→MainWindow 직접 참조 0건) 조사. 기대 효과(파일 크기 -87%, AI 컨텍스트 -87%, 테스트 +30~50개) 및 5단계 구현 계획(예상 8~10일) 추가. |
