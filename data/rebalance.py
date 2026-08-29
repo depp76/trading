@@ -1,4 +1,5 @@
 """data/rebalance.py — Weekly factor scoring, portfolio rebalancing signals, and walk-forward backtesting."""
+import bisect
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
@@ -197,6 +198,43 @@ def _factor_snapshot_as_of(series, as_of_date):
     }
 
 
+_SNAPSHOT_COLUMNS = {
+    "close": "Close",
+    "ma20_momentum": "MA20_Div",
+    "ma50_momentum": "MA50_Div",
+    "high52w_proximity": "high52w_diff",
+    "ret_20d": "ret_20d",
+    "ret_60d": "ret_60d",
+}
+
+
+def _build_snapshot_lookup(series: pl.DataFrame) -> dict:
+    """Pre-extract one ticker's series as plain Python lists (Date ascending),
+    so the walk-forward simulation's inner date x ticker loop can find the
+    as-of row via bisect instead of re-filtering the whole Polars DataFrame
+    on every (date, ticker) pair — the dominant cost of run_rebalance_backtest
+    for a multi-year, multi-hundred-ticker universe."""
+    return {
+        "dates": series.get_column("Date").to_list(),
+        **{key: series.get_column(col).to_list() for key, col in _SNAPSHOT_COLUMNS.items()},
+    }
+
+
+def _factor_snapshot_at(lookup: dict, as_of_date):
+    """Equivalent to _factor_snapshot_as_of, but against a pre-built
+    _build_snapshot_lookup() lookup instead of a Polars DataFrame."""
+    dates = lookup["dates"]
+    idx = bisect.bisect_right(dates, as_of_date) - 1
+    if idx < 0:
+        return None
+
+    def _get(key):
+        v = lookup[key][idx]
+        return float(v) if v is not None else None
+
+    return {key: _get(key) for key in _SNAPSHOT_COLUMNS}
+
+
 def _run_walkforward_simulation(series_map: dict, rebalance_dates: list, top_n: int,
                                  band_multiplier: float, initial_capital: float) -> dict:
     """Pure portfolio simulation over precomputed historical factor series."""
@@ -210,11 +248,15 @@ def _run_walkforward_simulation(series_map: dict, rebalance_dates: list, top_n: 
     rebalance_log = []
     closed_trade_returns = []
 
+    # Extracted once per ticker (not once per rebalance date) — see
+    # _build_snapshot_lookup's docstring for why this matters.
+    lookup_map = {t: _build_snapshot_lookup(series) for t, series in series_map.items()}
+
     for d in rebalance_dates:
         raw_candidates = []
         prices_today = {}
-        for t, series in series_map.items():
-            snap = _factor_snapshot_as_of(series, d)
+        for t, lookup in lookup_map.items():
+            snap = _factor_snapshot_at(lookup, d)
             if snap is None:
                 continue
             if snap["close"] is not None:

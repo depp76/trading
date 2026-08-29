@@ -66,6 +66,14 @@ _YF_SESSION.headers.update({
 _YF_CRUMB = None
 _YF_CRUMB_LOCK = threading.Lock()
 
+# Shared session for all Naver Finance endpoints — reuses TCP/TLS connections
+# across the many per-ticker requests fired by the collectors in
+# data/collectors/naver.py (real-time price batches, PER lookups, listing
+# pages, investor-trend pages), instead of each call opening a fresh connection.
+_NAVER_SESSION = requests.Session()
+_NAVER_SESSION.mount("https://", HTTPAdapter(pool_maxsize=50))
+_NAVER_SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
+
 
 def _get_yf_crumb(force_refresh: bool = False):
     global _YF_CRUMB

@@ -3,7 +3,6 @@ import json
 import re
 import io
 import time
-import requests
 import ast
 from datetime import datetime, date as _date
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,7 +11,7 @@ import pandas as pd
 import polars as pl
 import logging
 
-from data.cache import _KR3Y_CACHE, _pdf_is_stale, safe_float
+from data.cache import _KR3Y_CACHE, _NAVER_SESSION, _pdf_is_stale, safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ def _fast_kr_history(ticker: str, start: str) -> pl.DataFrame:
         res = None
         for attempt in range(3):
             try:
-                res = requests.get(url, timeout=8)
+                res = _NAVER_SESSION.get(url, timeout=8)
                 res.raise_for_status()
                 break
             except Exception as e:
@@ -79,7 +78,7 @@ def fetch_naver_realtime_prices(tickers: list) -> dict:
         codes_str = ",".join(chunk)
         url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{codes_str}"
         try:
-            r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            r = _NAVER_SESSION.get(url, timeout=5)
             if r.status_code == 200:
                 data = r.json()
                 for item in data.get('datas', []):
@@ -104,7 +103,7 @@ def _fetch_naver_per_single(code: str) -> tuple:
     """
     try:
         url = f"https://m.stock.naver.com/api/stock/{code}/integration"
-        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+        r = _NAVER_SESSION.get(url, timeout=5)
         if r.status_code == 200:
             data = r.json()
             tper = None
@@ -159,7 +158,7 @@ def _fetch_naver_info(code: str) -> tuple:
     """Fallback: fetch market cap and real name from Naver Finance item page."""
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
-        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+        r = _NAVER_SESSION.get(url, timeout=5)
         name = ""
         n_match = re.search(r'<title>(.*?)[\s]*:', r.text)
         if n_match:
@@ -192,7 +191,7 @@ def _fetch_kr_listing_naver(market, top_n):
 
     def _fetch_page(pg):
         url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={pg}"
-        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+        r = _NAVER_SESSION.get(url, timeout=5)
         soup = BeautifulSoup(r.content, 'html.parser', from_encoding='euc-kr')
         rows = []
         for tr in soup.select('table.type_2 tbody tr'):
@@ -223,7 +222,7 @@ def _get_kr3y_df():
         url_base = 'https://finance.naver.com/marketindex/interestDailyQuote.naver?marketindexCd=IRR_GOVT03Y&page='
 
         def fetch_page(p):
-            res = requests.get(url_base + str(p), timeout=5)
+            res = _NAVER_SESSION.get(url_base + str(p), timeout=5)
             df = pd.read_html(io.StringIO(res.text))[0]
             return df.dropna(subset=[df.columns[1]])
 
@@ -247,9 +246,8 @@ def _get_kr3y_df():
 def _fetch_index_investor_trend(market: str, days: int = 60) -> list:
     """Fetch daily investor trend for KOSPI / KOSDAQ indices using Naver Mobile API."""
     url_price = f"https://m.stock.naver.com/api/index/{market}/price?pageSize={days}&page=1"
-    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        res = requests.get(url_price, headers=headers, timeout=5)
+        res = _NAVER_SESSION.get(url_price, timeout=5)
         res.raise_for_status()
         price_data = res.json()
     except Exception as e:
@@ -267,7 +265,7 @@ def _fetch_index_investor_trend(market: str, days: int = 60) -> list:
 
         url_trend = f"https://m.stock.naver.com/api/index/{market}/trend?bizdate={bizdate}"
         try:
-            r = requests.get(url_trend, headers=headers, timeout=5)
+            r = _NAVER_SESSION.get(url_trend, timeout=5)
             r.raise_for_status()
             t_data = r.json()
 
@@ -311,7 +309,7 @@ def _fetch_investor_trend_naver(ticker: str, days: int = 60) -> list:
     def _fetch_page(page):
         page_rows = []
         try:
-            res = requests.get(url_base + str(page), headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            res = _NAVER_SESSION.get(url_base + str(page), timeout=5)
             res.encoding = "euc-kr"
             soup = BeautifulSoup(res.text, "html.parser")
             tables = soup.select("table.type2")
@@ -365,7 +363,7 @@ def fetch_quarterly_financials(ticker: str, market: str):
         if market in ("KOSPI", "KOSDAQ"):
             t_str = ticker.zfill(6)
             url = f'https://m.stock.naver.com/api/stock/{t_str}/finance/quarter'
-            r = requests.get(url, timeout=5)
+            r = _NAVER_SESSION.get(url, timeout=5)
             if r.status_code != 200:
                 return []
             data = r.json()

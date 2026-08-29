@@ -2,7 +2,6 @@
 import functools
 import re
 import threading
-import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,6 +21,7 @@ from data.cache import (
     _HIST_CACHE_LOCK,
     _USD_KRW_CACHE,
     _YF_SESSION,
+    _NAVER_SESSION,
     _hist_df_is_stale,
     _log_hist_cache_stats,
     safe_float,
@@ -138,23 +138,33 @@ def _fetch_kr_listing_fdr_fallback(market, top_n):
 
 
 def get_historical_data(ticker: str, start: str) -> pl.DataFrame:
-    """Historical data with a smart cache that skips empty DataFrames."""
+    """Historical data with a smart cache that skips empty DataFrames.
+
+    _HIST_CACHE is a plain OrderedDict shared across every fetch thread
+    (up to 20 concurrent workers during a full-universe refresh), so all
+    reads/writes to it are serialized under _HIST_CACHE_LOCK. The network
+    fetch itself happens outside the lock so concurrent misses still run
+    in parallel — only the dict bookkeeping is made atomic.
+    """
     import data.cache as _dc
     import data_fetcher as _df_mod
 
     cache_key = (ticker, start)
-    cached = _dc._HIST_CACHE.get(cache_key)
     stale_check = getattr(_df_mod, "_hist_df_is_stale", _hist_df_is_stale)
-    if cached is not None:
-        _dc._HIST_CACHE.move_to_end(cache_key)
-        if not stale_check(cached):
-            hits = getattr(_df_mod, "_HIST_CACHE_HITS", _dc._HIST_CACHE_HITS) + 1
-            _dc._HIST_CACHE_HITS = hits
-            if hasattr(_df_mod, "_HIST_CACHE_HITS"):
-                _df_mod._HIST_CACHE_HITS = hits
-            log_stats_fn = getattr(_df_mod, "_log_hist_cache_stats", _log_hist_cache_stats)
-            log_stats_fn()
-            return cached
+
+    with _dc._HIST_CACHE_LOCK:
+        cached = _dc._HIST_CACHE.get(cache_key)
+        if cached is not None:
+            _dc._HIST_CACHE.move_to_end(cache_key)
+
+    if cached is not None and not stale_check(cached):
+        hits = getattr(_df_mod, "_HIST_CACHE_HITS", _dc._HIST_CACHE_HITS) + 1
+        _dc._HIST_CACHE_HITS = hits
+        if hasattr(_df_mod, "_HIST_CACHE_HITS"):
+            _df_mod._HIST_CACHE_HITS = hits
+        log_stats_fn = getattr(_df_mod, "_log_hist_cache_stats", _log_hist_cache_stats)
+        log_stats_fn()
+        return cached
 
     misses = getattr(_df_mod, "_HIST_CACHE_MISSES", _dc._HIST_CACHE_MISSES) + 1
     _dc._HIST_CACHE_MISSES = misses
@@ -167,13 +177,14 @@ def get_historical_data(ticker: str, start: str) -> pl.DataFrame:
     df = fetch_fn(ticker, start)
     if not df.is_empty():
         max_size = getattr(_df_mod, "_HIST_CACHE_MAX", _dc._HIST_CACHE_MAX)
-        if cache_key not in _dc._HIST_CACHE and len(_dc._HIST_CACHE) >= max_size:
-            try:
-                _dc._HIST_CACHE.popitem(last=False)
-            except Exception:
-                logger.debug("LRU cache eviction failed", exc_info=True)
-        _dc._HIST_CACHE[cache_key] = df
-        _dc._HIST_CACHE.move_to_end(cache_key)
+        with _dc._HIST_CACHE_LOCK:
+            if cache_key not in _dc._HIST_CACHE and len(_dc._HIST_CACHE) >= max_size:
+                try:
+                    _dc._HIST_CACHE.popitem(last=False)
+                except Exception:
+                    logger.debug("LRU cache eviction failed", exc_info=True)
+            _dc._HIST_CACHE[cache_key] = df
+            _dc._HIST_CACHE.move_to_end(cache_key)
         return df
     return cached if cached is not None else df
 
@@ -193,7 +204,7 @@ def _fetch_historical_uncached(ticker: str, start: str) -> pl.DataFrame:
                 for page in range(1, 40):
                     url = f"https://finance.naver.com/marketindex/interestDailyQuote.naver?marketindexCd=IRR_GOVT03Y&page={page}"
                     try:
-                        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+                        res = _NAVER_SESSION.get(url, timeout=5)
                         soup = BeautifulSoup(res.text, 'html.parser')
                         tr_list = soup.select('table.tbl_exchange.today tbody tr')
                         if not tr_list:

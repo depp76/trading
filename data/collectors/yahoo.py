@@ -13,6 +13,7 @@ import logging
 
 from data.cache import (
     _YF_SESSION,
+    _NAVER_SESSION,
     _get_yf_crumb,
     _START_DATE,
     safe_float,
@@ -172,9 +173,9 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
         num_pages = max(3, (total // 100) + 2)
 
         def _fetch_naver_mcap_page(p):
-            r = requests.get(
+            r = _NAVER_SESSION.get(
                 f"https://api.stock.naver.com/stock/exchange/{nm}/marketValue?page={p}&pageSize=100",
-                headers={'User-Agent': 'Mozilla/5.0'}, timeout=5
+                timeout=5
             )
             d = r.json()
             page_data = {}
