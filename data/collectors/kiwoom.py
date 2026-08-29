@@ -1,11 +1,11 @@
 """data/collectors/kiwoom.py — Kiwoom REST API client for quotes, balance, and investor trends."""
 import os
 import time
-import requests
 from datetime import datetime
 import pandas as pd
 import logging
 
+from data.cache import _KIWOOM_SESSION
 from data.collectors.naver import _fetch_investor_trend_naver, _fetch_index_investor_trend
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ def _get_kiwoom_token():
     appkey, appsecret = _get_kiwoom_keys()
     token_url = "https://api.kiwoom.com/oauth2/token"
     body = {"grant_type": "client_credentials", "appkey": appkey, "secretkey": appsecret}
-    res = requests.post(token_url, headers={"content-type": "application/json;charset=UTF-8"}, json=body, timeout=5)
+    res = _KIWOOM_SESSION.post(token_url, headers={"content-type": "application/json;charset=UTF-8"}, json=body, timeout=5)
     res.raise_for_status()
     res_data = res.json()
     token = res_data.get("access_token") or res_data.get("token")
@@ -88,7 +88,7 @@ def fetch_kiwoom_stock_info(code, token=None, appkey=None, appsecret=None):
         "secretkey": appsecret,
         "api-id": "ka10007"
     }
-    r = requests.post("https://api.kiwoom.com/api/dostk/mrkcond",
+    r = _KIWOOM_SESSION.post("https://api.kiwoom.com/api/dostk/mrkcond",
                       headers=headers, json={"stk_cd": code}, timeout=5)
     r.raise_for_status()
     d = r.json()
@@ -118,7 +118,7 @@ def fetch_kiwoom_daily_ohlcv(code, token=None, appkey=None, appsecret=None):
         "secretkey": appsecret,
         "api-id": "ka10005"
     }
-    r = requests.post("https://api.kiwoom.com/api/dostk/mrkcond",
+    r = _KIWOOM_SESSION.post("https://api.kiwoom.com/api/dostk/mrkcond",
                       headers=headers, json={"stk_cd": code}, timeout=5)
     r.raise_for_status()
     d = r.json()
@@ -162,7 +162,7 @@ def fetch_account_deposit(pwd: str = "") -> float:
             "secretkey": appsecret,
             "api-id": "ka00001",
         }
-        list_res = requests.post(
+        list_res = _KIWOOM_SESSION.post(
             "https://api.kiwoom.com/api/dostk/acnt",
             headers=list_headers,
             json={},
@@ -198,7 +198,7 @@ def fetch_account_deposit(pwd: str = "") -> float:
         "qry_tp": "1",
     }
     logger.debug("[kt00001 Request] acnt_no=%s, qry_tp=1", acnt_no)
-    dep_res = requests.post(inquire_url, headers=headers, json=params, timeout=5)
+    dep_res = _KIWOOM_SESSION.post(inquire_url, headers=headers, json=params, timeout=5)
     dep_res.raise_for_status()
     dep_data = dep_res.json()
     logger.debug("[kt00001 Response] %s", dep_data)
@@ -288,7 +288,7 @@ def fetch_investor_trend(ticker: str, days: int = 60) -> list:
         }
 
         try:
-            res = requests.post(url, headers=headers, json=body, timeout=8)
+            res = _KIWOOM_SESSION.post(url, headers=headers, json=body, timeout=8)
             res.raise_for_status()
             data = res.json()
         except Exception:

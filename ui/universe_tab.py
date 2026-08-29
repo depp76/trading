@@ -572,15 +572,30 @@ class UniverseTab(QWidget):
             self.refresh_data()
 
     def _on_universe_lightweight_loaded(self, updated_data):
+        # UniverseLightweightFetchThread only reassigns item["changes"] (to a
+        # freshly-fetched dict) for tickers whose price actually moved -- every
+        # unchanged item keeps the exact same "changes" dict object it had
+        # before the thread ran. That lets us tell which rows actually need a
+        # UI refresh by object identity, without a value-by-value diff.
+        old_data = self.all_data
+        changed_rows = {
+            i for i, (old_item, new_item) in enumerate(zip(old_data, updated_data))
+            if old_item.get("changes") is not new_item.get("changes")
+        }
+
         self.all_data = updated_data
         highlights = self.custom_settings.get("highlights", {})
 
         # Save current scroll position
         v_scroll = self.table.verticalScrollBar().value()
 
-        self.table.load_data(self.all_data, highlights)
-        self._populate_action_buttons()
-        self.filter_table(self.search_input.text())
+        # Incremental update: only the rows whose price/changes actually
+        # changed get their cells rebuilt (name/market/ticker/marcap/PER and
+        # the Tg/MA/Del action-button widgets never change on this path, so
+        # there's no need to touch them at all, unlike a full load_data()).
+        self.table.update_changed_rows(self.all_data, changed_rows, highlights)
+        if changed_rows:
+            self.filter_table(self.search_input.text())
 
         # Restore scroll position to prevent jumping
         self.table.verticalScrollBar().setValue(v_scroll)

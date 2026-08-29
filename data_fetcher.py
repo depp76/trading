@@ -34,6 +34,7 @@ from data import (
     _HIST_CACHE_LOG_INTERVAL,
     _YF_SESSION,
     _NAVER_SESSION,
+    _KIWOOM_SESSION,
     _YF_CRUMB,
     _YF_CRUMB_LOCK,
     YFTlsAdapter,

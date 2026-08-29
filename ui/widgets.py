@@ -340,18 +340,61 @@ class StockTable(QTableWidget):
         if highlights is None:
             highlights = {}
 
-        _HIST_KEYS = _get_hist_keys()
-
         self.setUpdatesEnabled(False)  # UI Batch Repaint Optimization
         self.setSortingEnabled(False)
         self.clearContents()
         if self.rowCount() != len(data):
             self.setRowCount(len(data))
 
+        for row, item in enumerate(data):
+            self._populate_row(row, item, highlights)
+
+        # MA20 buttons are added externally after load_data via add_ma20_button
+        # Clear sort indicator BEFORE enabling sorting so Qt does not auto-resort
+        # the rows and overwrites the insertion order (Index-KOSPI-KOSDAQ-NASDAQ-S&P500, by market cap).
+        self._filter_header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        self.setSortingEnabled(True)
+        self._stretch_columns()
+        self.setUpdatesEnabled(True)
+
+    def update_changed_rows(self, data, changed_rows, highlights=None):
+        """Incremental counterpart to load_data(): re-renders only the rows
+        named in `changed_rows` (indices into `data`), instead of rebuilding
+        every row's ~20 columns from scratch.
+
+        Used by the 60s lightweight auto-refresh (UniverseLightweightFetchThread),
+        which only ever changes price/changes for a subset of tickers -- name,
+        market, ticker, market cap and PER never change on that path. Rebuilding
+        every cell of every row on every tick regardless (as load_data() does)
+        means tens of thousands of QTableWidgetItem allocations a minute for a
+        few-hundred-row universe, for cells whose displayed value didn't move.
+        """
+        if not changed_rows:
+            return
+        if highlights is None:
+            highlights = {}
+
+        self.setUpdatesEnabled(False)
+        try:
+            self.setSortingEnabled(False)
+            for row in changed_rows:
+                if 0 <= row < len(data) and row < self.rowCount():
+                    self._populate_row(row, data[row], highlights)
+            self.setSortingEnabled(True)
+        finally:
+            self.setUpdatesEnabled(True)
+
+    def _populate_row(self, row, item, highlights):
+        """Renders every data cell of one row (columns 0, 2-19). Columns 1/20/21
+        (Tg, MA, Delete action-button widgets) are populated separately by
+        add_action_buttons(), which callers only need to (re)run for rows whose
+        highlight state actually changed -- shared by load_data() (every row)
+        and update_changed_rows() (only rows whose data actually changed)."""
+        _HIST_KEYS = _get_hist_keys()
         center = Qt.AlignmentFlag.AlignCenter
         right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
-        # Alias class-level color constants for readability inside this loop
+        # Alias class-level color constants for readability below
         color_red            = self._C_RED
         color_blue           = self._C_BLUE
         color_bg_severe      = self._C_BG_SEVERE
@@ -362,234 +405,225 @@ class StockTable(QTableWidget):
         color_bg_blue_severe = self._C_BG_BLUE_SEVERE
         color_fg_black       = self._C_FG_BLACK
 
-        for row, item in enumerate(data):
-            currency = item.get('currency', '')
-            if item.get('is_bond'):
-                price_text = f"{item.get('price', 0):.2f}%"
-            elif item.get('is_index'):
-                price_text = f"${int(item.get('price', 0)):,}" if currency == '$' else f"{int(item.get('price', 0)):,}"
-            elif currency == '$' and 'usd_price' in item:
-                price_text = f"${item.get('usd_price', 0):,.2f}"
+        currency = item.get('currency', '')
+        if item.get('is_bond'):
+            price_text = f"{item.get('price', 0):.2f}%"
+        elif item.get('is_index'):
+            price_text = f"${int(item.get('price', 0)):,}" if currency == '$' else f"{int(item.get('price', 0)):,}"
+        elif currency == '$' and 'usd_price' in item:
+            price_text = f"${item.get('usd_price', 0):,.2f}"
+        else:
+            price_text = f"{int(item.get('price', 0)):,}"
+
+        marcap_raw = 0
+        if item.get('is_index'):
+            marcap_eok = "-"
+        else:
+            try:
+                # market_cap is in KRW. 100,000,000 = 100M KRW
+                marcap_raw = int(item.get('market_cap', 0)) // 100_000_000
+                marcap_eok = f"{marcap_raw:,}"
+            except Exception:
+                marcap_eok = "0"
+
+        name_item = self._make_item(item['name'])
+        h_state = highlights.get(item.get('ticker'))
+        if h_state == "On":
+            name_item.setBackground(QColor("yellow"))
+        elif h_state == "Tg":
+            name_item.setBackground(QColor(135, 206, 235))
+        self.setItem(row, 0, name_item)
+
+        # col 1: Pf/Tg button placeholder (actual widget populated by add_action_buttons)
+        self.setItem(row, 1, QTableWidgetItem(""))
+
+        self.setItem(row, 2, self._make_item(item['market'], center))
+        self.setItem(row, 3, self._make_item(item['ticker'], center))
+
+        marcap_item = QTableWidgetItem()
+        marcap_item.setData(Qt.ItemDataRole.EditRole, marcap_raw)
+        marcap_item.setText(marcap_eok)
+        marcap_item.setTextAlignment(center if marcap_eok == "-" else right)
+        self.setItem(row, 4, marcap_item)
+
+        # tPER (col 5)
+        tper_val = item.get('trailing_per')
+        if tper_val is not None and not item.get('is_index'):
+            tper_item = QTableWidgetItem()
+            tper_item.setData(Qt.ItemDataRole.EditRole, float(tper_val))
+            tper_item.setText(f"{tper_val:.1f}")
+            tper_item.setTextAlignment(right)
+        else:
+            tper_item = self._make_item("-", center)
+            tper_item.setForeground(QColor("#aaaaaa"))
+        self.setItem(row, 5, tper_item)
+
+        # fPER (col 6)
+        fper_val = item.get('forward_per')
+        if fper_val is not None and not item.get('is_index'):
+            fper_item = QTableWidgetItem()
+            fper_item.setData(Qt.ItemDataRole.EditRole, float(fper_val))
+            fper_item.setText(f"{fper_val:.1f}")
+            fper_item.setTextAlignment(right)
+        else:
+            fper_item = self._make_item("-", center)
+            fper_item.setForeground(QColor("#aaaaaa"))
+        self.setItem(row, 6, fper_item)
+
+        changes = item.get('changes', {})
+        high_52w = changes.get("52w_high", 0.0)
+        high_diff = changes.get("52w_high_diff", 0.0)
+        low_52w = changes.get("52w_low", 0.0)
+        low_diff = changes.get("52w_low_diff", 0.0)
+        ma20_div = changes.get("ma20_div", 0.0)
+        ma50_div = changes.get("ma50_div", 0.0)
+
+        is_idx = item.get('is_index', False)
+        is_bond = item.get('is_bond', False)
+        chg_mode = item.get('change_mode', 'pct')  # 'pct', 'bp', 'abs'
+        is_wti = (currency == '$' and chg_mode == 'abs')
+        fmt = "${:,.2f}" if currency == '$' else "{:,.2f}" if is_idx else "{:,.0f}"
+        if is_bond:
+            fmt = "{:,.2f}%"
+
+        # col 7: Price
+        price_raw = float(item.get('usd_price', 0) if currency == '$' and 'usd_price' in item else item.get('price', 0))
+        price_item = QTableWidgetItem()
+        price_item.setData(Qt.ItemDataRole.EditRole, price_raw)
+        price_item.setText(price_text)
+        price_item.setTextAlignment(right)
+        self.setItem(row, 7, price_item)
+
+        # col 8: Div(20) (MA20 divergence ratio, base = 100%)
+        if chg_mode == 'pct' and ma20_div != 0.0:
+            div20_item = QTableWidgetItem()
+            div20_item.setData(Qt.ItemDataRole.EditRole, round(ma20_div, 4))
+            div20_item.setText(f"{ma20_div:.1f}%")
+            div20_item.setTextAlignment(right)
+            if ma20_div >= 120:
+                div20_item.setBackground(QColor(180,  30,  30))
+                div20_item.setForeground(QColor(255, 255, 255))
+            elif ma20_div >= 110:
+                div20_item.setForeground(QColor(200,   0,   0))
+            elif ma20_div >= 105:
+                div20_item.setForeground(QColor(230,  80,  80))
+            elif ma20_div >= 102:
+                div20_item.setForeground(QColor(210, 130, 130))
+            elif ma20_div >= 98:
+                div20_item.setForeground(QColor(130, 130, 130))
+            elif ma20_div >= 93:
+                div20_item.setForeground(QColor( 80, 130, 210))
             else:
-                price_text = f"{int(item.get('price', 0)):,}"
+                div20_item.setBackground(QColor( 30,  30, 180))
+                div20_item.setForeground(QColor(255, 255, 255))
+        else:
+            div20_item = self._make_item("-", center)
+            div20_item.setForeground(QColor("#aaaaaa"))
+        self.setItem(row, 8, div20_item)
 
-            marcap_raw = 0
-            if item.get('is_index'):
-                marcap_eok = "-"
+        # col 9: Div(50) (MA50 divergence ratio, base = 100%)
+        if chg_mode == 'pct' and ma50_div != 0.0:
+            div50_item = QTableWidgetItem()
+            div50_item.setData(Qt.ItemDataRole.EditRole, round(ma50_div, 4))
+            div50_item.setText(f"{ma50_div:.1f}%")
+            div50_item.setTextAlignment(right)
+            if ma50_div >= 130:
+                div50_item.setBackground(QColor(180,  30,  30))
+                div50_item.setForeground(QColor(255, 255, 255))
+            elif ma50_div >= 110:
+                div50_item.setForeground(QColor(200,   0,   0))
+            elif ma50_div >= 107:
+                div50_item.setForeground(QColor(230,  80,  80))
+            elif ma50_div >= 103:
+                div50_item.setForeground(QColor(210, 130, 130))
+            elif ma50_div >= 98:
+                div50_item.setForeground(QColor(130, 130, 130))
+            elif ma50_div >= 90:
+                div50_item.setForeground(QColor( 80, 130, 210))
             else:
-                try:
-                    # market_cap is in KRW. 100,000,000 = 100M KRW
-                    marcap_raw = int(item.get('market_cap', 0)) // 100_000_000
-                    marcap_eok = f"{marcap_raw:,}"
-                except Exception:
-                    marcap_eok = "0"
+                div50_item.setBackground(QColor( 30,  30, 180))
+                div50_item.setForeground(QColor(255, 255, 255))
+        else:
+            div50_item = self._make_item("-", center)
+            div50_item.setForeground(QColor("#aaaaaa"))
+        self.setItem(row, 9, div50_item)
 
-            name_item = self._make_item(item['name'])
-            h_state = highlights.get(item.get('ticker'))
-            if h_state == "On":
-                name_item.setBackground(QColor("yellow"))
-            elif h_state == "Tg":
-                name_item.setBackground(QColor(135, 206, 235))
-            self.setItem(row, 0, name_item)
+        h_str = "-" if high_52w == 0 else fmt.format(high_52w)
+        self.setItem(row, 10, self._make_item(h_str, right))
 
-            # col 1: Pf/Tg button placeholder (actual widget populated by add_action_buttons)
-            self.setItem(row, 1, QTableWidgetItem(""))
-
-            self.setItem(row, 2, self._make_item(item['market'], center))
-            self.setItem(row, 3, self._make_item(item['ticker'], center))
-
-            marcap_item = QTableWidgetItem()
-            marcap_item.setData(Qt.ItemDataRole.EditRole, marcap_raw)
-            marcap_item.setText(marcap_eok)
-            marcap_item.setTextAlignment(center if marcap_eok == "-" else right)
-            self.setItem(row, 4, marcap_item)
-
-            # tPER (col 5)
-            tper_val = item.get('trailing_per')
-            if tper_val is not None and not item.get('is_index'):
-                tper_item = QTableWidgetItem()
-                tper_item.setData(Qt.ItemDataRole.EditRole, float(tper_val))
-                tper_item.setText(f"{tper_val:.1f}")
-                tper_item.setTextAlignment(right)
+        hd_str = "-"
+        if high_52w:
+            if chg_mode == 'bp':
+                hd_str = f"{high_diff:+.0f} bp"
+            elif chg_mode == 'abs':
+                hd_str = f"${high_diff:+.2f}" if is_wti else f"{high_diff:+.2f}"
             else:
-                tper_item = self._make_item("-", center)
-                tper_item.setForeground(QColor("#aaaaaa"))
-            self.setItem(row, 5, tper_item)
+                hd_str = f"{high_diff:+.1f}%"
+        hd_item = QTableWidgetItem()
+        hd_item.setData(Qt.ItemDataRole.EditRole, float(high_diff) if high_52w else float('-inf'))
+        hd_item.setText(hd_str)
+        hd_item.setTextAlignment(right)
+        if chg_mode == 'pct':
+            if high_diff > 0: hd_item.setForeground(color_red)
+            elif high_diff < 0: hd_item.setForeground(color_blue)
+        self.setItem(row, 11, hd_item)
 
-            # fPER (col 6)
-            fper_val = item.get('forward_per')
-            if fper_val is not None and not item.get('is_index'):
-                fper_item = QTableWidgetItem()
-                fper_item.setData(Qt.ItemDataRole.EditRole, float(fper_val))
-                fper_item.setText(f"{fper_val:.1f}")
-                fper_item.setTextAlignment(right)
+        l_str = "-" if low_52w == 0 else fmt.format(low_52w)
+        self.setItem(row, 12, self._make_item(l_str, right))
+
+        ld_str = "-"
+        if low_52w:
+            if chg_mode == 'bp':
+                ld_str = f"{low_diff:+.0f} bp"
+            elif chg_mode == 'abs':
+                ld_str = f"${low_diff:+.2f}" if is_wti else f"{low_diff:+.2f}"
             else:
-                fper_item = self._make_item("-", center)
-                fper_item.setForeground(QColor("#aaaaaa"))
-            self.setItem(row, 6, fper_item)
+                ld_str = f"{low_diff:+.1f}%"
+        ld_item = QTableWidgetItem()
+        ld_item.setData(Qt.ItemDataRole.EditRole, float(low_diff) if low_52w else float('-inf'))
+        ld_item.setText(ld_str)
+        ld_item.setTextAlignment(right)
+        if chg_mode == 'pct':
+            if low_diff > 0: ld_item.setForeground(color_red)
+            elif low_diff < 0: ld_item.setForeground(color_blue)
+        self.setItem(row, 13, ld_item)
 
-            changes = item.get('changes', {})
-            high_52w = changes.get("52w_high", 0.0)
-            high_diff = changes.get("52w_high_diff", 0.0)
-            low_52w = changes.get("52w_low", 0.0)
-            low_diff = changes.get("52w_low_diff", 0.0)
-            ma20_div = changes.get("ma20_div", 0.0)
-            ma50_div = changes.get("ma50_div", 0.0)
-
-            is_idx = item.get('is_index', False)
-            is_bond = item.get('is_bond', False)
-            chg_mode = item.get('change_mode', 'pct')  # 'pct', 'bp', 'abs'
-            is_wti = (currency == '$' and chg_mode == 'abs')
-            fmt = "${:,.2f}" if currency == '$' else "{:,.2f}" if is_idx else "{:,.0f}"
-            if is_bond:
-                fmt = "{:,.2f}%"
-
-            # col 7: Price
-            price_raw = float(item.get('usd_price', 0) if currency == '$' and 'usd_price' in item else item.get('price', 0))
-            price_item = QTableWidgetItem()
-            price_item.setData(Qt.ItemDataRole.EditRole, price_raw)
-            price_item.setText(price_text)
-            price_item.setTextAlignment(right)
-            self.setItem(row, 7, price_item)
-
-            # col 8: Div(20) (MA20 divergence ratio, base = 100%)
-            if chg_mode == 'pct' and ma20_div != 0.0:
-                div20_item = QTableWidgetItem()
-                div20_item.setData(Qt.ItemDataRole.EditRole, round(ma20_div, 4))
-                div20_item.setText(f"{ma20_div:.1f}%")
-                div20_item.setTextAlignment(right)
-                if ma20_div >= 120:
-                    div20_item.setBackground(QColor(180,  30,  30))
-                    div20_item.setForeground(QColor(255, 255, 255))
-                elif ma20_div >= 110:
-                    div20_item.setForeground(QColor(200,   0,   0))
-                elif ma20_div >= 105:
-                    div20_item.setForeground(QColor(230,  80,  80))
-                elif ma20_div >= 102:
-                    div20_item.setForeground(QColor(210, 130, 130))
-                elif ma20_div >= 98:
-                    div20_item.setForeground(QColor(130, 130, 130))
-                elif ma20_div >= 93:
-                    div20_item.setForeground(QColor( 80, 130, 210))
-                else:
-                    div20_item.setBackground(QColor( 30,  30, 180))
-                    div20_item.setForeground(QColor(255, 255, 255))
+        for i, key in enumerate(_HIST_KEYS):
+            raw = changes.get(key, 0.0)
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                val = 0.0
+            change_item = QTableWidgetItem()
+            change_item.setData(Qt.ItemDataRole.EditRole, val)
+            if chg_mode == 'bp':
+                change_item.setText(f"{val:+.0f} bp")
+            elif chg_mode == 'abs':
+                change_item.setText(f"${val:,.2f}" if is_wti else f"{val:.2f}")
             else:
-                div20_item = self._make_item("-", center)
-                div20_item.setForeground(QColor("#aaaaaa"))
-            self.setItem(row, 8, div20_item)
+                change_item.setText(f"{val:+.1f}%")
+            change_item.setTextAlignment(right)
 
-            # col 9: Div(50) (MA50 divergence ratio, base = 100%)
-            if chg_mode == 'pct' and ma50_div != 0.0:
-                div50_item = QTableWidgetItem()
-                div50_item.setData(Qt.ItemDataRole.EditRole, round(ma50_div, 4))
-                div50_item.setText(f"{ma50_div:.1f}%")
-                div50_item.setTextAlignment(right)
-                if ma50_div >= 130:
-                    div50_item.setBackground(QColor(180,  30,  30))
-                    div50_item.setForeground(QColor(255, 255, 255))
-                elif ma50_div >= 110:
-                    div50_item.setForeground(QColor(200,   0,   0))
-                elif ma50_div >= 107:
-                    div50_item.setForeground(QColor(230,  80,  80))
-                elif ma50_div >= 103:
-                    div50_item.setForeground(QColor(210, 130, 130))
-                elif ma50_div >= 98:
-                    div50_item.setForeground(QColor(130, 130, 130))
-                elif ma50_div >= 90:
-                    div50_item.setForeground(QColor( 80, 130, 210))
-                else:
-                    div50_item.setBackground(QColor( 30,  30, 180))
-                    div50_item.setForeground(QColor(255, 255, 255))
-            else:
-                div50_item = self._make_item("-", center)
-                div50_item.setForeground(QColor("#aaaaaa"))
-            self.setItem(row, 9, div50_item)
-
-            h_str = "-" if high_52w == 0 else fmt.format(high_52w)
-            self.setItem(row, 10, self._make_item(h_str, right))
-
-            hd_str = "-"
-            if high_52w:
-                if chg_mode == 'bp':
-                    hd_str = f"{high_diff:+.0f} bp"
-                elif chg_mode == 'abs':
-                    hd_str = f"${high_diff:+.2f}" if is_wti else f"{high_diff:+.2f}"
-                else:
-                    hd_str = f"{high_diff:+.1f}%"
-            hd_item = QTableWidgetItem()
-            hd_item.setData(Qt.ItemDataRole.EditRole, float(high_diff) if high_52w else float('-inf'))
-            hd_item.setText(hd_str)
-            hd_item.setTextAlignment(right)
             if chg_mode == 'pct':
-                if high_diff > 0: hd_item.setForeground(color_red)
-                elif high_diff < 0: hd_item.setForeground(color_blue)
-            self.setItem(row, 11, hd_item)
-
-            l_str = "-" if low_52w == 0 else fmt.format(low_52w)
-            self.setItem(row, 12, self._make_item(l_str, right))
-
-            ld_str = "-"
-            if low_52w:
-                if chg_mode == 'bp':
-                    ld_str = f"{low_diff:+.0f} bp"
-                elif chg_mode == 'abs':
-                    ld_str = f"${low_diff:+.2f}" if is_wti else f"{low_diff:+.2f}"
-                else:
-                    ld_str = f"{low_diff:+.1f}%"
-            ld_item = QTableWidgetItem()
-            ld_item.setData(Qt.ItemDataRole.EditRole, float(low_diff) if low_52w else float('-inf'))
-            ld_item.setText(ld_str)
-            ld_item.setTextAlignment(right)
-            if chg_mode == 'pct':
-                if low_diff > 0: ld_item.setForeground(color_red)
-                elif low_diff < 0: ld_item.setForeground(color_blue)
-            self.setItem(row, 13, ld_item)
-
-            for i, key in enumerate(_HIST_KEYS):
-                raw = changes.get(key, 0.0)
-                try:
-                    val = float(raw)
-                except (TypeError, ValueError):
-                    val = 0.0
-                change_item = QTableWidgetItem()
-                change_item.setData(Qt.ItemDataRole.EditRole, val)
-                if chg_mode == 'bp':
-                    change_item.setText(f"{val:+.0f} bp")
-                elif chg_mode == 'abs':
-                    change_item.setText(f"${val:,.2f}" if is_wti else f"{val:.2f}")
-                else:
-                    change_item.setText(f"{val:+.1f}%")
-                change_item.setTextAlignment(right)
-
-                if chg_mode == 'pct':
-                    if val <= -30:
-                        change_item.setBackground(color_bg_severe)
-                        change_item.setForeground(color_fg_black)
-                    elif val <= -15:
-                        change_item.setBackground(color_bg_medium)
-                        change_item.setForeground(color_fg_black)
-                    elif val < 0:
-                        change_item.setBackground(color_bg_light)
-                        change_item.setForeground(color_fg_black)
-                    elif val >= 30:
-                        change_item.setBackground(color_bg_blue_severe)
-                        change_item.setForeground(color_fg_black)
-                    elif val >= 15:
-                        change_item.setBackground(color_bg_blue_medium)
-                        change_item.setForeground(color_fg_black)
-                    elif val > 0:
-                        change_item.setBackground(color_bg_blue_light)
-                        change_item.setForeground(color_fg_black)
-                self.setItem(row, 14 + i, change_item)
-
-        # MA20 buttons are added externally after load_data via add_ma20_button
-        # Clear sort indicator BEFORE enabling sorting so Qt does not auto-resort
-        # the rows and overwrites the insertion order (Index-KOSPI-KOSDAQ-NASDAQ-S&P500, by market cap).
-        self._filter_header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
-        self.setSortingEnabled(True)
-        self._stretch_columns()
-        self.setUpdatesEnabled(True)
+                if val <= -30:
+                    change_item.setBackground(color_bg_severe)
+                    change_item.setForeground(color_fg_black)
+                elif val <= -15:
+                    change_item.setBackground(color_bg_medium)
+                    change_item.setForeground(color_fg_black)
+                elif val < 0:
+                    change_item.setBackground(color_bg_light)
+                    change_item.setForeground(color_fg_black)
+                elif val >= 30:
+                    change_item.setBackground(color_bg_blue_severe)
+                    change_item.setForeground(color_fg_black)
+                elif val >= 15:
+                    change_item.setBackground(color_bg_blue_medium)
+                    change_item.setForeground(color_fg_black)
+                elif val > 0:
+                    change_item.setBackground(color_bg_blue_light)
+                    change_item.setForeground(color_fg_black)
+            self.setItem(row, 14 + i, change_item)
 
     def add_action_buttons(self, row, h_state, tg_callback, ma_callback, del_callback):
         """Insert 'Pf/Tg', 'MA' for MA chart, and 'Del' for Delete."""
