@@ -217,14 +217,46 @@ tests/
 
 ---
 
-### 3-3. 성능 — pandas/polars 경계 최소화
+### 3-3. 성능 — pandas/polars 경계 최소화 — ✅ 완료 (재조사 결과 대부분 이미 최적 상태)
 
-**현황**: `_to_polars()`가 FDR/yfinance/yahooquery pandas 결과를 polars로 변환하는 오버헤드  
-**방향**:
+**재조사 결과 (2026-08-29)**: 로드맵 작성 당시 우려했던 두 항목은 이미 해소되어 있었음을
+코드 확인:
 
-- 히스토리컬 데이터 파이프라인을 처음부터 polars로 구성 (라이브러리가 pandas 반환 시 `pl.from_pandas()` 1회만)
-- `_compute_indicators()`의 중간 pandas 왕복 제거
-- 실제 속도 개선 측정 후 진행 여부 결정
+- **히스토리컬 파이프라인**: `get_historical_data()` → `_fetch_historical_uncached()`는
+  이미 소스별로 `_to_polars()`를 정확히 1회만 호출(KR은 Naver JSON에서 애초에 `pl.DataFrame`을
+  직접 생성, US/지수는 yfinance/yahooquery/FDR pandas 결과를 함수 끝에서 단 한 번만 변환).
+  추가로 구성할 것이 없었음.
+- **`_compute_indicators()`**: 입력부터 출력까지 전부 polars 표현식(`with_columns`,
+  `rolling_mean`, `ewm_mean` 등)만 사용 — 중간에 pandas로 왕복하는 지점이 원래 없었음
+  (2026-08-12 2차 최적화에서 이미 벡터화됨, `run_backtest_strategy()`도 numpy 전용으로 pandas
+  미사용).
+
+**실제로 발견·수정한 중복 변환 (2건)**: 위 두 함수는 이미 정상이었지만, 이들을 호출하는 두
+지점에서 **같은 pandas 데이터를 두 번 polars로 변환**하는 낭비를 발견:
+
+1. `fetch_single_stock()`의 미국/해외 종목 분기 — `fdr.DataReader()` 결과를 현재가 추출용으로
+   `_to_polars()`(→`df_p`)한 뒤, `fetch_historical_changes(..., df_pd)`에 **원본 pandas**를
+   다시 넘겨 내부에서 또 `_to_polars()`가 호출됨.
+2. `fetch_indice_as_stock()` (JP10YT/KR3YT/VKOSPI + 모든 지수, `fetch_major_indices_as_stocks()`가
+   매 새로고침·60초 자동 갱신마다 호출) — 채권/VKOSPI 분기는 위와 동일한 이중 변환, 그 외
+   지수 분기는 `df_pd_fallback=None`을 넘겨 `fetch_historical_changes` 내부에서
+   `get_historical_data()`를 (캐시 히트이긴 하나) 불필요하게 한 번 더 호출.
+
+**수정**: 두 지점 모두 이미 계산해 둔 polars df(`df_p`/`df`)를 그대로
+`fetch_historical_changes(..., df_pd=...)`에 전달하도록 변경. `_to_polars()`는 polars 입력에
+대해 no-op(즉시 반환)이므로 동일 인자를 재사용하면 두 번째 변환/재조회가 사라짐.
+
+**검증**:
+- 동일 pandas 원본을 "그대로 전달"과 "미리 polars 변환 후 전달" 두 경로로
+  `fetch_historical_changes()`에 넣어 20개 랜덤 시드에 대해 반환값이 완전히 동일함을 확인
+  (동작 보존, 순수 성능 최적화).
+- 벤치마크(410행 랜덤 OHLCV, 2,000회 반복): 이중 변환 제거로 호출당 1.235ms → 0.800ms,
+  **약 35% 감소**. `fetch_indice_as_stock`은 지수 개수만큼(약 8~10개) 매 새로고침/60초 자동
+  갱신마다 호출되므로 체감 가능한 수준의 절감.
+- `python -m pytest tests/ -v` 76/76 통과, `import data_fetcher` / `import main` 정상.
+
+**결론**: 로드맵에 적힌 "처음부터 polars로 구성"·"중간 pandas 왕복 제거" 두 방향은 이미
+달성되어 있었고, 실제 개선 여지는 두 호출부의 중복 변환 제거뿐이었음 — 이를 수정 완료.
 
 ---
 
@@ -359,6 +391,7 @@ KOSDAQ 조회 전체가 실패한 사례가 실제로 기록됨.
 | 3-4B/C | AI 진단/자연어 필터 | 높음 | 중간 | — | ✅ 완료 |
 | 3-2 | 테스트 인프라 | 높음 | 중간 | — | ✅ 완료 |
 | 3-1 | 모듈화 | 높음 | 높음 | — | ✅ 완료 (Phase 0~5) |
+| 3-3 | pandas/polars 경계 최소화 | 낮음 | 낮음 | — | ✅ 완료 (재조사 결과 대부분 이미 최적) |
 | 3-4A | AI 종목 리포트 | 높음 | 중간 | ⭐⭐⭐ 높음 | 미착수 |
 | 3-5 | 시세 fallback | 높음 | 중간 | ⭐⭐ 중간 | 부분 진행 |
 | 4-3 | 조건부 알림 | 높음 | 중간 | ⭐⭐ 중간 | 미착수 |
@@ -381,3 +414,4 @@ KOSDAQ 조회 전체가 실패한 사례가 실제로 기록됨.
 | 2026-08-28 (4차) | 3-1 모듈화 분석 반영: main.py 6,490줄/22개 클래스 실측, 클래스별 라인 수·배치 계획·결합도(TradingHistoryTab→MainWindow 직접 참조 0건) 조사. 기대 효과(파일 크기 -87%, AI 컨텍스트 -87%, 테스트 +30~50개) 및 5단계 구현 계획(예상 8~10일) 추가. |
 | 2026-08-29 | 3-1 모듈화 Phase 0~3 구현 완료. `main.py` 6,490줄→3,035줄(-53%), 22개 클래스→3개. `threads/fetch_threads.py`(7개 스레드), `threads/realtime.py`(RealtimePriceThread), `ui/widgets.py`(4개 위젯), `ui/dialogs.py`(7개 다이얼로그) 분리 완료. Phase 4(탭 분리)·5(MainWindow 최소화) 잔여. 우선순위 매트릭스 3-1 상태 '부분 완료'로 갱신. |
 | 2026-08-29 (2차) | 3-1 모듈화 Phase 4~5 구현 완료로 전체 완료. `TradingHistoryTab`→`ui/history_tab.py`, `TradingRecordTab`→`ui/assets_tab.py`, `MainWindow`에 인라인으로 남아있던 Trading Universe 탭을 `ui/universe_tab.py`의 `UniverseTab`으로 분리. `main.py` 3,035줄→401줄(누계 -94%), `MainWindow` 833줄→247줄. 탭 간 통신은 기존 `status_message` 시그널 패턴을 확장해 구현(`status_text_changed`/`sync_time_changed`/`refresh_started`/`auto_lightweight_tick`). 검증: `py_compile`, `import main`, pytest 76/76, `MainWindow()` 인스턴스화+시그널 전파 스모크 테스트. 백업: `archive/backup_20260829_141942/`. 우선순위 매트릭스 3-1 상태 '완료'로 갱신. |
+| 2026-08-29 (3차) | 3-3 pandas/polars 경계 최소화 완료. 재조사 결과 로드맵이 우려한 두 항목(히스토리컬 파이프라인 구성, `_compute_indicators()` 중간 왕복)은 이미 최적 상태였음을 확인. 대신 `fetch_single_stock()`·`fetch_indice_as_stock()`이 동일 pandas 데이터를 `fetch_historical_changes()`에 원본으로 넘겨 내부에서 중복 변환(또는 불필요한 재조회)을 일으키던 실제 낭비 2건을 발견해, 이미 변환된 polars df를 그대로 전달하도록 수정(`_to_polars()`는 polars 입력에 no-op이므로 안전). 검증: 20개 랜덤 시드로 동작 동일성 확인, 벤치마크로 호출당 약 35% 시간 절감 측정, pytest 76/76 통과. 우선순위 매트릭스에 3-3 행 추가(완료). |

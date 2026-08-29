@@ -1645,7 +1645,7 @@ def fetch_single_stock(market, ticker):
             fx_rate = get_usd_krw_rate()
             yf_symbol = ticker.replace(".", "-")
 
-            df_pd = None
+            df_p = pl.DataFrame()
             usd_price = 0.0
             try:
                 df_pd = fdr.DataReader(ticker, _START_DATE)
@@ -1686,7 +1686,10 @@ def fetch_single_stock(market, ticker):
                 except Exception:
                     logger.debug("yahooquery summary_detail failed for %s", yf_symbol, exc_info=True)
 
-            changes = fetch_historical_changes(yf_symbol, usd_price, df_pd)
+            # Pass the already-converted polars df (roadmap 3-3): _to_polars() is a
+            # no-op on a polars input, so this avoids re-converting the same pandas
+            # DataFrame a second time inside fetch_historical_changes().
+            changes = fetch_historical_changes(yf_symbol, usd_price, df_p)
             trailing_per = None
             forward_per = None
             try:
@@ -1953,16 +1956,12 @@ def fetch_indice_as_stock(label_ticker):
     is_bond = label in ("US10YT", "JP10YT", "KR3YT")
 
     try:
-        df_pd_fallback = None
         if label == "JP10YT":
-            df_pd_fallback = _get_jp10y_df()
-            df = _to_polars(df_pd_fallback)
+            df = _to_polars(_get_jp10y_df())
         elif label == "KR3YT":
-            df_pd_fallback = _get_kr3y_df()
-            df = _to_polars(df_pd_fallback)
+            df = _to_polars(_get_kr3y_df())
         elif label == "VKOSPI":
-            df_pd_fallback = _get_vkospi_pdf()
-            df = _to_polars(df_pd_fallback)
+            df = _to_polars(_get_vkospi_pdf())
         else:
             df = get_historical_data(fdr_ticker, _START_DATE)
 
@@ -1979,7 +1978,11 @@ def fetch_indice_as_stock(label_ticker):
         else:
             chg_mode = 'pct'
 
-        changes = fetch_historical_changes(fdr_ticker, current_price, df_pd_fallback, mode=chg_mode)
+        # df is already polars (roadmap 3-3): pass it directly so
+        # fetch_historical_changes's _to_polars() call is a no-op instead of
+        # re-converting the same pandas source (or re-fetching from
+        # get_historical_data's cache) a second time.
+        changes = fetch_historical_changes(fdr_ticker, current_price, df, mode=chg_mode)
         name = _INDEX_DISPLAY_NAMES.get(label, label)
         order = _INDEX_ORDER.get(name, 99)
 
