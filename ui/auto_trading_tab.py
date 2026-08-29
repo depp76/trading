@@ -9,6 +9,14 @@ explicitly separates signal generation from execution). Results are a
 starting point for backtesting/paper trading (trading.md section 6), not
 investment advice; see the disclaimer label built into the tab.
 
+Also hosts the walk-forward backtest UI (trading.md section 6): pick a
+lookback of 1-5 years and run data_fetcher.run_rebalance_backtest() in a
+background thread (RebalanceBacktestThread), showing the result in
+BacktestResultDialog. The backtest reuses the exact same scoring/
+classification functions as the live signal computation above
+(data_fetcher._score_and_rank / _classify_buy_sell_hold), so tuning the
+algorithm in data_fetcher.py changes both consistently.
+
 Unlike the other tabs, this one reads UniverseTab.all_data directly (passed
 in at construction) rather than subscribing to a signal: the read only
 happens once, on demand, when the user clicks "Compute This Week's
@@ -20,13 +28,15 @@ import logging
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-    QTableWidgetItem, QHeaderView, QMessageBox,
+    QTableWidgetItem, QHeaderView, QMessageBox, QComboBox,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
 import trade_db
 from data_fetcher import compute_weekly_rebalance_signals
+from threads.fetch_threads import RebalanceBacktestThread
+from ui.dialogs import BacktestResultDialog
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +70,13 @@ class AutoTradingTab(QWidget):
 
     TOP_N = 20
     BAND_MULTIPLIER = 1.5
+    INITIAL_CAPITAL = 100_000_000.0  # arbitrary notional for the backtest (trading.md section 6)
 
     def __init__(self, universe_tab, parent=None):
         super().__init__(parent)
         self._universe_tab = universe_tab
         self._last_result = None
+        self._backtest_thread = None
         self._build_ui()
 
     # ---UI construction ---
@@ -102,6 +114,38 @@ class AutoTradingTab(QWidget):
         ctrl_row.addWidget(self._as_of_label)
         ctrl_row.addStretch()
         root.addLayout(ctrl_row)
+
+        # Walk-forward backtest controls (trading.md section 6)
+        backtest_row = QHBoxLayout()
+        lookback_lbl = QLabel("Backtest lookback:")
+        lookback_lbl.setFont(create_font(10, style_name="Semilight"))
+        backtest_row.addWidget(lookback_lbl)
+
+        self._lookback_combo = QComboBox()
+        self._lookback_combo.setFont(create_font(10, style_name="Semilight"))
+        for y in (1, 2, 3, 4, 5):
+            self._lookback_combo.addItem(f"{y} Year{'s' if y > 1 else ''}", userData=y)
+        self._lookback_combo.setCurrentIndex(2)  # default 3 years
+        self._lookback_combo.setFixedWidth(110)
+        backtest_row.addWidget(self._lookback_combo)
+
+        self._backtest_btn = QPushButton("▶ Run Backtest")
+        self._backtest_btn.setFont(create_font(10, QFont.Weight.Bold))
+        self._backtest_btn.setFixedHeight(32)
+        self._backtest_btn.setStyleSheet(
+            "QPushButton { background:#8e44ad; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
+            "QPushButton:hover { background:#732d91; }"
+            "QPushButton:disabled { background:#bbb; }"
+        )
+        self._backtest_btn.clicked.connect(self._on_backtest_clicked)
+        backtest_row.addWidget(self._backtest_btn)
+
+        self._backtest_status_label = QLabel("")
+        self._backtest_status_label.setFont(create_font(9, style_name="Semilight"))
+        self._backtest_status_label.setStyleSheet("color:#7f8c8d;")
+        backtest_row.addWidget(self._backtest_status_label)
+        backtest_row.addStretch()
+        root.addLayout(backtest_row)
 
         # Buy / Sell candidate tables side by side
         lists_row = QHBoxLayout()
@@ -223,3 +267,50 @@ class AutoTradingTab(QWidget):
                 cell = QTableWidgetItem(val)
                 cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 tbl.setItem(r, c, cell)
+
+    # ---Backtest (trading.md section 6) ---
+    def _on_backtest_clicked(self):
+        if self._backtest_thread is not None and self._backtest_thread.isRunning():
+            return
+
+        universe_data = getattr(self._universe_tab, "all_data", None) or []
+        tickers = [it.get("ticker") for it in universe_data if it.get("ticker") and not it.get("is_index")]
+        if not tickers:
+            QMessageBox.information(
+                self, "No Data",
+                "Trading Universe has no data yet — refresh it on the Trading Universe tab first.",
+            )
+            return
+
+        lookback_years = self._lookback_combo.currentData()
+        self._backtest_btn.setEnabled(False)
+        self._backtest_status_label.setText(f"Fetching history for {len(tickers)} tickers... (0/{len(tickers)})")
+
+        self._backtest_thread = RebalanceBacktestThread(
+            tickers, lookback_years, self.TOP_N, self.BAND_MULTIPLIER, self.INITIAL_CAPITAL,
+        )
+        self._backtest_thread.progress.connect(self._on_backtest_progress)
+        self._backtest_thread.finished.connect(self._on_backtest_finished)
+        self._backtest_thread.start()
+
+    def _on_backtest_progress(self, done, total):
+        self._backtest_status_label.setText(f"Fetching history... ({done}/{total})")
+
+    def _on_backtest_finished(self, result, error):
+        self._backtest_btn.setEnabled(True)
+        if error:
+            self._backtest_status_label.setText("Backtest failed — see app.log")
+            QMessageBox.warning(self, "Backtest Error", f"Backtest failed:\n{error}")
+            return
+        self._backtest_status_label.setText(
+            f"Last backtest: {result['start_date']} → {result['end_date']}, "
+            f"return {result['summary']['total_return_pct']:+.1f}%"
+        )
+        dlg = BacktestResultDialog(result, parent=self)
+        dlg.exec()
+
+    def collect_threads_to_stop(self):
+        """Return every QThread this tab may have started, for MainWindow.closeEvent
+        (mirrors UniverseTab.collect_threads_to_stop() / TradingHistoryTab's)."""
+        bt = getattr(self, "_backtest_thread", None)
+        return [bt] if bt is not None else []

@@ -2638,6 +2638,126 @@ _REBALANCE_FACTORS = {
 _REBALANCE_MIN_FACTORS = 3  # a stock needs at least this many valid factors to be ranked at all
 
 
+def _extract_live_candidates(universe_data: list) -> list:
+    """Step 1 of the rebalance pipeline: raw factor extraction from live
+    Trading Universe rows. Skips index rows, entries with no ticker, and
+    entries with fewer than _REBALANCE_MIN_FACTORS valid factors."""
+    candidates = []
+    for item in universe_data:
+        if item.get("is_index"):
+            continue
+        ticker = item.get("ticker")
+        if not ticker:
+            continue
+        raw = {}
+        for fname, (extractor, _higher_better) in _REBALANCE_FACTORS.items():
+            try:
+                v = extractor(item)
+                raw[fname] = float(v) if v is not None else None
+            except (TypeError, ValueError):
+                raw[fname] = None
+        if sum(1 for v in raw.values() if v is not None) < _REBALANCE_MIN_FACTORS:
+            continue
+        candidates.append({
+            "ticker": ticker,
+            "name": item.get("name", ticker),
+            "market": item.get("market", ""),
+            "raw": raw,
+        })
+    return candidates
+
+
+def _score_and_rank(candidates: list) -> list:
+    """Steps 2+3 of the rebalance pipeline: z-score each factor across
+    `candidates` (sign-flipped so higher is always better), average into one
+    composite score per stock, sort, and rank.
+
+    Deliberately factored out of compute_weekly_rebalance_signals so the
+    live tab and run_rebalance_backtest() score candidates with exactly the
+    same logic — tuning _REBALANCE_FACTORS/_REBALANCE_MIN_FACTORS here changes
+    both identically, with no risk of the two drifting apart over time.
+
+    `candidates` : list of {ticker, name, market, raw: {factor_name: float|None}}
+    (the shape _extract_live_candidates() and the backtest's per-date
+    snapshot builder both produce). Returns the same list of dicts, each with
+    'score', 'factors' (per-factor z-score after sign-flip), and 'rank' added,
+    sorted best-score-first.
+    """
+    zscores = {fname: {} for fname in _REBALANCE_FACTORS}
+    for fname, (_extractor, higher_better) in _REBALANCE_FACTORS.items():
+        values = np.array(
+            [c["raw"][fname] for c in candidates if c["raw"].get(fname) is not None],
+            dtype=float,
+        )
+        if values.size == 0:
+            continue
+        mean = float(values.mean())
+        std = float(values.std())
+        for c in candidates:
+            v = c["raw"].get(fname)
+            if v is None:
+                continue
+            z = 0.0 if std == 0 else (v - mean) / std
+            zscores[fname][c["ticker"]] = z if higher_better else -z
+
+    ranked = []
+    for c in candidates:
+        z_vals = [
+            zscores[fname][c["ticker"]]
+            for fname in _REBALANCE_FACTORS
+            if c["ticker"] in zscores[fname]
+        ]
+        score = float(np.mean(z_vals)) if z_vals else float("-inf")
+        ranked.append({
+            "ticker": c["ticker"],
+            "name": c["name"],
+            "market": c["market"],
+            "score": score,
+            "factors": {fname: zscores[fname].get(c["ticker"]) for fname in _REBALANCE_FACTORS},
+            "raw": c["raw"],
+        })
+
+    ranked.sort(key=lambda r: r["score"], reverse=True)
+    for i, r in enumerate(ranked, start=1):
+        r["rank"] = i
+    return ranked
+
+
+def _classify_buy_sell_hold(ranked: list, current_holdings, top_n: int, band_multiplier: float) -> dict:
+    """Step 4 of the rebalance pipeline: classify a ranked universe into
+    buy/sell/hold given a set of currently-held tickers. Shared by the live
+    tab and the backtest loop (see _score_and_rank docstring for why sharing
+    matters). `current_holdings` may be any iterable of tickers."""
+    current_holdings = set(current_holdings or [])
+    rank_by_ticker = {r["ticker"]: r["rank"] for r in ranked}
+    sell_threshold_rank = int(top_n * band_multiplier)
+
+    buy_candidates = [
+        r for r in ranked if r["rank"] <= top_n and r["ticker"] not in current_holdings
+    ]
+    hold = [
+        r for r in ranked if r["ticker"] in current_holdings and r["rank"] <= sell_threshold_rank
+    ]
+    sell_candidates = [
+        r for r in ranked if r["ticker"] in current_holdings and r["rank"] > sell_threshold_rank
+    ]
+    # Held tickers absent from the ranked universe entirely (delisted, or no
+    # longer tracked) are also sell candidates.
+    for ticker in current_holdings:
+        if ticker not in rank_by_ticker:
+            sell_candidates.append({
+                "ticker": ticker, "name": ticker, "market": "",
+                "score": None, "factors": {}, "raw": {}, "rank": None,
+            })
+
+    return {
+        "sell_threshold_rank": sell_threshold_rank,
+        "buy_candidates": buy_candidates,
+        "sell_candidates": sell_candidates,
+        "hold": hold,
+    }
+
+
 def compute_weekly_rebalance_signals(
     universe_data: list,
     current_holdings=None,
@@ -2652,6 +2772,11 @@ def compute_weekly_rebalance_signals(
     flipped so higher-z is always "better" (e.g. PER is inverted -- cheaper
     is better), then averaged into one composite score per stock. Stocks are
     ranked by that score; the top `top_n` are the target portfolio.
+
+    See run_rebalance_backtest() for the walk-forward backtest of this same
+    algorithm (trading.md section 6) -- both share _score_and_rank() and
+    _classify_buy_sell_hold() so tuning the factors/thresholds here changes
+    both consistently.
 
     Parameters
     ----------
@@ -2689,103 +2814,376 @@ def compute_weekly_rebalance_signals(
         excluded_count        -- universe items skipped (indices, no ticker, or
                                   fewer than _REBALANCE_MIN_FACTORS valid factors)
     """
-    current_holdings = set(current_holdings or [])
-
-    # ── Step 1: extract raw factor values per stock ──────────────────────
-    candidates = []
-    for item in universe_data:
-        if item.get("is_index"):
-            continue
-        ticker = item.get("ticker")
-        if not ticker:
-            continue
-        raw = {}
-        for fname, (extractor, _higher_better) in _REBALANCE_FACTORS.items():
-            try:
-                v = extractor(item)
-                raw[fname] = float(v) if v is not None else None
-            except (TypeError, ValueError):
-                raw[fname] = None
-        if sum(1 for v in raw.values() if v is not None) < _REBALANCE_MIN_FACTORS:
-            continue
-        candidates.append({
-            "ticker": ticker,
-            "name": item.get("name", ticker),
-            "market": item.get("market", ""),
-            "raw": raw,
-        })
-
+    candidates = _extract_live_candidates(universe_data)
     excluded_count = len(universe_data) - len(candidates)
-
-    # ── Step 2: z-score each factor across all candidates, sign-flipped so
-    # higher is always better ─────────────────────────────────────────────
-    zscores = {fname: {} for fname in _REBALANCE_FACTORS}
-    for fname, (_extractor, higher_better) in _REBALANCE_FACTORS.items():
-        values = np.array(
-            [c["raw"][fname] for c in candidates if c["raw"][fname] is not None],
-            dtype=float,
-        )
-        if values.size == 0:
-            continue
-        mean = float(values.mean())
-        std = float(values.std())
-        for c in candidates:
-            v = c["raw"][fname]
-            if v is None:
-                continue
-            z = 0.0 if std == 0 else (v - mean) / std
-            zscores[fname][c["ticker"]] = z if higher_better else -z
-
-    # ── Step 3: composite score = mean of a stock's available z-scores ───
-    ranked = []
-    for c in candidates:
-        z_vals = [
-            zscores[fname][c["ticker"]]
-            for fname in _REBALANCE_FACTORS
-            if c["ticker"] in zscores[fname]
-        ]
-        score = float(np.mean(z_vals)) if z_vals else float("-inf")
-        ranked.append({
-            "ticker": c["ticker"],
-            "name": c["name"],
-            "market": c["market"],
-            "score": score,
-            "factors": {fname: zscores[fname].get(c["ticker"]) for fname in _REBALANCE_FACTORS},
-            "raw": c["raw"],
-        })
-
-    ranked.sort(key=lambda r: r["score"], reverse=True)
-    for i, r in enumerate(ranked, start=1):
-        r["rank"] = i
-
-    rank_by_ticker = {r["ticker"]: r["rank"] for r in ranked}
-    sell_threshold_rank = int(top_n * band_multiplier)
-
-    buy_candidates = [
-        r for r in ranked if r["rank"] <= top_n and r["ticker"] not in current_holdings
-    ]
-    hold = [
-        r for r in ranked if r["ticker"] in current_holdings and r["rank"] <= sell_threshold_rank
-    ]
-    sell_candidates = [
-        r for r in ranked if r["ticker"] in current_holdings and r["rank"] > sell_threshold_rank
-    ]
-    # Held tickers absent from the ranked universe entirely (delisted, or no
-    # longer tracked in Trading Universe) are also sell candidates.
-    for ticker in current_holdings:
-        if ticker not in rank_by_ticker:
-            sell_candidates.append({
-                "ticker": ticker, "name": ticker, "market": "",
-                "score": None, "factors": {}, "raw": {}, "rank": None,
-            })
+    ranked = _score_and_rank(candidates)
+    classification = _classify_buy_sell_hold(ranked, current_holdings, top_n, band_multiplier)
 
     return {
         "as_of": datetime.now().strftime("%Y-%m-%d"),
         "top_n": top_n,
-        "sell_threshold_rank": sell_threshold_rank,
-        "ranked": ranked,
-        "buy_candidates": buy_candidates,
-        "sell_candidates": sell_candidates,
-        "hold": hold,
         "excluded_count": excluded_count,
+        "ranked": ranked,
+        **classification,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Weekly rebalance walk-forward backtest (trading.md section 6). Layered so
+# each concern can be tuned/extended independently without re-verifying the
+# others:
+#   _compute_historical_factor_series  -- one ticker's full factor history (I/O)
+#   _factor_snapshot_as_of             -- no-lookahead point-in-time read (pure)
+#   _run_walkforward_simulation        -- portfolio simulation (pure, no I/O --
+#                                          unit-testable with synthetic series)
+#   run_rebalance_backtest             -- orchestrates fetch + simulate + benchmark
+# _score_and_rank()/_classify_buy_sell_hold() above are reused unchanged, so
+# the backtest ranks candidates with exactly the same logic as the live tab.
+# ---------------------------------------------------------------------------
+
+def _rebalance_friday_dates(start_date, end_date) -> list:
+    """Every Friday in [start_date, end_date] (both date objects), inclusive.
+    Matches the weekly cadence TradingRecordTab already snapshots assets on."""
+    days_ahead = (4 - start_date.weekday()) % 7  # Monday=0 ... Friday=4
+    d = start_date + timedelta(days=days_ahead)
+    out = []
+    while d <= end_date:
+        out.append(d)
+        d += timedelta(days=7)
+    return out
+
+
+def _compute_historical_factor_series(ticker: str, start_date: str):
+    """One ticker's full historical time series of the 5 price-derived
+    rebalance factors (all but trailing PER -- see run_rebalance_backtest
+    docstring for why). One fetch + one vectorized polars computation,
+    independent of how many rebalance dates the backtest will later slice
+    out of it. Returns None if there's too little history to be useful.
+
+    Column formulas deliberately mirror fetch_historical_changes()'s live
+    'pct' mode exactly, so a backtest snapshot and a live snapshot on the
+    same date agree:
+      - MA20_Div/MA50_Div: via _compute_indicators() (Close / rolling MA * 100)
+      - high52w_diff: (Close - trailing-365-calendar-day max Close) / that max * 100
+      - ret_20d/ret_60d: (Close - Close N *trading bars* ago) / that price * 100
+        (bar-count lookback, matching fetch_historical_changes's index-based
+        old_price lookup -- not a calendar-day lookback)
+    """
+    df = get_historical_data(ticker, start_date)  # reuses _HIST_CACHE
+    if df.is_empty() or df.height < 20:
+        return None
+    ind = _compute_indicators(df, windows=(20,))
+    ind = ind.with_columns([
+        pl.col("Close").rolling_max_by("Date", window_size="365d").alias("_roll_high_52w"),
+        (pl.col("Close") / pl.col("Close").shift(20) - 1).mul(100).alias("ret_20d"),
+        (pl.col("Close") / pl.col("Close").shift(60) - 1).mul(100).alias("ret_60d"),
+    ])
+    ind = ind.with_columns(
+        ((pl.col("Close") - pl.col("_roll_high_52w")) / pl.col("_roll_high_52w") * 100).alias("high52w_diff")
+    )
+    return ind.select(["Date", "Close", "MA20_Div", "MA50_Div", "high52w_diff", "ret_20d", "ret_60d"])
+
+
+def _factor_snapshot_as_of(series, as_of_date):
+    """The row of `series` at or immediately before as_of_date -- the walk-
+    forward no-lookahead guarantee: this never reads a row dated after
+    as_of_date. Returns None if `series` has no data on/before that date."""
+    sub = series.filter(pl.col("Date") <= as_of_date)
+    if sub.is_empty():
+        return None
+    row = sub.tail(1)
+
+    def _get(col):
+        v = row[col][0]
+        return float(v) if v is not None else None
+
+    return {
+        "close": _get("Close"),
+        "ma20_momentum": _get("MA20_Div"),
+        "ma50_momentum": _get("MA50_Div"),
+        "high52w_proximity": _get("high52w_diff"),
+        "ret_20d": _get("ret_20d"),
+        "ret_60d": _get("ret_60d"),
+    }
+
+
+def _run_walkforward_simulation(series_map: dict, rebalance_dates: list, top_n: int,
+                                 band_multiplier: float, initial_capital: float) -> dict:
+    """Pure portfolio simulation over precomputed historical factor series --
+    no I/O, so this is directly unit-testable with synthetic `series_map`
+    data (ticker -> DataFrame as returned by _compute_historical_factor_series).
+
+    Trading rule ("let winners ride"): existing holdings are never resized to
+    rebalance weight -- only entries (buy_candidates) and exits
+    (sell_candidates) trade each week. Sell proceeds plus any idle cash are
+    split evenly across that week's buy_candidates. This models a retail
+    investor executing the weekly buy/sell list rather than a fund fully
+    re-optimizing weights every week, keeping turnover limited to actual
+    signal changes (trading.md section 4). Position sizing beyond this
+    equal-split-of-freed-cash rule is still an open trading.md decision.
+
+    Returns dict: equity_curve, trades, rebalance_log, closed_trade_returns.
+    """
+    cash = initial_capital
+    shares: dict = {}        # ticker -> share count currently held
+    last_price: dict = {}    # ticker -> most recently observed price (data-gap fallback)
+    entry_price: dict = {}   # ticker -> price at which the current holding was opened
+
+    equity_curve = []
+    trades = []
+    rebalance_log = []
+    closed_trade_returns = []
+
+    for d in rebalance_dates:
+        raw_candidates = []
+        prices_today = {}
+        for t, series in series_map.items():
+            snap = _factor_snapshot_as_of(series, d)
+            if snap is None:
+                continue
+            if snap["close"] is not None:
+                prices_today[t] = snap["close"]
+                last_price[t] = snap["close"]
+            raw_candidates.append({
+                "ticker": t, "name": t, "market": "",
+                "raw": {
+                    "value_per": None,  # no cheap historical source -- see module docstring
+                    "ma20_momentum": snap["ma20_momentum"],
+                    "ma50_momentum": snap["ma50_momentum"],
+                    "high52w_proximity": snap["high52w_proximity"],
+                    "ret_20d": snap["ret_20d"],
+                    "ret_60d": snap["ret_60d"],
+                },
+            })
+        raw_candidates = [
+            c for c in raw_candidates
+            if sum(1 for v in c["raw"].values() if v is not None) >= _REBALANCE_MIN_FACTORS
+        ]
+
+        def _mark_to_market():
+            return cash + sum(
+                shares[t] * prices_today.get(t, last_price.get(t, entry_price.get(t, 0.0)))
+                for t in shares
+            )
+
+        if not raw_candidates:
+            equity_curve.append({"date": d.strftime("%Y-%m-%d"), "value": _mark_to_market()})
+            continue
+
+        ranked = _score_and_rank(raw_candidates)
+        current_holdings = set(shares.keys())
+        cls = _classify_buy_sell_hold(ranked, current_holdings, top_n, band_multiplier)
+
+        # -- Execute sells --
+        for r in cls["sell_candidates"]:
+            t = r["ticker"]
+            if t not in shares:
+                continue
+            px = prices_today.get(t, last_price.get(t))
+            if px is None or px <= 0:
+                continue
+            cash += shares[t] * px
+            ep = entry_price.get(t)
+            if ep:
+                closed_trade_returns.append((px - ep) / ep * 100)
+            trades.append({"date": d.strftime("%Y-%m-%d"), "ticker": t, "action": "sell",
+                            "price": px, "shares": shares[t]})
+            del shares[t]
+            entry_price.pop(t, None)
+
+        # -- Execute buys: split available cash evenly across this week's buy candidates --
+        buy_list = [r for r in cls["buy_candidates"] if prices_today.get(r["ticker"], 0) > 0]
+        if buy_list and cash > 0:
+            alloc = cash / len(buy_list)
+            for r in buy_list:
+                t = r["ticker"]
+                px = prices_today[t]
+                qty = alloc / px
+                shares[t] = shares.get(t, 0.0) + qty
+                entry_price[t] = px
+                cash -= qty * px
+                trades.append({"date": d.strftime("%Y-%m-%d"), "ticker": t, "action": "buy",
+                                "price": px, "shares": qty})
+
+        equity_curve.append({"date": d.strftime("%Y-%m-%d"), "value": _mark_to_market()})
+        rebalance_log.append({
+            "date": d.strftime("%Y-%m-%d"),
+            "n_ranked": len(ranked), "n_buy": len(cls["buy_candidates"]),
+            "n_sell": len(cls["sell_candidates"]), "n_hold": len(cls["hold"]),
+        })
+
+    return {
+        "equity_curve": equity_curve,
+        "trades": trades,
+        "rebalance_log": rebalance_log,
+        "closed_trade_returns": closed_trade_returns,
+    }
+
+
+def _summarize_backtest(equity_curve: list, benchmark_curve: list, initial_capital: float,
+                         closed_trade_returns: list, n_rebalances: int, n_trades: int) -> dict:
+    """Performance summary for one run_rebalance_backtest() result. Pure
+    function over the curves/trade list -- independent of how they were
+    produced, so new metrics can be added here without touching the
+    simulation loop."""
+    if not equity_curve:
+        return {
+            "total_return_pct": 0.0, "benchmark_return_pct": 0.0, "cagr_pct": 0.0,
+            "max_drawdown_pct": 0.0, "n_rebalances": 0, "n_trades": 0, "win_rate_pct": 0.0,
+        }
+
+    final_value = equity_curve[-1]["value"]
+    total_return_pct = (final_value / initial_capital - 1) * 100 if initial_capital else 0.0
+
+    benchmark_return_pct = 0.0
+    if benchmark_curve:
+        benchmark_return_pct = (benchmark_curve[-1]["value"] / initial_capital - 1) * 100
+
+    n_days = max(1, (
+        datetime.strptime(equity_curve[-1]["date"], "%Y-%m-%d")
+        - datetime.strptime(equity_curve[0]["date"], "%Y-%m-%d")
+    ).days)
+    years = n_days / 365.25
+    cagr_pct = (
+        ((final_value / initial_capital) ** (1 / years) - 1) * 100
+        if years > 0 and initial_capital > 0 and final_value > 0 else 0.0
+    )
+
+    peak = equity_curve[0]["value"]
+    max_dd = 0.0
+    for pt in equity_curve:
+        peak = max(peak, pt["value"])
+        if peak > 0:
+            max_dd = min(max_dd, (pt["value"] - peak) / peak * 100)
+
+    win_rate_pct = (
+        100.0 * sum(1 for r in closed_trade_returns if r > 0) / len(closed_trade_returns)
+        if closed_trade_returns else 0.0
+    )
+
+    return {
+        "total_return_pct": total_return_pct,
+        "benchmark_return_pct": benchmark_return_pct,
+        "cagr_pct": cagr_pct,
+        "max_drawdown_pct": max_dd,
+        "n_rebalances": n_rebalances,
+        "n_trades": n_trades,
+        "win_rate_pct": win_rate_pct,
+    }
+
+
+def run_rebalance_backtest(
+    tickers: list,
+    lookback_years: int = 3,
+    top_n: int = 20,
+    band_multiplier: float = 1.5,
+    initial_capital: float = 100_000_000.0,
+    benchmark_ticker: str = "KS11",
+    progress_callback=None,
+) -> dict:
+    """Walk-forward backtest of compute_weekly_rebalance_signals's algorithm
+    (trading.md section 6): simulates weekly rebalancing over the past
+    `lookback_years` (clamped to 1-5) using only data available as of each
+    rebalance Friday -- no look-ahead.
+
+    Trailing PER is excluded from the ranking here (unlike the live tab):
+    a *historical* PER time series for every ticker would need historical
+    trailing-12-month EPS per ticker, which isn't cheaply available in bulk
+    from this app's data sources. Ranking instead uses the 5 remaining
+    price-derived factors (MA20/50 divergence, 52-week-high proximity,
+    20D/60D returns) -- see _score_and_rank()/_classify_buy_sell_hold(),
+    reused unchanged from the live path.
+
+    Parameters
+    ----------
+    tickers : list[str] -- universe to backtest (e.g. UniverseTab.all_data's
+        tickers). Every ticker's full history is fetched/cached once via
+        get_historical_data()'s existing _HIST_CACHE, regardless of how many
+        rebalance dates fall in the window -- so re-running with a different
+        top_n/band_multiplier on the same tickers is cheap (no re-fetch).
+    lookback_years : int, clamped to [1, 5].
+    top_n, band_multiplier : same meaning as compute_weekly_rebalance_signals.
+    initial_capital : starting notional (KRW) -- this is a signal/return-shape
+        backtest, not a real-money simulation.
+    benchmark_ticker : FDR ticker for the comparison index (default KOSPI).
+    progress_callback : optional callable(done, total) invoked after each
+        ticker's history fetch completes (the fetch phase only -- the
+        walk-forward simulation itself is fast, pure-Python-loop work).
+
+    Returns
+    -------
+    dict: lookback_years, top_n, band_multiplier, start_date, end_date,
+    equity_curve, benchmark_curve, trades, rebalance_log, summary (see
+    _summarize_backtest), skipped_tickers (too little history to include).
+    """
+    lookback_years = max(1, min(5, int(lookback_years)))
+    end_date = datetime.now().date()
+    # Fetch extra history before the simulated window so the slowest-to-warm-up
+    # factor (52-week high, needs a full year) is already valid on day 1 of
+    # the simulation, not just on day 1 of the raw fetch.
+    fetch_start = end_date - timedelta(days=365 * lookback_years + 400)
+    fetch_start_str = fetch_start.strftime("%Y-%m-%d")
+    sim_start = end_date - timedelta(days=365 * lookback_years)
+
+    # ── Phase 1 (I/O): fetch + compute each ticker's factor history once, in parallel ──
+    series_map = {}
+    skipped_tickers = []
+    with ThreadPoolExecutor(max_workers=20) as exe:
+        futures = {exe.submit(_compute_historical_factor_series, t, fetch_start_str): t for t in tickers}
+        done = 0
+        for fut in as_completed(futures):
+            t = futures[fut]
+            try:
+                s = fut.result()
+            except Exception:
+                logger.warning("Historical factor series failed for ticker=%s", t, exc_info=True)
+                s = None
+            if s is None or s.is_empty():
+                skipped_tickers.append(t)
+            else:
+                series_map[t] = s
+            done += 1
+            if progress_callback:
+                progress_callback(done, len(tickers))
+
+    rebalance_dates = _rebalance_friday_dates(sim_start, end_date)
+
+    # ── Phase 2 (pure): walk-forward portfolio simulation ────────────────
+    sim = _run_walkforward_simulation(series_map, rebalance_dates, top_n, band_multiplier, initial_capital)
+
+    # ── Benchmark curve: buy & hold benchmark_ticker with the same starting capital ──
+    benchmark_curve = []
+    try:
+        bench_df = get_historical_data(benchmark_ticker, fetch_start_str)
+    except Exception:
+        logger.warning("Benchmark history fetch failed for ticker=%s", benchmark_ticker, exc_info=True)
+        bench_df = pl.DataFrame()
+    if not bench_df.is_empty() and rebalance_dates:
+        base_row = bench_df.filter(pl.col("Date") <= rebalance_dates[0])
+        base_price = float(base_row.tail(1)["Close"][0]) if not base_row.is_empty() else float(bench_df["Close"][0])
+        if base_price and base_price > 0:
+            for d in rebalance_dates:
+                sub = bench_df.filter(pl.col("Date") <= d)
+                if sub.is_empty():
+                    continue
+                px = float(sub.tail(1)["Close"][0])
+                benchmark_curve.append({"date": d.strftime("%Y-%m-%d"), "value": initial_capital * px / base_price})
+
+    summary = _summarize_backtest(
+        sim["equity_curve"], benchmark_curve, initial_capital,
+        sim["closed_trade_returns"], len(rebalance_dates), len(sim["trades"]),
+    )
+
+    return {
+        "lookback_years": lookback_years,
+        "top_n": top_n,
+        "band_multiplier": band_multiplier,
+        "start_date": sim_start.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+        "equity_curve": sim["equity_curve"],
+        "benchmark_curve": benchmark_curve,
+        "trades": sim["trades"],
+        "rebalance_log": sim["rebalance_log"],
+        "summary": summary,
+        "skipped_tickers": skipped_tickers,
     }

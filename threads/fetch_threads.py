@@ -5,7 +5,7 @@ Contains:
   IndexMaThread, StockMaThread,
   SingleStockFetchThread, AllDataFetchThread,
   UniverseLightweightFetchThread, PositionPriceFetchThread,
-  AutoBackupThread
+  AutoBackupThread, RebalanceBacktestThread
 """
 import os
 import shutil
@@ -492,3 +492,39 @@ class AutoBackupThread(QThread):
                 shutil.rmtree(os.path.join(archive_dir, old_dir))
             except Exception:
                 logger.warning("Failed to remove old auto-backup dir=%s", old_dir, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Weekly rebalance walk-forward backtest thread (trading.md section 6)
+# ---------------------------------------------------------------------------
+class RebalanceBacktestThread(QThread):
+    """Background thread: data_fetcher.run_rebalance_backtest(). Always run
+    off the UI thread -- it fetches full history for every ticker in the
+    given universe, which for a large universe and a 5-year lookback can
+    take a while even with _HIST_CACHE reuse on repeat runs."""
+    progress = pyqtSignal(int, int)      # done, total tickers fetched so far
+    finished = pyqtSignal(object, str)   # result dict | None, error message ("" on success)
+
+    def __init__(self, tickers, lookback_years, top_n, band_multiplier, initial_capital):
+        super().__init__()
+        self.tickers = tickers
+        self.lookback_years = lookback_years
+        self.top_n = top_n
+        self.band_multiplier = band_multiplier
+        self.initial_capital = initial_capital
+
+    def run(self):
+        from data_fetcher import run_rebalance_backtest
+        try:
+            result = run_rebalance_backtest(
+                self.tickers,
+                lookback_years=self.lookback_years,
+                top_n=self.top_n,
+                band_multiplier=self.band_multiplier,
+                initial_capital=self.initial_capital,
+                progress_callback=lambda done, total: self.progress.emit(done, total),
+            )
+            self.finished.emit(result, "")
+        except Exception as e:
+            logger.warning("Rebalance backtest failed", exc_info=True)
+            self.finished.emit(None, str(e))

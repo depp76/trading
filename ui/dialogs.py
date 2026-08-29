@@ -4,7 +4,7 @@ Split out from: main.py (2026-08-29 feat/3-1-modularize)
 Contains:
   IndexMaDialog, StockMaDialog,
   BuyEditDialog, SellEditDialog, TradeEntryDialog, StockTradeHistoryDialog,
-  TotalAssetsGraphDialog
+  TotalAssetsGraphDialog, BacktestResultDialog
 """
 import logging
 import datetime as _dt
@@ -1819,6 +1819,117 @@ class TotalAssetsGraphDialog(QDialog):
 
         canvas = FigureCanvas(fig)
         layout.addWidget(canvas)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+
+# ---------------------------------------------------------------------------
+# Weekly rebalance backtest result dialog (trading.md section 6)
+# ---------------------------------------------------------------------------
+class BacktestResultDialog(QDialog):
+    """Shows one data_fetcher.run_rebalance_backtest() result: an equity
+    curve (strategy vs benchmark) plus summary stats. Purely a display of an
+    already-computed result dict -- no computation happens in this class,
+    so changes to the backtest engine (data_fetcher.py) never require
+    touching this dialog unless the result dict's shape itself changes."""
+
+    def __init__(self, result: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint | Qt.WindowType.WindowMinimizeButtonHint)
+        self.setWindowTitle("Weekly Rebalance Backtest \u2014 trading.md 3-1")
+        self.resize(900, 650)
+
+        layout = QVBoxLayout(self)
+
+        s = result["summary"]
+        header = QLabel(
+            f"<b>{result['start_date']} \u2192 {result['end_date']}</b> "
+            f"({result['lookback_years']}y, top_n={result['top_n']}, band\u00d7{result['band_multiplier']}) \u2014 "
+            f"Return: <b style='color:{'#c0392b' if s['total_return_pct'] >= 0 else '#2980b9'}'>"
+            f"{s['total_return_pct']:+.1f}%</b> vs benchmark {s['benchmark_return_pct']:+.1f}% | "
+            f"CAGR {s['cagr_pct']:+.1f}% | Max Drawdown {s['max_drawdown_pct']:.1f}% | "
+            f"{s['n_rebalances']} rebalances, {s['n_trades']} trades, win rate {s['win_rate_pct']:.0f}%"
+        )
+        header.setTextFormat(Qt.TextFormat.RichText)
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        if result.get("skipped_tickers"):
+            skipped = QLabel(
+                f"\u26a0\ufe0f Skipped {len(result['skipped_tickers'])} ticker(s) with insufficient history: "
+                + ", ".join(result["skipped_tickers"][:15])
+                + (" ..." if len(result["skipped_tickers"]) > 15 else "")
+            )
+            skipped.setStyleSheet("color:#d35400;")
+            skipped.setWordWrap(True)
+            layout.addWidget(skipped)
+
+        fig = Figure(figsize=(9, 5.5), constrained_layout=True)
+        ax = fig.add_subplot(111)
+
+        equity = result["equity_curve"]
+        bench = result["benchmark_curve"]
+
+        if equity:
+            eq_dates = [datetime.strptime(pt["date"], "%Y-%m-%d") for pt in equity]
+            eq_x = mdates.date2num(eq_dates)
+            eq_y = [pt["value"] for pt in equity]
+            line_eq, = ax.plot(eq_x, eq_y, color="#c0392b", linewidth=2, label="Strategy")
+        else:
+            line_eq = None
+
+        if bench:
+            bn_dates = [datetime.strptime(pt["date"], "%Y-%m-%d") for pt in bench]
+            bn_x = mdates.date2num(bn_dates)
+            bn_y = [pt["value"] for pt in bench]
+            line_bn, = ax.plot(bn_x, bn_y, color="#8e44ad", linewidth=2, linestyle="--", label="Benchmark (KOSPI)")
+        else:
+            line_bn = None
+
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%y.%m"))
+        fig.autofmt_xdate(rotation=25)
+        ax.legend(fontsize=9)
+        ax.grid(True, linestyle=":", alpha=0.5)
+        ax.set_ylabel("Portfolio Value (KRW)")
+        ax.set_title("Weekly Rebalance Backtest \u2014 Strategy vs Benchmark", fontsize=12, fontweight="bold")
+
+        if equity:
+            sc_eq = ax.scatter(eq_x, eq_y, alpha=0)
+            cursors_artists = [sc_eq]
+            sc_bn = None
+            if bench:
+                sc_bn = ax.scatter(bn_x, bn_y, alpha=0)
+                cursors_artists.append(sc_bn)
+
+            cursor = mplcursors.cursor(cursors_artists, hover=2)
+
+            @cursor.connect("add")
+            def on_add(sel):
+                idx = int(sel.index)
+                if sc_bn is not None and sel.artist is sc_bn:
+                    lbl = "Benchmark"
+                    date_str = bench[idx]["date"] if 0 <= idx < len(bench) else ""
+                    val = bench[idx]["value"] if 0 <= idx < len(bench) else 0.0
+                else:
+                    lbl = "Strategy"
+                    date_str = equity[idx]["date"] if 0 <= idx < len(equity) else ""
+                    val = equity[idx]["value"] if 0 <= idx < len(equity) else 0.0
+                sel.annotation.set_text(f"{lbl}\n{date_str}: {val:,.0f} KRW")
+                sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9, edgecolor="gray")
+
+        canvas = FigureCanvas(fig)
+        layout.addWidget(canvas, 1)
+
+        disclaimer = QLabel(
+            "\u26a0\ufe0f Backtest excludes the trailing-PER factor (no cheap bulk historical source) and "
+            "does not model slippage/fees/taxes. Research tool, not investment advice \u2014 "
+            "see trading.md section 6."
+        )
+        disclaimer.setStyleSheet("color:#888; font-size:9pt;")
+        disclaimer.setWordWrap(True)
+        layout.addWidget(disclaimer)
 
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
