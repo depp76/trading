@@ -72,8 +72,10 @@ around.
 
 ## Conventions seen in this codebase
 
-- UI strings and comments are a mix of English and Korean; keep existing language per-region
-  (Korean for user-facing financial terms like 예수금/평가손익, English for structural code).
+- New/edited menus, labels, and comments should be written in English (per user direction,
+  2026-08-29) — do not introduce new Korean UI strings or comments even for financial terms.
+  Existing Korean text already in the codebase (e.g. 예수금/평가손익) is left as-is unless asked
+  to change it; this rule governs new and modified code going forward.
 - Font handling goes through `create_font()` in `main.py` to keep Malgun Gothic Semilight
   consistent — don't set `QFont` directly in new widgets.
 - Large table widgets (`StockTable`, `TradingRecordTab`'s tables) wrap bulk repaints in
