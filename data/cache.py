@@ -71,7 +71,7 @@ _YF_CRUMB_LOCK = threading.Lock()
 # data/collectors/naver.py (real-time price batches, PER lookups, listing
 # pages, investor-trend pages), instead of each call opening a fresh connection.
 _NAVER_SESSION = requests.Session()
-_NAVER_SESSION.mount("https://", HTTPAdapter(pool_maxsize=50))
+_NAVER_SESSION.mount("https://", HTTPAdapter(pool_maxsize=100))
 _NAVER_SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
 
 # Shared session for the Kiwoom Securities REST API (data/collectors/kiwoom.py).
