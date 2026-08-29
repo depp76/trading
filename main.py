@@ -5,6 +5,7 @@ import datetime as _dt
 from dotenv import load_dotenv
 from datetime import datetime
 import trade_db
+from ui import theme
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit,
@@ -13,6 +14,13 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QShortcut, QKeySequence
+
+# roadmap 3-6: read the saved light/dark choice before any widget (or the
+# module-level _FIELD_ERROR_STYLE constant below) is built. Themes are baked
+# into stylesheet strings at construction time across main.py/ui/*.py rather
+# than re-applied live, so this must run before anything else in this file
+# calls theme.c(...).
+theme.init_theme()
 
 def create_font(size: int = 10, weight: QFont.Weight = QFont.Weight.Normal, style_name: str = None) -> QFont:
     font = QFont()
@@ -50,14 +58,11 @@ logger = logging.getLogger(__name__)  # 'main' — module-level logger for main.
 
 import matplotlib
 matplotlib.use("QtAgg")  # noqa: E402
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-import mplcursors
 
-plt.rcParams['font.family'] = ['Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic', 'sans-serif']
-plt.rcParams['axes.unicode_minus'] = False
+# roadmap 3-6: dark_background for every matplotlib Figure created from here
+# on (MA/backtest/total-assets charts in ui/dialogs.py), when dark theme is
+# active. Also (re-)applies the app's font rcParams.
+theme.apply_matplotlib_style()
 
 _HIST_KEYS = ["3d", "5d", "10d", "20d", "60d", "120d"]
 _MARKET_ORDER = {"KOSPI": 0, "KOSDAQ": 1, "NASDAQ 100": 2, "S&P500": 3}
@@ -92,7 +97,7 @@ def _fmt_num_edit(edit: "QLineEdit", text: str, decimal: bool = False) -> None:
 # ---
 # Shared: trade-entry input validation (roadmap 2-5)
 # ---
-_FIELD_ERROR_STYLE = "border: 1px solid #e74c3c; background-color: #fdecea;"
+_FIELD_ERROR_STYLE = f"border: 1px solid {theme.c('error_border')}; background-color: {theme.c('error_bg')};"
 
 
 def _set_field_error(edit: "QLineEdit", message: str = "") -> None:
@@ -178,12 +183,24 @@ class MainWindow(QMainWindow):
         # Add Auto Refresh Checkbox
         self.auto_refresh_cb = QCheckBox("Auto Update (1 min)")
         self.auto_refresh_cb.setFont(create_font(10, QFont.Weight.Bold))
-        self.auto_refresh_cb.setStyleSheet("QCheckBox { color: #0078d4; margin-right: 15px; }")
+        self.auto_refresh_cb.setStyleSheet(f"QCheckBox {{ color: {theme.c('accent')}; margin-right: 15px; }}")
         self.auto_refresh_cb.toggled.connect(self._toggle_global_auto_timer)
         header_layout.addWidget(self.auto_refresh_cb)
         
         # Check by default (this will trigger the toggled signal and start the timer)
         self.auto_refresh_cb.setChecked(True)
+
+        # Dark mode toggle (roadmap 3-6). Themes are baked into stylesheet
+        # strings at widget-construction time across this whole app, so
+        # flipping it live would mean rebuilding every tab from scratch —
+        # instead this just persists the choice and asks for a restart,
+        # matching how other custom_settings.json values already behave.
+        self.dark_mode_cb = QCheckBox("🌙 Dark Mode")
+        self.dark_mode_cb.setFont(create_font(10, QFont.Weight.Bold))
+        self.dark_mode_cb.setStyleSheet(f"QCheckBox {{ color: {theme.c('text_secondary')}; margin-right: 15px; }}")
+        self.dark_mode_cb.setChecked(theme.is_dark())
+        self.dark_mode_cb.toggled.connect(self._on_dark_mode_toggled)
+        header_layout.addWidget(self.dark_mode_cb)
 
         main_layout.addLayout(header_layout)
 
@@ -225,7 +242,7 @@ class MainWindow(QMainWindow):
 
         self.update_time_label = QLabel("Update Time: -")
         self.update_time_label.setFont(create_font(9, style_name="Semilight"))
-        self.update_time_label.setStyleSheet("color: #7f8c8d;")
+        self.update_time_label.setStyleSheet(f"color: {theme.c('text_muted')};")
         status_layout.addWidget(self.update_time_label)
 
         main_layout.addLayout(status_layout)
@@ -278,6 +295,16 @@ class MainWindow(QMainWindow):
 
     def _on_global_auto_timer(self):
         self.universe_tab.auto_update_tick()
+
+    def _on_dark_mode_toggled(self, checked):
+        """Persist the light/dark choice (roadmap 3-6). Takes effect on next
+        launch — see the module docstring in ui/theme.py for why this isn't
+        a live re-theme."""
+        theme.save_theme_choice("dark" if checked else "light")
+        self.statusBar().showMessage(
+            "다크 모드는 앱을 재시작하면 적용됩니다." if checked else "라이트 모드는 앱을 재시작하면 적용됩니다.",
+            8000,
+        )
 
     def _on_thread_status_message(self, msg: str):
         """Show a short-lived progress message from a background fetch thread
@@ -333,62 +360,72 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app_font = create_font(10, style_name="Semilight")
     app.setFont(app_font)
-    app.setStyleSheet("""
-        QMainWindow { background-color: #f0f0f0; }
-        QTableWidget {
-            background-color: white;
-            alternate-background-color: #f9f9f9;
-            gridline-color: #d0d0d0;
+    # roadmap 3-6: native widget chrome (menus, scrollbars, disabled text)
+    # that the QSS below doesn't reach.
+    app.setPalette(theme.build_qt_palette())
+    app.setStyleSheet(f"""
+        QMainWindow {{ background-color: {theme.c('window_bg')}; }}
+        QTableWidget {{
+            background-color: {theme.c('table_bg')};
+            alternate-background-color: {theme.c('table_alt_bg')};
+            gridline-color: {theme.c('gridline')};
+            color: {theme.c('text')};
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QHeaderView::section {
-            background-color: #e0e0e0;
+        }}
+        QHeaderView::section {{
+            background-color: {theme.c('header_bg')};
+            color: {theme.c('text')};
             padding: 4px;
-            border: 1px solid #d0d0d0;
+            border: 1px solid {theme.c('border')};
             font-weight: bold;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QLineEdit {
+        }}
+        QLineEdit {{
+            background-color: {theme.c('input_bg')};
+            color: {theme.c('text')};
             padding: 5px;
-            border: 1px solid #c0c0c0;
+            border: 1px solid {theme.c('border_input')};
             border-radius: 4px;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QComboBox {
+        }}
+        QComboBox {{
+            background-color: {theme.c('input_bg')};
+            color: {theme.c('text')};
             padding: 5px;
-            border: 1px solid #c0c0c0;
+            border: 1px solid {theme.c('border_input')};
             border-radius: 4px;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QPushButton {
+        }}
+        QPushButton {{
             padding: 8px 16px;
-            background-color: #0078d4;
+            background-color: {theme.c('accent')};
             color: white;
             border: none;
             border-radius: 4px;
             font-weight: bold;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QPushButton:hover { background-color: #005a9e; }
-        QPushButton:disabled { background-color: #cccccc; }
-        QPushButton:checked { background-color: #005a9e; border: 2px solid #003f7f; }
-        
-        QTabWidget::pane {
-            border: 1px solid #d0d0d0;
-            background: white;
+        }}
+        QPushButton:hover {{ background-color: {theme.c('accent_hover')}; }}
+        QPushButton:disabled {{ background-color: {theme.c('border')}; }}
+        QPushButton:checked {{ background-color: {theme.c('accent_hover')}; border: 2px solid {theme.c('accent')}; }}
+
+        QTabWidget::pane {{
+            border: 1px solid {theme.c('border')};
+            background: {theme.c('tab_selected_bg')};
             border-radius: 4px;
-        }
-        QTabBar::tab {
-            background: #e0e0e0;
-            border: 1px solid #d0d0d0;
+        }}
+        QTabBar::tab {{
+            background: {theme.c('tab_bg')};
+            color: {theme.c('text')};
+            border: 1px solid {theme.c('border')};
             padding: 10px 30px;
             font-weight: bold;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QTabBar::tab:selected {
-            background: white;
-            border-bottom: 2px solid #0078d4;
-        }
+        }}
+        QTabBar::tab:selected {{
+            background: {theme.c('tab_selected_bg')};
+            border-bottom: 2px solid {theme.c('accent')};
+        }}
     """)
 
     window = MainWindow()

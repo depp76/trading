@@ -27,6 +27,8 @@ from matplotlib.figure import Figure
 from matplotlib.collections import PolyCollection
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
+from ui import theme
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,7 +105,8 @@ class IndexMaDialog(QDialog):
                     val = sel.target[1]
                     lbl = sel.artist.get_label()
                     sel.annotation.set_text(f"{lbl}\n{date_str}: {val:,.0f}")
-                    sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9, edgecolor="gray")
+                    sel.annotation.set_color(theme.c("text"))
+                    sel.annotation.get_bbox_patch().set(fc=theme.c("panel_bg"), alpha=0.9, edgecolor="gray")
             else:
                 ax.text(0.5, 0.5, f"Failed to load\n{err or ''}",
                         ha="center", va="center", transform=ax.transAxes,
@@ -584,8 +587,9 @@ class StockMaDialog(QDialog):
                         sel.annotation.set_text(txt)
                         sel.annotation.set_fontfamily("monospace")
                         sel.annotation.set_fontsize(8.5)
+                        sel.annotation.set_color(theme.c("text"))
                         sel.annotation.get_bbox_patch().set(
-                            fc="white", alpha=0.93, edgecolor="#2980b9",
+                            fc=theme.c("panel_bg"), alpha=0.93, edgecolor="#2980b9",
                             boxstyle="round,pad=0.5"
                         )
                         sel.annotation.arrow_patch.set(arrowstyle="->", color="#2980b9")
@@ -633,8 +637,9 @@ class StockMaDialog(QDialog):
                         sel.annotation.set_text(txt)
                         sel.annotation.set_fontfamily("monospace")
                         sel.annotation.set_fontsize(8.5)
+                        sel.annotation.set_color(theme.c("text"))
                         sel.annotation.get_bbox_patch().set(
-                            fc="white", alpha=0.93, edgecolor="#e67e22",
+                            fc=theme.c("panel_bg"), alpha=0.93, edgecolor="#e67e22",
                             boxstyle="round,pad=0.5"
                         )
                         sel.annotation.arrow_patch.set(arrowstyle="->", color="#e67e22")
@@ -714,7 +719,8 @@ class StockMaDialog(QDialog):
                                        f"Vol:   {v_str}")
 
                         sel.annotation.set_text(txt)
-                        sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9, edgecolor="gray")
+                        sel.annotation.set_color(theme.c("text"))
+                        sel.annotation.get_bbox_patch().set(fc=theme.c("panel_bg"), alpha=0.9, edgecolor="gray")
                 except Exception as e:
                     sel.annotation.set_text("Data load error")
 
@@ -1347,7 +1353,7 @@ class TradeEntryDialog(QDialog):
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
 
-        save_btn.setStyleSheet("background-color: #0078d4; color: white; padding: 5px;")
+        save_btn.setStyleSheet(f"background-color: {theme.c('accent')}; color: white; padding: 5px;")
         btn_box.addWidget(save_btn)
         btn_box.addWidget(cancel_btn)
 
@@ -1475,7 +1481,7 @@ class StockTradeHistoryDialog(QDialog):
             def paintSection(self, painter, rect, logical_index):
                 if logical_index in _footer_rows:
                     painter.save()
-                    painter.fillRect(rect, QColor("#ffffff"))
+                    painter.fillRect(rect, QColor(theme.c("table_bg")))
                     painter.restore()
                 else:
                     super().paintSection(painter, rect, logical_index)
@@ -1695,16 +1701,16 @@ class StockTradeHistoryDialog(QDialog):
         close_btn = QPushButton("Close")
         close_btn.setFixedHeight(30)
         close_btn.setFixedWidth(100)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {theme.c('accent')};
                 color: white;
                 border-radius: 4px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #005a9e;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {theme.c('accent_hover')};
+            }}
         """)
         close_btn.clicked.connect(self.accept)
 
@@ -1815,7 +1821,8 @@ class TotalAssetsGraphDialog(QDialog):
                     val_str = f"{val:+.1f}%"
 
                 sel.annotation.set_text(f"{lbl}\n{date_str}: {val_str}")
-                sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9, edgecolor="gray")
+                sel.annotation.set_color(theme.c("text"))
+                sel.annotation.get_bbox_patch().set(fc=theme.c("panel_bg"), alpha=0.9, edgecolor="gray")
 
         canvas = FigureCanvas(fig)
         layout.addWidget(canvas)

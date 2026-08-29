@@ -21,6 +21,7 @@ from PyQt6.QtGui import QColor, QFont
 from data_fetcher import get_usd_krw_rate_for_date, get_index_close_for_date
 from ui.widgets import GroupedHeaderView
 from ui.dialogs import TotalAssetsGraphDialog
+from ui import theme
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ class TradingRecordTab(QWidget):
         self._date_combo.setFont(create_font(10, style_name="Semilight"))
         self._date_combo.setFixedWidth(150)
         self._date_combo.setStyleSheet(
-            "QComboBox { border:1px solid #ccc; border-radius:4px; padding:4px 6px; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 10pt; }"
+            f"QComboBox {{ border:1px solid {theme.c('border_input')}; border-radius:4px; padding:4px 6px; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 10pt; }}"
         )
         for label, _ in self._friday_dates():
             self._date_combo.addItem(label)
@@ -83,7 +84,7 @@ class TradingRecordTab(QWidget):
         self._asset_edit.setFixedWidth(120)
         self._asset_edit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._asset_edit.setStyleSheet(
-            "QLineEdit { border:1px solid #ccc; border-radius:4px; padding:4px 6px; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 10pt; }"
+            f"QLineEdit {{ border:1px solid {theme.c('border_input')}; border-radius:4px; padding:4px 6px; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 10pt; }}"
         )
         self._asset_edit.textEdited.connect(self._fmt_asset_input)
 
@@ -91,8 +92,8 @@ class TradingRecordTab(QWidget):
         add_btn.setFont(create_font(10, QFont.Weight.Bold))
         add_btn.setFixedHeight(32)
         add_btn.setStyleSheet(
-            "QPushButton { background:#0078d4; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; }"
-            "QPushButton:hover { background:#005a9e; }"
+            f"QPushButton {{ background:{theme.c('accent')}; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; }}"
+            f"QPushButton:hover {{ background:{theme.c('accent_hover')}; }}"
         )
         add_btn.clicked.connect(self._add_record)
 
@@ -128,7 +129,7 @@ class TradingRecordTab(QWidget):
         self.live_asset_lbl.setReadOnly(True)
         self.live_asset_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.live_asset_lbl.setFont(create_font(10, QFont.Weight.Bold))
-        self.live_asset_lbl.setStyleSheet("QLineEdit { background:transparent; color:#2c3e50; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }")
+        self.live_asset_lbl.setStyleSheet(f"QLineEdit {{ background:transparent; color:{theme.c('text')}; border:1px solid {theme.c('border_input')}; border-radius:4px; padding:3px 6px; }}")
         self.live_asset_lbl.setFixedWidth(120)
         
         live_diff_title = QLabel("Weekly P/L:")
@@ -138,7 +139,7 @@ class TradingRecordTab(QWidget):
         self.live_diff_lbl.setReadOnly(True)
         self.live_diff_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.live_diff_lbl.setFont(create_font(10, QFont.Weight.Bold))
-        self.live_diff_lbl.setStyleSheet("QLineEdit { background:transparent; color:#2c3e50; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }")
+        self.live_diff_lbl.setStyleSheet(f"QLineEdit {{ background:transparent; color:{theme.c('text')}; border:1px solid {theme.c('border_input')}; border-radius:4px; padding:3px 6px; }}")
         self.live_diff_lbl.setFixedWidth(150)
 
         ctrl.addWidget(lbl_date)
@@ -200,7 +201,7 @@ class TradingRecordTab(QWidget):
             self._table.horizontalHeader().setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Fixed)
             self._table.setColumnWidth(col_idx, width)
         self._table.setStyleSheet(
-            "QTableWidget { gridline-color: #d0d0d0; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 9pt; }"
+            f"QTableWidget {{ gridline-color: {theme.c('gridline')}; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 9pt; }}"
             "QTableWidget::item { padding: 1px 3px; }"
         )
         self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
@@ -618,13 +619,13 @@ class TradingRecordTab(QWidget):
             if last_total > 0:
                 diff = curr_val - last_total
                 ratio = (diff / last_total) * 100
-                color = "#c0392b" if diff > 0 else ("#2980b9" if diff < 0 else "#2c3e50")
+                color = "#c0392b" if diff > 0 else ("#2980b9" if diff < 0 else theme.c('text'))
                 sign = "+" if diff > 0 else ""
                 self.live_diff_lbl.setText(f"{sign}{diff:,.0f} ({sign}{ratio:.2f}%)")
-                self.live_diff_lbl.setStyleSheet(f"QLineEdit {{ background:transparent; color: {color}; font-weight: bold; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }}")
+                self.live_diff_lbl.setStyleSheet(f"QLineEdit {{ background:transparent; color: {color}; font-weight: bold; border:1px solid {theme.c('border_input')}; border-radius:4px; padding:3px 6px; }}")
             else:
                 self.live_diff_lbl.setText("-")
-                self.live_diff_lbl.setStyleSheet("QLineEdit { background:transparent; color: #2c3e50; font-weight: bold; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }")
+                self.live_diff_lbl.setStyleSheet(f"QLineEdit {{ background:transparent; color: {theme.c('text')}; font-weight: bold; border:1px solid {theme.c('border_input')}; border-radius:4px; padding:3px 6px; }}")
         else:
             self.live_diff_lbl.setText("-")
-            self.live_diff_lbl.setStyleSheet("QLineEdit { background:transparent; color: #2c3e50; font-weight: bold; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }")
+            self.live_diff_lbl.setStyleSheet(f"QLineEdit {{ background:transparent; color: {theme.c('text')}; font-weight: bold; border:1px solid {theme.c('border_input')}; border-radius:4px; padding:3px 6px; }}")
