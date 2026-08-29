@@ -275,7 +275,13 @@ class TradingRecordTab(QWidget):
 
     # ---JSON load/save ---
     def _load_records(self):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self._JSON_FILE)
+        # Plain relative path (matches ui/universe_tab.py's custom_settings.json /
+        # universe_cache.json convention): the app is always launched from the
+        # project root, so this resolves there via cwd. Using
+        # os.path.dirname(os.path.abspath(__file__)) here (as this code did
+        # before the Phase 4 move out of main.py) would instead resolve to
+        # ui/, since that's this file's own directory now.
+        path = self._JSON_FILE
         try:
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
@@ -286,7 +292,7 @@ class TradingRecordTab(QWidget):
         self._refresh_table()
 
     def _save_records(self):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self._JSON_FILE)
+        path = self._JSON_FILE
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(self._records, f, indent=2, ensure_ascii=False)
