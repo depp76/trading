@@ -146,14 +146,14 @@ def _mk_field_validator(edit: "QLineEdit", check_fn, error_msg: str):
     return _run
 
 
-# --- Phase 3-1: threads/ 패키지로 분리 ---
+# --- Phase 3-1: split out to the threads/ package ---
 from threads.fetch_threads import AutoBackupThread
 
-# --- Phase 4: ui/history_tab.py, ui/assets_tab.py 로 분리 ---
+# --- Phase 4: split out to ui/history_tab.py, ui/assets_tab.py ---
 from ui.history_tab import TradingHistoryTab
 from ui.assets_tab import TradingRecordTab
 
-# --- Phase 5: ui/universe_tab.py 로 분리 ---
+# --- Phase 5: split out to ui/universe_tab.py ---
 from ui.universe_tab import UniverseTab
 
 
@@ -212,7 +212,7 @@ class MainWindow(QMainWindow):
         self.trading_history_tab.status_message.connect(self._on_thread_status_message)
 
         # Native status bar: shows short-lived progress text from background fetch threads
-        # (e.g. "KOSPI 시세 조회 중… (3/5)", "Yahoo Finance 응답 대기 중…").
+        # (e.g. "Fetching KOSPI quotes... (3/5)", "Waiting for Yahoo Finance response...").
         self.statusBar().showMessage("Ready")
 
         # Initialise the SQLite database (creates tables + migrates legacy JSON on first run).

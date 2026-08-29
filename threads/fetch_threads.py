@@ -1,7 +1,7 @@
-"""threads/fetch_threads.py — Background QThread classes (Phase 3-1 분리)
+"""threads/fetch_threads.py — Background QThread classes (Phase 3-1 split)
 
-분리 출처: main.py (2026-08-29 feat/3-1-modularize)
-포함 클래스:
+Split out from: main.py (2026-08-29 feat/3-1-modularize)
+Contains:
   IndexMaThread, StockMaThread,
   SingleStockFetchThread, AllDataFetchThread,
   UniverseLightweightFetchThread, PositionPriceFetchThread,
@@ -199,10 +199,10 @@ class UniverseLightweightFetchThread(QThread):
 
             prices_dict = {}
             if kr_tickers:
-                self.status_message.emit(f"국내 시세 조회 중… (Naver, {len(kr_tickers)}종목)")
+                self.status_message.emit(f"Fetching KR quotes... (Naver, {len(kr_tickers)} tickers)")
                 prices_dict.update(fetch_naver_realtime_prices(kr_tickers))
             if us_yf_tickers:
-                self.status_message.emit("Yahoo Finance 응답 대기 중…")
+                self.status_message.emit("Waiting for Yahoo Finance response...")
                 prices_dict.update(fetch_us_realtime_prices(us_yf_tickers))
 
             updated_count = 0
@@ -263,7 +263,7 @@ class PositionPriceFetchThread(QThread):
 
         # ---Build name - KRX code mapping ---
         name_to_info: dict = {}
-        self.status_message.emit("종목 코드 조회 중…")
+        self.status_message.emit("Looking up ticker codes...")
         try:
             # Use cached listings with pre-computed NameNorm (no extra .copy() or regex per call)
             df_krx = _get_listing_with_norm('KRX-DESC')
@@ -312,7 +312,7 @@ class PositionPriceFetchThread(QThread):
         unique_codes = list({v["code"] for v in name_to_info.values()})
         price_map: dict = {}
         if unique_codes:
-            self.status_message.emit(f"국내 시세 조회 중… (Naver, {len(unique_codes)}종목)")
+            self.status_message.emit(f"Fetching KR quotes... (Naver, {len(unique_codes)} tickers)")
             try:
                 price_map = fetch_naver_realtime_prices(unique_codes)
             except Exception as e:
@@ -334,7 +334,7 @@ class PositionPriceFetchThread(QThread):
         us_price_map: dict = {}
         us_price_map_usd: dict = {}
         if us_names:
-            self.status_message.emit("Yahoo Finance 응답 대기 중…")
+            self.status_message.emit("Waiting for Yahoo Finance response...")
             try:
                 from data_fetcher import yf_quote_batch
                 fx_rate = get_usd_krw_rate()
@@ -472,7 +472,7 @@ class AutoBackupThread(QThread):
 
             self._prune_old_backups()
             logger.info("Auto-backup completed: %s (%s)", dest_dir, ", ".join(existing))
-            self.backup_done.emit(f"자동 백업 완료: {dest_dir}")
+            self.backup_done.emit(f"Auto-backup complete: {dest_dir}")
         except Exception:
             logger.warning("Auto-backup failed", exc_info=True)
 

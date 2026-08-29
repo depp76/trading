@@ -2364,9 +2364,9 @@ def fetch_investor_trend(ticker: str, days: int = 60) -> list:
         body = {
             "dt": today_str,
             "stk_cd": stk_cd,
-            "amt_qty_tp": "2",   # 2: quantity (수량)
-            "trde_tp": "0",      # 0: net buy (순매수)
-            "unit_tp": "1",      # 1: single share (단주)
+            "amt_qty_tp": "2",   # 2: quantity
+            "trde_tp": "0",      # 0: net buy
+            "unit_tp": "1",      # 1: single share
         }
 
         try:

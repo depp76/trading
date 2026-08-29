@@ -1,7 +1,7 @@
-"""ui/widgets.py — Reusable UI widget classes (Phase 3-1 분리)
+"""ui/widgets.py — Reusable UI widget classes (Phase 3-1 split)
 
-분리 출처: main.py (2026-08-29 feat/3-1-modularize)
-포함 클래스:
+Split out from: main.py (2026-08-29 feat/3-1-modularize)
+Contains:
   FilterPopup, FilterableHeader, StockTable, GroupedHeaderView
 """
 from PyQt6.QtWidgets import (

@@ -1,12 +1,15 @@
 """gemini_helper.py — Gemini API helpers for Portfolio Management.
 
-두 가지 기능을 제공합니다:
+Provides two features:
   1. portfolio_diagnosis(open_data, closed_data) → str
-       보유 포지션의 리스크 분산도·성과·섹터 집중도를 분석해 한국어 안내를 반환합니다.
+       Analyses risk diversification, performance, and sector concentration of held
+       positions and returns Korean-language guidance (the prompt asks Gemini to
+       respond in Korean, since this feature's output is meant for a Korean-speaking
+       end user — see the prompt text in portfolio_diagnosis()).
   2. nl_to_filter(nl_query, columns) → dict | None
-       자연어 필터 쿼리를 StockTable 컬럼 필터 조건 dict으로 변환합니다.
+       Converts a natural-language filter query into a StockTable column-filter dict.
 
-API 키는 .env의 GOOGLE_API_KEY를 사용합니다.
+Uses GOOGLE_API_KEY from .env.
 """
 
 import os
@@ -154,7 +157,7 @@ def portfolio_diagnosis(open_data: list[dict], closed_data: list[dict]) -> str:
     try:
         return _generate(prompt)
     except Exception as e:
-        logger.warning("portfolio_diagnosis API 호출 실패: %s", e, exc_info=True)
+        logger.warning("portfolio_diagnosis API call failed: %s", e, exc_info=True)
         return f"⚠️ AI 분석 중 오류가 발생했습니다:\n{e}"
 
 
@@ -232,11 +235,11 @@ def nl_to_filter(nl_query: str) -> dict | None:
         data = json.loads(raw)
         # Basic validation
         if not isinstance(data, dict):
-            raise ValueError("응답이 dict가 아닙니다")
+            raise ValueError("Response is not a dict")
         data.setdefault("text_filter", "")
         data.setdefault("conditions", [])
         data.setdefault("explanation", "")
         return data
     except Exception as e:
-        logger.warning("nl_to_filter API 호출 실패: %s", e, exc_info=True)
+        logger.warning("nl_to_filter API call failed: %s", e, exc_info=True)
         return None

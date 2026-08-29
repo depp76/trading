@@ -1,6 +1,6 @@
-"""threads/realtime.py — RealtimePriceThread (Phase 3-1 분리)
+"""threads/realtime.py — RealtimePriceThread (Phase 3-1 split)
 
-분리 출처: main.py L176-198 (2026-08-29 feat/3-1-modularize)
+Split out from: main.py L176-198 (2026-08-29 feat/3-1-modularize)
 """
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -17,11 +17,11 @@ class RealtimePriceThread(QThread):
     def run(self):
         prices = {}
         if self.kr_tickers:
-            self.status_message.emit(f"국내 시세 조회 중… (Naver, {len(self.kr_tickers)}종목)")
+            self.status_message.emit(f"Fetching KR quotes... (Naver, {len(self.kr_tickers)} tickers)")
             from data_fetcher import fetch_naver_realtime_prices
             prices.update(fetch_naver_realtime_prices(self.kr_tickers))
         if self.us_tickers:
-            self.status_message.emit("Yahoo Finance 응답 대기 중…")
+            self.status_message.emit("Waiting for Yahoo Finance response...")
             from data_fetcher import fetch_us_realtime_prices, get_usd_krw_rate
             fx_rate = get_usd_krw_rate()
             us_prices = fetch_us_realtime_prices(self.us_tickers)

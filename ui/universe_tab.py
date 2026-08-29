@@ -1,7 +1,7 @@
-"""ui/universe_tab.py — UniverseTab (Phase 5 분리)
+"""ui/universe_tab.py — UniverseTab (Phase 5 split)
 
-분리 출처: main.py MainWindow (2026-08-29 feat/3-1-modularize, Phase 5)
-포함 클래스:
+Split out from: main.py MainWindow (2026-08-29 feat/3-1-modularize, Phase 5)
+Contains:
   UniverseTab — "Trading Universe" tab: watchlist table, ticker add/search/AI
   filter controls, and all market-data-refresh orchestration that used to
   live directly on MainWindow.
@@ -591,7 +591,7 @@ class UniverseTab(QWidget):
     def on_market_progress(self, market, current, total):
         self.market_status[market] = f"Loading ({current}/{total})"
         self.update_status_display()
-        self.status_message.emit(f"{market} 시세 조회 중… ({current}/{total})")
+        self.status_message.emit(f"Fetching {market} quotes... ({current}/{total})")
 
     def update_status_display(self):
         parts = " | ".join(f"{m}: {s}" for m, s in self.market_status.items())

@@ -1,7 +1,7 @@
-"""ui/history_tab.py — TradingHistoryTab (Phase 4 분리)
+"""ui/history_tab.py — TradingHistoryTab (Phase 4 split)
 
-분리 출처: main.py (2026-08-29 feat/3-1-modularize, Phase 4)
-포함 클래스:
+Split out from: main.py (2026-08-29 feat/3-1-modularize, Phase 4)
+Contains:
   TradingHistoryTab
 """
 import logging

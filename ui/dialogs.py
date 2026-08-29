@@ -1,7 +1,7 @@
-"""ui/dialogs.py — Dialog classes (Phase 3-1 분리)
+"""ui/dialogs.py — Dialog classes (Phase 3-1 split)
 
-분리 출처: main.py (2026-08-29 feat/3-1-modularize)
-포함 클래스:
+Split out from: main.py (2026-08-29 feat/3-1-modularize)
+Contains:
   IndexMaDialog, StockMaDialog,
   BuyEditDialog, SellEditDialog, TradeEntryDialog, StockTradeHistoryDialog,
   TotalAssetsGraphDialog
@@ -1127,11 +1127,11 @@ class BuyEditDialog(QDialog):
 
         # ---Real-time validation: red border + tooltip on bad input (roadmap 2-5) ---
         self._val_date = _mk_field_validator(
-            self.buy_date_edit, _validate_date_str, "날짜 형식이 올바르지 않습니다 (YYYY-MM-DD)")
+            self.buy_date_edit, _validate_date_str, "Invalid date format (YYYY-MM-DD)")
         self._val_price = _mk_field_validator(
-            self.buy_price_edit, _validate_positive_number, "0보다 큰 숫자를 입력하세요")
+            self.buy_price_edit, _validate_positive_number, "Enter a number greater than 0")
         self._val_qty = _mk_field_validator(
-            self.buy_qty_edit, _validate_positive_number, "0보다 큰 숫자를 입력하세요")
+            self.buy_qty_edit, _validate_positive_number, "Enter a number greater than 0")
         self.buy_date_edit.textChanged.connect(self._val_date)
         self.buy_price_edit.textChanged.connect(self._val_price)
         self.buy_qty_edit.textChanged.connect(self._val_qty)
@@ -1145,7 +1145,7 @@ class BuyEditDialog(QDialog):
         price_ok = self._val_price()
         qty_ok = self._val_qty()
         if not (date_ok and price_ok and qty_ok):
-            QMessageBox.warning(self, "Input Error", "입력값을 확인하세요 (빨간 테두리로 표시된 항목).")
+            QMessageBox.warning(self, "Input Error", "Please check the highlighted fields (shown with a red border).")
             return
 
         def to_f(val):
@@ -1234,11 +1234,11 @@ class SellEditDialog(QDialog):
                 return False
 
         self._val_sell_date = _mk_field_validator(
-            self.sell_date_edit, _validate_sell_date, "날짜 형식이 올바르지 않습니다 (YYYY-MM-DD)")
+            self.sell_date_edit, _validate_sell_date, "Invalid date format (YYYY-MM-DD)")
         self._val_sell_price = _mk_field_validator(
-            self.sell_price_edit, _validate_sell_amount_field, "매도일 입력 시 0보다 큰 숫자가 필요합니다")
+            self.sell_price_edit, _validate_sell_amount_field, "A number greater than 0 is required when a sell date is entered")
         self._val_sell_qty = _mk_field_validator(
-            self.sell_qty_edit, _validate_sell_amount_field, "매도일 입력 시 0보다 큰 숫자가 필요합니다")
+            self.sell_qty_edit, _validate_sell_amount_field, "A number greater than 0 is required when a sell date is entered")
         self.sell_date_edit.textChanged.connect(self._val_sell_date)
         self.sell_date_edit.textChanged.connect(self._val_sell_price)
         self.sell_date_edit.textChanged.connect(self._val_sell_qty)
@@ -1253,7 +1253,7 @@ class SellEditDialog(QDialog):
         price_ok = self._val_sell_price()
         qty_ok = self._val_sell_qty()
         if not (date_ok and price_ok and qty_ok):
-            QMessageBox.warning(self, "Input Error", "입력값을 확인하세요 (빨간 테두리로 표시된 항목).")
+            QMessageBox.warning(self, "Input Error", "Please check the highlighted fields (shown with a red border).")
             return
 
         sell_date_str = self.sell_date_edit.text().strip()
@@ -1264,7 +1264,7 @@ class SellEditDialog(QDialog):
                 if buy_d > sell_d:
                     QMessageBox.warning(
                         self, "Input Error",
-                        f"매수일({self._buy_date_str})이 매도일({sell_date_str})보다 늦을 수 없습니다.",
+                        f"Buy date ({self._buy_date_str}) cannot be later than sell date ({sell_date_str}).",
                     )
                     return
             except ValueError:
@@ -1331,11 +1331,11 @@ class TradeEntryDialog(QDialog):
 
         # ---Real-time validation (roadmap 2-5) ---
         self._val_date = _mk_field_validator(
-            self.buy_date_edit, _validate_date_str, "날짜 형식이 올바르지 않습니다 (YYYY-MM-DD)")
+            self.buy_date_edit, _validate_date_str, "Invalid date format (YYYY-MM-DD)")
         self._val_price = _mk_field_validator(
-            self.buy_price_edit, _validate_positive_number, "0보다 큰 숫자를 입력하세요")
+            self.buy_price_edit, _validate_positive_number, "Enter a number greater than 0")
         self._val_qty = _mk_field_validator(
-            self.qty_edit, _validate_positive_number, "0보다 큰 숫자를 입력하세요")
+            self.qty_edit, _validate_positive_number, "Enter a number greater than 0")
         self.buy_date_edit.textChanged.connect(self._val_date)
         self.buy_price_edit.textChanged.connect(self._val_price)
         self.qty_edit.textChanged.connect(self._val_qty)
@@ -1364,7 +1364,7 @@ class TradeEntryDialog(QDialog):
         price_ok = self._val_price()
         qty_ok = self._val_qty()
         if not (date_ok and price_ok and qty_ok):
-            QMessageBox.warning(self, "Input Error", "입력값을 확인하세요 (빨간 테두리로 표시된 항목).")
+            QMessageBox.warning(self, "Input Error", "Please check the highlighted fields (shown with a red border).")
             return
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
