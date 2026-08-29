@@ -466,6 +466,17 @@ class AutoBackupThread(QThread):
             if not existing:
                 return  # nothing to back up yet (e.g. very first run)
 
+            if "portfolio.db" in existing:
+                try:
+                    import trade_db
+                    trade_db.checkpoint_wal()
+                except Exception:
+                    logger.warning(
+                        "WAL checkpoint before backup failed -- proceeding with the "
+                        "copy anyway, but it may miss the most recent commits",
+                        exc_info=True,
+                    )
+
             os.makedirs(dest_dir, exist_ok=True)
             for fname in existing:
                 shutil.copy2(fname, os.path.join(dest_dir, fname))

@@ -47,6 +47,27 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def checkpoint_wal() -> None:
+    """Flush all committed data out of portfolio.db-wal into the main
+    portfolio.db file. In WAL mode, the most recent commits can live only in
+    the -wal sidecar file until checkpointed -- a plain file copy of
+    portfolio.db alone (e.g. AutoBackupThread) can otherwise miss them.
+    Call this immediately before copying/backing up the db file itself.
+    """
+    conn = _connect()
+    try:
+        busy, _log_frames, _checkpointed = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if busy:
+            # Another connection was mid-transaction, so the checkpoint could
+            # only do a partial flush -- rare for this single-user app (every
+            # trade_db call opens/commits/closes immediately), but worth a
+            # heads-up since a backup taken right now may still be incomplete.
+            print("[trade_db] WAL checkpoint could not fully complete (another connection is active); "
+                  "a backup taken right now may miss the most recent commit(s).")
+    finally:
+        conn.close()
+
+
 # ── Schema initialisation ──────────────────────────────────────────────────────
 
 def init_db() -> None:
