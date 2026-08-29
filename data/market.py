@@ -1,7 +1,7 @@
 """data/market.py — Market data aggregation, stock listings, historical prices, and index indicators."""
-import functools
 import re
 import threading
+from collections import OrderedDict
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -89,7 +89,54 @@ _INDEX_ORDER = {
 }
 
 
-@functools.lru_cache(maxsize=16)
+def _singleflight_cache(maxsize):
+    """Like functools.lru_cache(maxsize), but de-duplicates concurrent calls:
+    if a second thread requests a key that's still being computed by another
+    thread, it waits for and reuses that in-flight result instead of firing
+    its own redundant (here, network-bound) computation. Plain lru_cache only
+    guarantees the cache structure itself isn't corrupted by concurrent
+    access -- it does not prevent two threads from both missing on the same
+    key and both calling the wrapped function.
+
+    Only meant for single-argument functions keyed on that argument, which
+    is all get_stock_listing/_get_listing_with_norm need."""
+    def decorator(fn):
+        cache: "OrderedDict[str, pd.DataFrame]" = OrderedDict()
+        cache_lock = threading.Lock()
+        key_locks: dict = {}
+
+        def wrapper(key):
+            with cache_lock:
+                if key in cache:
+                    cache.move_to_end(key)
+                    return cache[key]
+                key_lock = key_locks.setdefault(key, threading.Lock())
+
+            with key_lock:
+                with cache_lock:
+                    if key in cache:
+                        cache.move_to_end(key)
+                        return cache[key]
+                result = fn(key)
+                with cache_lock:
+                    cache[key] = result
+                    cache.move_to_end(key)
+                    if len(cache) > maxsize:
+                        cache.popitem(last=False)
+                    key_locks.pop(key, None)
+                return result
+
+        def cache_clear():
+            with cache_lock:
+                cache.clear()
+                key_locks.clear()
+
+        wrapper.cache_clear = cache_clear
+        return wrapper
+    return decorator
+
+
+@_singleflight_cache(maxsize=16)
 def get_stock_listing(market: str) -> pd.DataFrame:
     """Cached version of fdr.StockListing to prevent redundant network requests."""
     if market in ('KRX-DESC', 'KRX', 'KOSPI', 'KOSDAQ'):
@@ -107,7 +154,7 @@ def get_stock_listing(market: str) -> pd.DataFrame:
         return pd.DataFrame(columns=['Symbol', 'Code', 'Name', 'Market'])
 
 
-@functools.lru_cache(maxsize=4)
+@_singleflight_cache(maxsize=4)
 def _get_listing_with_norm(market: str) -> pd.DataFrame:
     """Cached listing with pre-computed NameNorm column (upper, stripped)."""
     df = get_stock_listing(market).copy()
@@ -137,6 +184,24 @@ def _fetch_kr_listing_fdr_fallback(market, top_n):
         return []
 
 
+def _bump_hist_cache_counter(_df_mod, _dc, counter_name: str) -> None:
+    """Increments a _HIST_CACHE_HITS/_HIST_CACHE_MISSES counter and mirrors it
+    into the data_fetcher facade module.
+
+    Plain module-level ints don't share state across re-exports (rebinding
+    one copy doesn't touch another), and tests/test_data_fetcher.py patches
+    and reads these counters via `data_fetcher.<name>` for backward
+    compatibility with pre-modularization callers -- so both copies have to
+    be kept in sync by hand here rather than just writing to `_dc`.
+    """
+    value = getattr(_df_mod, counter_name, getattr(_dc, counter_name)) + 1
+    setattr(_dc, counter_name, value)
+    if hasattr(_df_mod, counter_name):
+        setattr(_df_mod, counter_name, value)
+    log_stats_fn = getattr(_df_mod, "_log_hist_cache_stats", _log_hist_cache_stats)
+    log_stats_fn()
+
+
 def get_historical_data(ticker: str, start: str) -> pl.DataFrame:
     """Historical data with a smart cache that skips empty DataFrames.
 
@@ -158,20 +223,10 @@ def get_historical_data(ticker: str, start: str) -> pl.DataFrame:
             _dc._HIST_CACHE.move_to_end(cache_key)
 
     if cached is not None and not stale_check(cached):
-        hits = getattr(_df_mod, "_HIST_CACHE_HITS", _dc._HIST_CACHE_HITS) + 1
-        _dc._HIST_CACHE_HITS = hits
-        if hasattr(_df_mod, "_HIST_CACHE_HITS"):
-            _df_mod._HIST_CACHE_HITS = hits
-        log_stats_fn = getattr(_df_mod, "_log_hist_cache_stats", _log_hist_cache_stats)
-        log_stats_fn()
+        _bump_hist_cache_counter(_df_mod, _dc, "_HIST_CACHE_HITS")
         return cached
 
-    misses = getattr(_df_mod, "_HIST_CACHE_MISSES", _dc._HIST_CACHE_MISSES) + 1
-    _dc._HIST_CACHE_MISSES = misses
-    if hasattr(_df_mod, "_HIST_CACHE_MISSES"):
-        _df_mod._HIST_CACHE_MISSES = misses
-    log_stats_fn = getattr(_df_mod, "_log_hist_cache_stats", _log_hist_cache_stats)
-    log_stats_fn()
+    _bump_hist_cache_counter(_df_mod, _dc, "_HIST_CACHE_MISSES")
 
     fetch_fn = getattr(_df_mod, "_fetch_historical_uncached", _fetch_historical_uncached)
     df = fetch_fn(ticker, start)
