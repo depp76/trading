@@ -63,12 +63,16 @@ def _get_yf_crumb(force_refresh: bool = False):
         return _YF_CRUMB
 
 
-def yf_quote_batch(symbols: list, timeout: int = 15, chunk_size: int = 50) -> dict:
+def yf_quote_batch(symbols: list, timeout: int = 15, chunk_size: int = 50, max_retries: int = 3) -> dict:
     """Batch-fetch raw Yahoo Finance v7 quote results for a list of symbols.
 
     Handles chunking, crumb retrieval/refresh-on-401, and retry-with-backoff
     in one place, shared by every caller that needs Yahoo quote data
     (real-time prices, market cap / PE / name lookups, etc).
+
+    max_retries (roadmap 3-5): number of attempts per chunk before giving up
+    and letting the caller's own fallback chain take over. Defaults to 3,
+    matching the previous hardcoded behavior.
 
     Returns {symbol: raw_quote_item_dict} for every symbol Yahoo returned data for.
     Symbols are looked up exactly as passed in (callers are responsible for any
@@ -86,7 +90,7 @@ def yf_quote_batch(symbols: list, timeout: int = 15, chunk_size: int = 50) -> di
             params["crumb"] = crumb
 
         resp = None
-        for attempt in range(3):
+        for attempt in range(max_retries):
             try:
                 resp = _YF_SESSION.get(
                     "https://query2.finance.yahoo.com/v7/finance/quote",
@@ -105,7 +109,7 @@ def yf_quote_batch(symbols: list, timeout: int = 15, chunk_size: int = 50) -> di
                 resp.raise_for_status()
                 break
             except Exception as e:
-                if attempt == 2:
+                if attempt == max_retries - 1:
                     raise e
                 time.sleep(1)
 
@@ -1019,38 +1023,85 @@ def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
     return changes
 
 
+def _fetch_kr_listing_naver(market, top_n):
+    """Primary KR market-listing source: scrape Naver sise_market_sum pages in
+    parallel (price/marcap/PER all in one pass). Raises on total failure —
+    callers decide whether/how to fall back (roadmap 3-5)."""
+    sosok = 0 if market == "KOSPI" else 1
+    max_pages = (top_n // 50) + 2
+
+    def _fetch_page(pg):
+        url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={pg}"
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+        soup = BeautifulSoup(r.content, 'html.parser', from_encoding='euc-kr')
+        rows = []
+        for tr in soup.select('table.type_2 tbody tr'):
+            a_tag = tr.select_one('a.tltle')
+            if not a_tag:
+                continue
+            code = a_tag['href'].split('code=')[-1].zfill(6)
+            name = a_tag.text.strip()
+            cols = [td.text.strip().replace(',', '') for td in tr.select('td')]
+            # cols layout: [rank, name, price, change, chg%, vol, marcap(100M KRW), shares, foreign%, trade_vol, PER, ROE, ...]
+            marcap = int(cols[6]) * 100_000_000 if len(cols) > 6 and cols[6].isdigit() else 0
+            rows.append({'Code': code, 'Name': name, 'Marcap': marcap})
+        return rows
+
+    results_list = []
+    with ThreadPoolExecutor(max_workers=min(max_pages, 8)) as exe:
+        # map() returns results in input order, preserving market-cap page order.
+        # Collect all pages first, then truncate — do not break early to keep order.
+        for rows in exe.map(_fetch_page, range(1, max_pages + 1)):
+            results_list.extend(rows)
+
+    return results_list[:top_n]
+
+
+def _fetch_kr_listing_fdr_fallback(market, top_n):
+    """Fallback KR market-listing source (roadmap 3-5): FinanceDataReader's
+    plain KRX listing, used when Naver's sise_market_sum scrape times out or
+    returns nothing (the documented 8/23 KOSDAQ-wide failure). Unlike
+    get_stock_listing()'s primary KIND-portal path, fdr.StockListing()
+    includes Marcap directly, so this needs no extra request. Never raises —
+    logs and returns [] so the caller can report total failure cleanly."""
+    try:
+        df = fdr.StockListing(market)
+        if df is None or df.empty or 'Code' not in df.columns or 'Name' not in df.columns:
+            return []
+        marcap_col = 'Marcap' if 'Marcap' in df.columns else None
+        rows = [
+            {
+                'Code': str(row['Code']).zfill(6),
+                'Name': str(row['Name']),
+                'Marcap': safe_float(row[marcap_col]) if marcap_col else 0.0,
+            }
+            for _, row in df.iterrows()
+        ]
+        rows.sort(key=lambda x: -x['Marcap'])
+        return rows[:top_n]
+    except Exception:
+        logger.warning("FDR listing fallback failed for market=%s", market, exc_info=True)
+        return []
+
+
 def fetch_kr_market_data(market="KOSPI", top_n=200, progress_callback=None):
     try:
-        # ── Step 1: Scrape Naver sise_market_sum pages in parallel (price, marcap, PER all at once) ──
-        sosok = 0 if market == "KOSPI" else 1
-        max_pages = (top_n // 50) + 2
+        # ── Step 1: get the ranked KOSPI/KOSDAQ listing, with a fallback chain ──
+        # (roadmap 3-5 — Naver's scrape previously had no fallback, and a single
+        # page timeout could take down the entire market's listing, as recorded
+        # in app.log on 2026-08-23 for KOSDAQ.)
+        try:
+            results_list = _fetch_kr_listing_naver(market, top_n)
+        except Exception:
+            logger.warning("Naver market-listing scrape failed for market=%s, falling back to FDR listing", market, exc_info=True)
+            results_list = []
 
-        def _fetch_page(pg):
-            url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={pg}"
-            r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-            soup = BeautifulSoup(r.content, 'html.parser', from_encoding='euc-kr')
-            rows = []
-            for tr in soup.select('table.type_2 tbody tr'):
-                a_tag = tr.select_one('a.tltle')
-                if not a_tag:
-                    continue
-                code = a_tag['href'].split('code=')[-1].zfill(6)
-                name = a_tag.text.strip()
-                cols = [td.text.strip().replace(',', '') for td in tr.select('td')]
-                # cols layout: [rank, name, price, change, chg%, vol, marcap(100M KRW), shares, foreign%, trade_vol, PER, ROE, ...]
-                marcap = int(cols[6]) * 100_000_000 if len(cols) > 6 and cols[6].isdigit() else 0
-                rows.append({'Code': code, 'Name': name, 'Marcap': marcap})
-            return rows
-
-        results_list = []
-        with ThreadPoolExecutor(max_workers=min(max_pages, 8)) as exe:
-            # map() returns results in input order, preserving market-cap page order.
-            # Collect all pages first, then truncate — do not break early to keep order.
-            for rows in exe.map(_fetch_page, range(1, max_pages + 1)):
-                results_list.extend(rows)
-
-        results_list = results_list[:top_n]
         if not results_list:
+            logger.info("fetch_kr_market_data: Naver listing empty for market=%s, trying FDR listing fallback", market)
+            results_list = _fetch_kr_listing_fdr_fallback(market, top_n)
+
+        if not results_list:
+            logger.error("fetch_kr_market_data: all listing sources failed for market=%s", market)
             return []
 
         total = len(results_list)
