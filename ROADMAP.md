@@ -1,8 +1,8 @@
 # Portfolio Management — 발전 로드맵
 
-> 기준일: 2026-08-28 (최초 작성 2026-08-21, 실제 코드 상태 재조사 후 갱신)  
+> 기준일: 2026-08-29 (최초 작성 2026-08-21, 실제 코드 상태 재조사 후 갱신)  
 > 현재 상태: PyQt6 단일 사용자 데스크톱 앱 (한국/미국 주식 포트폴리오 추적)  
-> 핵심 파일: `main.py` (~6,490 줄), `data_fetcher.py` (~2,560 줄), `trade_db.py`, `gemini_helper.py`
+> 핵심 파일: `main.py` (~401 줄), `data_fetcher.py` (~2,246 줄), `trade_db.py`, `gemini_helper.py`, `ui/`, `threads/`
 
 ---
 
@@ -42,6 +42,19 @@
   포트폴리오 AI 진단(3-4B)·자연어 필터(3-4C) 기능이 실제로 연결되어 사용 중
 - 2026-08-28 3차: 단기 개선 항목(2-1~2-5) 전체 구현 — 잔여 무음 예외 로깅, 캐시 hit/miss
   모니터링, 상태바 진행 피드백, 자동 백업 스케줄러, 거래 입력 실시간 유효성 검사
+- 2026-08-29: 3-1 모듈화 Phase 1~3 완료 — `main.py` 6,490줄→3,035줄 (-53%). 스레드 8개 →
+  `threads/fetch_threads.py`+`realtime.py`, 위젯·필터 → `ui/widgets.py`, 다이얼로그 7개 →
+  `ui/dialogs.py` 분리.
+- 2026-08-29 (2차): 3-1 모듈화 Phase 4~5 완료로 전체 완료 — `main.py` 3,035줄→**401줄**
+  (누계 6,490줄 대비 **-94%**). `TradingHistoryTab` → `ui/history_tab.py`,
+  `TradingRecordTab` → `ui/assets_tab.py`, `MainWindow`에 인라인으로 남아있던 "Trading
+  Universe" 탭(워치리스트 UI + 시세 갱신/AI 필터/개별 종목 MA 오케스트레이션 전체)을
+  `ui/universe_tab.py`의 `UniverseTab` 클래스로 분리. `MainWindow`는 833줄→247줄로 축소되어
+  목표치(~200줄)에 근접. 탭 간 통신은 기존 `TradingHistoryTab.status_message` 패턴을 그대로
+  따라 시그널로 연결(`status_text_changed`/`sync_time_changed`/`status_message`/
+  `refresh_started`/`auto_lightweight_tick`) — 공유 풋터(상태 레이블·최종 갱신 시각)의 화면
+  위치(탭과 무관하게 항상 표시)는 그대로 유지. 검증: `py_compile`, `import main`, 76/76
+  pytest, `MainWindow()` 인스턴스화 + 시그널 전파 스모크 테스트 통과.
 
 ---
 
@@ -110,73 +123,77 @@
 
 ## 3. 중기 개선 (1~3개월)
 
-### 3-1. 아키텍처 — 파일 분리 (모듈화) — 미착수
+### 3-1. 아키텍처 — 파일 분리 (모듈화) — ✅ 완료 (Phase 0~5 전체)
 
-**현황 (2026-08-28 재조사)**: `main.py` **6,490줄 / 285.9 KB / 22개 클래스** (단일 파일).  
-**문제**: 기능 탐색/수정이 어렵고, 충돌 없이 병렬 작업 불가
+**현황 (2026-08-29 갱신)**: Phase 0~5 전체 완료. `main.py` **6,490줄 → 401줄** (-94%).  
+`main.py`에는 공용 헬퍼(`create_font`, `_fmt_num_edit`, 입력 검증 함수 등)와 `MainWindow`
+(247줄)만 남음. 탭 3개(Universe/History/Assets)는 모두 `ui/`로 분리 완료.
 
-#### 클래스별 규모 & 배치 계획
+#### 실제 분리 결과
 
-| 클래스 | 라인 수 | 목표 파일 |
-|--------|------:|---------|
-| `TradingHistoryTab` | 1,780 | `ui/history_tab.py` |
-| `StockMaDialog` | 953 | `ui/dialogs.py` |
-| `MainWindow` | 834 | `main.py` (최소화 ~200줄) |
-| `TradingRecordTab` | 597 | `ui/assets_tab.py` |
-| `StockTable` | 565 | `ui/widgets.py` |
-| `StockTradeHistoryDialog` | 283 | `ui/dialogs.py` |
-| `PositionPriceFetchThread` | 213 | `threads/fetch_threads.py` |
-| `GroupedHeaderView` | 151 | `ui/widgets.py` |
-| `TradeEntryDialog` | 151 | `ui/dialogs.py` |
-| 나머지 13개 | ~226 | 각 해당 파일 |
+| 클래스 / 그룹 | 이동 결과 |
+|---|---|
+| `IndexMaThread`, `StockMaThread`, `SingleStockFetchThread`, `AllDataFetchThread`, `UniverseLightweightFetchThread`, `PositionPriceFetchThread`, `AutoBackupThread` (7개) | ✅ `threads/fetch_threads.py` (420줄) |
+| `RealtimePriceThread` | ✅ `threads/realtime.py` (25줄) |
+| `FilterPopup`, `FilterableHeader`, `StockTable`, `GroupedHeaderView` | ✅ `ui/widgets.py` (906줄) |
+| `IndexMaDialog`, `StockMaDialog`, `BuyEditDialog`, `SellEditDialog`, `TradeEntryDialog`, `StockTradeHistoryDialog`, `TotalAssetsGraphDialog` (7개) | ✅ `ui/dialogs.py` (1,825줄) |
+| `TradingHistoryTab` (~1,780줄) | ✅ `ui/history_tab.py` (1,837줄) |
+| `TradingRecordTab` (~590줄) | ✅ `ui/assets_tab.py` (630줄) |
+| "Trading Universe" 탭 (`MainWindow`에 인라인으로 존재하던 워치리스트 UI + 시세 갱신/AI 필터/개별 종목 MA 오케스트레이션 전체, ~600줄) | ✅ `ui/universe_tab.py`의 `UniverseTab` 클래스 (683줄) |
+| `MainWindow` (탭 구성 + 헤더/상태바/전역 타이머/단축키/자동 백업만 남김) | ✅ `main.py` (247줄, 목표 ~200줄에 근접) |
 
-**목표 구조**:
+#### 현재 파일 구조
 
 ```
 portfolio_mgmt/
-├── main.py              # 진입점 + MainWindow (최소화, ~200줄)
+├── main.py              # 공용 헬퍼 + MainWindow (401줄, MainWindow만 247줄)
 ├── ui/
-│   ├── history_tab.py   # TradingHistoryTab (~1,800줄)
-│   ├── assets_tab.py    # TradingRecordTab (~600줄)
-│   ├── dialogs.py       # 7개 Dialog (~1,800줄)
-│   └── widgets.py       # StockTable, GroupedHeaderView 등 (~900줄)
+│   ├── __init__.py
+│   ├── universe_tab.py  # UniverseTab (683줄)  ✅
+│   ├── history_tab.py   # TradingHistoryTab (1,837줄)  ✅
+│   ├── assets_tab.py    # TradingRecordTab (630줄)  ✅
+│   ├── dialogs.py       # 7개 Dialog (1,825줄)  ✅
+│   └── widgets.py       # StockTable, GroupedHeaderView 등 (906줄)  ✅
 ├── threads/
-│   ├── fetch_threads.py # 7개 Thread (~500줄)
-│   └── realtime.py      # RealtimePriceThread 등 (~30줄)
-├── data_fetcher.py      # (현행 유지)
+│   ├── __init__.py
+│   ├── fetch_threads.py # 7개 Thread (420줄)  ✅
+│   └── realtime.py      # RealtimePriceThread (25줄)  ✅
+├── data_fetcher.py      # (현행 유지, 2,246줄)
 └── trade_db.py          # (현행 유지)
 ```
 
-#### 기대 효과 (2026-08-28 실측 분석)
+#### Phase 4~5 구현 메모
 
-| 효과 | 현재 | 모듈화 후 |
-|------|------|---------|
-| 파일당 평균 크기 | 6,490줄 | ~800줄 (**-87%**) |
-| AI 컨텍스트 소비 | ~73,000 토큰 (main.py 전체) | ~9,000토큰 (관련 파일만) |
-| 병렬 작업 | 불가 (모두 main.py) | 파일별 독립 작업 가능 |
-| 테스트 가능 함수 | 제한적 (PyQt6 혼재) | +30~50개 추정 |
+- `TradingHistoryTab`/`TradingRecordTab`/`UniverseTab` 모두 서로를 직접 참조하지 않고
+  `MainWindow`가 시그널로만 중개하는 구조였기 때문에(Phase 4 이전부터 결합도 0건 확인),
+  각 탭을 독립적으로 이동해도 순환 참조 없이 완료됨.
+- `create_font`/`_fmt_num_edit`처럼 `main.py`에 남아있는 공유 헬퍼는, 새로 분리된 모든 `ui/*`
+  모듈에서 `def _get_x(): import main as _m; return _m.x` 형태의 지연 임포트 후 동일한 이름의
+  래퍼 함수로 감싸 원본 호출부(`create_font(...)`)를 그대로 재사용 — Phase 1~3에서 쓰인
+  "메서드마다 지역 재바인딩" 방식 대신 모듈 레벨 forwarding 함수로 통일해 호출부 누락 위험을
+  없앰.
+- Universe 탭의 공유 풋터(상태 레이블 `status_label`, 최종 갱신 시각 `update_time_label`)는
+  탭 전환과 무관하게 항상 보이는 위치(탭 위젯 아래 공용 영역)에 있었으므로, 그 두 `QLabel`은
+  `MainWindow`에 그대로 두고 `UniverseTab`은 `status_text_changed`/`sync_time_changed`
+  시그널만 emit하도록 설계 — 위젯을 그대로 옮겼다면 Universe 탭이 활성화된 동안에만 보이는
+  것으로 화면이 바뀌었을 것.
+- `refresh_data()` 호출 시 Trading History 탭도 함께 리로드하던 기존 동작, 60초 자동 타이머의
+  경량 갱신 시 Trading History 실시간 시세도 함께 갱신하던 기존 동작은 각각
+  `refresh_started`/`auto_lightweight_tick` 시그널로 대체해 그대로 보존.
+- `MainWindow.closeEvent()`의 스레드 정리 로직은 `UniverseTab.collect_threads_to_stop()`
+  헬퍼로 위임.
 
-**실측 결합도** (분리에 유리한 징후):
-- `TradingHistoryTab` → `MainWindow` 직접 참조: **0건** (시그널/슬롯만 사용)
-- `TradingHistoryTab` 내 `data_fetcher` 직접 호출: **0건** (스레드 경유)
-- 탭 내 `emit()` / `Signal` 사용: **3건** (이미 디커플링 설계)
+**검증**: `py_compile` 전체 통과, `import main` 성공, `python -m pytest tests/ -v` 76/76 통과,
+`MainWindow()` 인스턴스화 및 시그널 전파(상태 텍스트/갱신 시각/자동 타이머 경량 갱신 경로)
+스모크 테스트 통과. GUI 자체는 헤드리스 환경 특성상 수동 조작 테스트는 못함 — 실제 사용 중
+이상 발견 시 `archive/backup_20260829_141942/`(Phase 4 이전 스냅샷)로 대조 가능.
 
-#### 단계별 구현 계획 (예상 기간: 8~10일)
-
-| Phase | 작업 | 기간 | 위험도 |
-|-------|------|------|-------|
-| 0 | 백업 + 디렉터리 구조 준비 | 0.5일 | 🟢 낮음 |
-| 1 | 스레드 8개 → `threads/` | 0.5~1일 | 🟢 낮음 |
-| 2 | 공통 위젯 → `ui/widgets.py` | 1일 | 🟡 중간 |
-| 3 | 다이얼로그 7개 → `ui/dialogs.py` | 1~1.5일 | 🟡 중간 |
-| 4 | 탭 분리 (`TradingRecordTab` → `TradingHistoryTab` 순) | 2~3일 | 🔴 높음 |
-| 5 | `MainWindow` 최소화 (~200줄) | 1~1.5일 | 🟡 중간 |
-
-**진행 원칙**:
+**진행 원칙 (적용됨)**:
 1. `archive/backup_<date>/` 백업 후 시작
-2. 클래스 1개 이동 → `py_compile` → `python -m pytest tests/ -v` → 앱 기동 확인
-3. 한 번에 전체 리팩터링 금지 (롤백 어려움)
-4. 순환 임포트 발생 시 `TYPE_CHECKING` 블록으로 해결
+2. 클래스 1개 이동 → `py_compile` → `python -m pytest tests/ -v` → `import main` / 인스턴스화 확인
+3. 한 번에 전체 리팩터링 금지 (Phase 4·5를 각각 별도 커밋으로 분리)
+4. 순환 임포트는 지연 임포트(`import main as _m` 함수 내부)로 해결 — `TYPE_CHECKING`은 타입
+   힌트 전용이라 런타임에 실제 함수/상수를 가져와야 하는 이 케이스엔 부적합해 채택하지 않음
 
 ---
 
@@ -330,7 +347,7 @@ KOSDAQ 조회 전체가 실패한 사례가 실제로 기록됨.
 
 ## 5. 우선순위 매트릭스
 
-> `상태` 컬럼은 2026-08-28 재조사 결과 반영. 완료 항목은 우선순위 재산정 대상에서 제외.
+> `상태` 컬럼은 2026-08-29 재조사 결과 반영. 완료 항목은 우선순위 재산정 대상에서 제외.
 
 | # | 항목 | 영향 | 난이도 | 우선순위 | 상태 |
 |---|------|------|--------|----------|------|
@@ -341,8 +358,8 @@ KOSDAQ 조회 전체가 실패한 사례가 실제로 기록됨.
 | 2-5 | 입력 유효성 검사 | 중 | 낮음 | — | ✅ 완료 |
 | 3-4B/C | AI 진단/자연어 필터 | 높음 | 중간 | — | ✅ 완료 |
 | 3-2 | 테스트 인프라 | 높음 | 중간 | — | ✅ 완료 |
+| 3-1 | 모듈화 | 높음 | 높음 | — | ✅ 완료 (Phase 0~5) |
 | 3-4A | AI 종목 리포트 | 높음 | 중간 | ⭐⭐⭐ 높음 | 미착수 |
-| 3-1 | 모듈화 | 높음 | 높음 | ⭐⭐ 중간 | 미착수 |
 | 3-5 | 시세 fallback | 높음 | 중간 | ⭐⭐ 중간 | 부분 진행 |
 | 4-3 | 조건부 알림 | 높음 | 중간 | ⭐⭐ 중간 | 미착수 |
 | 4-5 | 섹터 분석 | 중 | 중간 | ⭐⭐ 중간 | 미착수 |
@@ -362,3 +379,5 @@ KOSDAQ 조회 전체가 실패한 사례가 실제로 기록됨.
 | 2026-08-28 (2차) | 단기 개선 항목(2-1~2-5) 코드 구현 완료: 남은 무음 예외 로깅 교체, `_HIST_CACHE` hit/miss 모니터링, 상태바 진행 메시지, 자동 백업 스케줄러(`archive/auto_*`, 최근 7개 보관), 거래 입력 다이얼로그 실시간 검증(빨간 테두리+툴팁, 매수일>매도일 경고) 추가. 백업: `archive/backup_20260828_163743/` |
 | 2026-08-28 (3차) | 3-2 테스트 인프라 구축 완료: `tests/` 디렉터리 신설, `pytest` 설치 및 `requirements.txt` 추가, 4개 테스트 파일 작성 (76개 테스트 100% pass). `TempDBMixin`으로 실제 DB·JSON 완전 격리. |
 | 2026-08-28 (4차) | 3-1 모듈화 분석 반영: main.py 6,490줄/22개 클래스 실측, 클래스별 라인 수·배치 계획·결합도(TradingHistoryTab→MainWindow 직접 참조 0건) 조사. 기대 효과(파일 크기 -87%, AI 컨텍스트 -87%, 테스트 +30~50개) 및 5단계 구현 계획(예상 8~10일) 추가. |
+| 2026-08-29 | 3-1 모듈화 Phase 0~3 구현 완료. `main.py` 6,490줄→3,035줄(-53%), 22개 클래스→3개. `threads/fetch_threads.py`(7개 스레드), `threads/realtime.py`(RealtimePriceThread), `ui/widgets.py`(4개 위젯), `ui/dialogs.py`(7개 다이얼로그) 분리 완료. Phase 4(탭 분리)·5(MainWindow 최소화) 잔여. 우선순위 매트릭스 3-1 상태 '부분 완료'로 갱신. |
+| 2026-08-29 (2차) | 3-1 모듈화 Phase 4~5 구현 완료로 전체 완료. `TradingHistoryTab`→`ui/history_tab.py`, `TradingRecordTab`→`ui/assets_tab.py`, `MainWindow`에 인라인으로 남아있던 Trading Universe 탭을 `ui/universe_tab.py`의 `UniverseTab`으로 분리. `main.py` 3,035줄→401줄(누계 -94%), `MainWindow` 833줄→247줄. 탭 간 통신은 기존 `status_message` 시그널 패턴을 확장해 구현(`status_text_changed`/`sync_time_changed`/`refresh_started`/`auto_lightweight_tick`). 검증: `py_compile`, `import main`, pytest 76/76, `MainWindow()` 인스턴스화+시그널 전파 스모크 테스트. 백업: `archive/backup_20260829_141942/`. 우선순위 매트릭스 3-1 상태 '완료'로 갱신. |
