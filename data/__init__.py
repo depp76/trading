@@ -1,22 +1,6 @@
-"""data_fetcher.py — Facade module for the data package.
+"""data — Modular market data, indicator computation, backtesting, and portfolio rebalancing package."""
 
-Re-exports all market data fetchers, caching structures, indicators, backtesting
-functions, and rebalancing algorithms from the modular `data/` package for complete
-backward compatibility with existing callers and tests.
-"""
-
-import logging
-import FinanceDataReader as fdr
-import yfinance as yf
-import requests
-import pandas as pd
-import polars as pl
-import numpy as np
-
-logger = logging.getLogger(__name__)
-
-from data import (
-    # Cache & Sessions
+from data.cache import (
     _START_DATE,
     _TD_PERIODS,
     _CHANGE_KEYS,
@@ -41,13 +25,15 @@ from data import (
     _hist_df_is_stale,
     _pdf_is_stale,
     safe_float,
+)
 
-    # Indicators
+from data.indicators import (
     _to_polars,
     _compute_indicators,
     fetch_historical_changes,
+)
 
-    # Collectors — Naver
+from data.collectors.naver import (
     _fast_kr_history,
     fetch_naver_realtime_prices,
     _fetch_naver_per_single,
@@ -58,16 +44,18 @@ from data import (
     _fetch_index_investor_trend,
     _fetch_investor_trend_naver,
     fetch_quarterly_financials,
+)
 
-    # Collectors — Yahoo
+from data.collectors.yahoo import (
     _YF_BULK_CACHE,
     yf_quote_batch,
     fetch_us_realtime_prices,
     fetch_wti_futures_curve,
     fetch_us_stock_data_bulk,
     fetch_us_market_data,
+)
 
-    # Collectors — Kiwoom
+from data.collectors.kiwoom import (
     _KIWOOM_TOKEN_CACHE,
     _KIWOOM_KEYS_CACHE,
     _get_kiwoom_keys,
@@ -78,8 +66,9 @@ from data import (
     fetch_kiwoom_daily_ohlcv,
     fetch_account_deposit,
     fetch_investor_trend,
+)
 
-    # Collectors — KRX
+from data.collectors.krx import (
     VKOSPI_INDEX_NAME,
     _get_krx_auth_key,
     fetch_krx_derivative_index_day,
@@ -89,8 +78,9 @@ from data import (
     fetch_vkospi_history,
     _get_vkospi_pdf,
     _get_jp10y_df,
+)
 
-    # Market Aggregation
+from data.market import (
     INDEX_TICKERS,
     _INDEX_DISPLAY_NAMES,
     _INDEX_ORDER,
@@ -111,13 +101,15 @@ from data import (
     fetch_stock_ma_multi,
     fetch_indice_as_stock,
     fetch_major_indices_as_stocks,
+)
 
-    # Backtest
+from data.backtest import (
     run_backtest_strategy,
     run_backtest_for_stock,
     run_bulk_backtest_chunk,
+)
 
-    # Rebalance
+from data.rebalance import (
     _REBALANCE_FACTORS,
     _REBALANCE_MIN_FACTORS,
     _extract_live_candidates,
