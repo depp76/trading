@@ -12,8 +12,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon
 
-from ui import theme
-
 # Shared helpers imported from main package (available at runtime when main.py loads)
 # We use a lazy import pattern to avoid circular imports.
 def _get_create_font():
@@ -37,8 +35,7 @@ class FilterPopup(QFrame):
         self.col = col
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet(
-            f"QFrame {{ background: {theme.c('panel_bg')}; color: {theme.c('text')}; "
-            f"border: 1px solid {theme.c('border')}; border-radius: 4px; }}"
+            "QFrame { background: white; border: 1px solid #aaa; border-radius: 4px; }"
         )
 
         create_font = _get_create_font()
@@ -227,7 +224,7 @@ class StockTable(QTableWidget):
         # Table font: Malgun Gothic Semilight 9pt (set appropriate size to prevent text cutoff)
         self.setFont(create_font(9, style_name="Semilight"))
         self.setStyleSheet(
-            f"QTableWidget {{ gridline-color: {theme.c('gridline')}; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 9pt; }}"
+            "QTableWidget { gridline-color: #d0d0d0; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
         )
         # Use filterable header

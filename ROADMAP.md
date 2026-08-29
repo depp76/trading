@@ -2,7 +2,7 @@
 
 > 기준일: 2026-08-29 (최초 작성 2026-08-21, 실제 코드 상태 재조사 후 갱신)  
 > 현재 상태: PyQt6 단일 사용자 데스크톱 앱 (한국/미국 주식 포트폴리오 추적)  
-> 핵심 파일: `main.py` (~438 줄), `data_fetcher.py` (~2,615 줄), `trade_db.py`, `gemini_helper.py`, `ui/`, `threads/`
+> 핵심 파일: `main.py` (~401 줄), `data_fetcher.py` (~2,615 줄), `trade_db.py`, `gemini_helper.py`, `ui/`, `threads/`
 
 ---
 
@@ -313,40 +313,23 @@ tests/
 
 ---
 
-### 3-6. UX — 다크 모드 지원 — ✅ 완료 (전체 다크모드, 스타일시트 67곳 전수 수정)
+### 3-6. UX — 다크 모드 지원 — 미착수 (구현 후 제외됨)
 
-**구현 내용 (2026-08-29)**: `ui/theme.py` 신설 — LIGHT/DARK 색상 팔레트(배경·테두리·기본
-텍스트·상태 텍스트만 테마별로 다르고, 버튼 배경색 등 이미 자체 배경+흰 글자로 완결된
-액센트/카테고리 색상은 테마와 무관하게 고정), `custom_settings.json`의 `"theme"` 키로
-영속화, `QApplication.setPalette()`(네이티브 위젯), `plt.style.use('dark_background')`
-연동(`apply_matplotlib_style()`).
+**현황 (2026-08-29)**: 한 차례 전체 구현(`ui/theme.py`, 67곳 스타일시트 전수 수정,
+`QApplication.setPalette()` + `plt.style.use('dark_background')` 연동, 헤더에
+"🌙 Dark Mode" 체크박스)했으나, 병합 전 수동 테스트 단계에서 사용자 요청으로 **제외 및
+관련 코드 전체 삭제**(`git revert`로 해당 커밋 되돌림, `ui/theme.py` 삭제). 자동
+검증(스타일시트 문자열에 테마 색상이 반영되는지, pytest 76/76)은 모두 통과했었고 기능적
+결함이 보고된 것은 아니었음 — 재도전 시 이전 구현을 참고할 수 있도록 아래 방향은 유지.
 
-- **재시작 후 적용 방식 채택**: main.py/ui/*.py 전반의 67곳 `setStyleSheet()` 호출이 위젯
-  생성 시점에 각자 리터럴 QSS 문자열을 굽는 구조라, 라이브 재테마는 사실상 전체 탭을
-  재구성하는 것과 다르지 않음. 대신 `MainWindow.__init__`에서 `theme.init_theme()`을
-  `QApplication` 생성 전에 호출해 팔레트/스타일시트를 처음부터 올바르게 굽고, 헤더의
-  "🌙 Dark Mode" 체크박스는 선택을 저장한 뒤 상태바로 재시작 안내만 표시(기존
-  custom_settings.json 다른 설정들과 동일한 패턴).
-- **67곳 스타일시트 전수 검토** (main.py 5, ui/universe_tab.py 10, ui/history_tab.py 27,
-  ui/assets_tab.py 12, ui/widgets.py 5, ui/dialogs.py 8): 배경/테두리/기본 텍스트를 쓰는
-  곳은 전부 `theme.c(...)`로 교체, 버튼처럼 자체 배경+흰 글자로 완결된 곳은 테마 불변으로
-  의도적으로 유지(가독성에 문제없고, 카테고리 구분 색상이라 테마와 무관해야 자연스러움).
-  실제 버그로 발견해 함께 고친 것: `StockTradeHistoryDialog`의 footer-row 배경 흰색
-  `fillRect`, mplcursors 호버 툴팁 5곳(흰 배경 고정 + `dark_background` 스타일의 흰 글자가
-  겹치면 백지에 백지 글씨가 될 뻔한 케이스), `TradingRecordTab`의 주간 손익 라벨이
-  `transparent` 배경에 고정 네이비 글자색이라 다크 모드에서 안 보이던 문제.
-- **의도적으로 범위 밖으로 둔 것**: P/L 빨강(`#c0392b`)/파랑(`#2980b9`) 등
-  `QColor(...).setForeground()`로 설정되는 44곳(표 셀 텍스트)은 `setStyleSheet()` 67곳에
-  포함되지 않는 별도 메커니즘이라 이번 범위에서 제외 — 두 색 모두 밝은/어두운 배경 모두에서
-  충분히 진한 채도라 가독성 문제가 없다고 판단.
-- **검증**: `custom_settings.json`에 `"theme":"light"`/`"dark"`를 각각 써서 `main` 모듈을
-  새 프로세스로 임포트 → `MainWindow()` 생성 → 각 탭의 실제 스타일시트 문자열에 해당
-  테마의 색상 값이 포함되는지, 액센트 고정 버튼은 테마와 무관하게 동일한지 자동 확인(양쪽
-  테마 모두 통과). `python -m pytest tests/ -v` 76/76 통과. 실제 사용자 `custom_settings.json`은
-  테스트 중 백업 후 원본 그대로 복원.
-- **미검증 항목**: 이 환경은 GUI를 직접 띄워 눈으로 볼 수 없어, 색상 대비·레이아웃이
-  실제로 보기 좋은지는 확인하지 못함 — 사용자가 앱을 실행해 다크 모드 체크 후 재시작하여
-  육안 확인 필요.
+**방향** (재도전 시 참고):
+
+- `QApplication.setPalette()`로 다크/라이트 토글
+- matplotlib 그래프도 `plt.style.use('dark_background')` 연동
+- `custom_settings.json`에 `"theme": "dark"` 저장
+- (이전 구현 노트) main.py/ui/*.py의 대다수 위젯이 생성 시점에 개별
+  `setStyleSheet()` 리터럴 문자열을 굽는 구조라, 라이브 재테마보다는 "설정 저장 +
+  재시작 안내" 방식이 훨씬 낮은 리스크로 구현 가능함을 확인함
 
 ---
 
@@ -426,11 +409,11 @@ tests/
 | 3-2 | 테스트 인프라 | 높음 | 중간 | — | ✅ 완료 |
 | 3-1 | 모듈화 | 높음 | 높음 | — | ✅ 완료 (Phase 0~5) |
 | 3-3 | pandas/polars 경계 최소화 | 낮음 | 낮음 | — | ✅ 완료 (재조사 결과 대부분 이미 최적) |
-| 3-5 | 시세 fallback | 높음 | 중간 | — | ✅ 핵심 완료 (`fetch_kr_market_data` 리스팅 fallback) |
-| 3-6 | 다크 모드 | 낮음 | 낮음 | — | ✅ 완료 (전체, 스타일시트 67곳 수정) |
 | 3-4A | AI 종목 리포트 | 높음 | 중간 | ⭐⭐⭐ 높음 | 미착수 |
+| 3-5 | 시세 fallback | 높음 | 중간 | — | ✅ 핵심 완료 (`fetch_kr_market_data` 리스팅 fallback) |
 | 4-3 | 조건부 알림 | 높음 | 중간 | ⭐⭐ 중간 | 미착수 |
 | 4-5 | 섹터 분석 | 중 | 중간 | ⭐⭐ 중간 | 미착수 |
+| 3-6 | 다크 모드 | 낮음 | 낮음 | ⭐ 낮음 | 미착수 |
 | 4-4 | 백테스트 UI | 중 | 높음 | ⭐ 낮음 | 미착수 |
 | 4-1 | 웹 전환 | 높음 | 매우 높음 | ⭐ 낮음 | 미착수 |
 | 4-2 | 클라우드 동기화 | 중 | 높음 | ⭐ 낮음 | 미착수 |
@@ -450,4 +433,5 @@ tests/
 | 2026-08-29 (2차) | 3-1 모듈화 Phase 4~5 구현 완료로 전체 완료. `TradingHistoryTab`→`ui/history_tab.py`, `TradingRecordTab`→`ui/assets_tab.py`, `MainWindow`에 인라인으로 남아있던 Trading Universe 탭을 `ui/universe_tab.py`의 `UniverseTab`으로 분리. `main.py` 3,035줄→401줄(누계 -94%), `MainWindow` 833줄→247줄. 탭 간 통신은 기존 `status_message` 시그널 패턴을 확장해 구현(`status_text_changed`/`sync_time_changed`/`refresh_started`/`auto_lightweight_tick`). 검증: `py_compile`, `import main`, pytest 76/76, `MainWindow()` 인스턴스화+시그널 전파 스모크 테스트. 백업: `archive/backup_20260829_141942/`. 우선순위 매트릭스 3-1 상태 '완료'로 갱신. |
 | 2026-08-29 (3차) | 3-3 pandas/polars 경계 최소화 완료. 재조사 결과 로드맵이 우려한 두 항목(히스토리컬 파이프라인 구성, `_compute_indicators()` 중간 왕복)은 이미 최적 상태였음을 확인. 대신 `fetch_single_stock()`·`fetch_indice_as_stock()`이 동일 pandas 데이터를 `fetch_historical_changes()`에 원본으로 넘겨 내부에서 중복 변환(또는 불필요한 재조회)을 일으키던 실제 낭비 2건을 발견해, 이미 변환된 polars df를 그대로 전달하도록 수정(`_to_polars()`는 polars 입력에 no-op이므로 안전). 검증: 20개 랜덤 시드로 동작 동일성 확인, 벤치마크로 호출당 약 35% 시간 절감 측정, pytest 76/76 통과. 우선순위 매트릭스에 3-3 행 추가(완료). |
 | 2026-08-29 (4차) | 3-5 시세 fallback 핵심 완료: `fetch_kr_market_data`의 Naver 리스팅 스크래핑이 실패해도 `fdr.StockListing()`으로 자동 대체하도록 `_fetch_kr_listing_naver`/`_fetch_kr_listing_fdr_fallback`로 분리(8/23 KOSDAQ 전체 실패 사례의 재발 방지). `yf_quote_batch(max_retries=...)` 추가. 당초 계획한 Kiwoom·pykrx 단계는 재조사 결과(Kiwoom은 대량 조회에 부적합, pykrx는 이 환경에서 실제로 빈 데이터만 반환) 제외하고 이유를 문서화. 검증: Naver 강제 실패 시나리오·양쪽 실패 시나리오·재시도 횟수 제한을 스크립트로 확인, pytest 76/76 통과. |
-| 2026-08-29 (5차) | 3-6 다크 모드 완료(전체 범위, 사용자 선택): `ui/theme.py` 신설(라이트/다크 팔레트, `custom_settings.json` 영속화, `QApplication.setPalette()`, `plt.style.use('dark_background')` 연동), main.py·ui/*.py 전반 67곳 `setStyleSheet()` 전수 검토 후 배경/테두리/기본텍스트 색상을 테마 토큰으로 교체(버튼 등 자체 배경+흰 글자로 완결된 곳은 의도적으로 고정 유지). 재시작 후 적용 방식 채택(라이브 재테마는 전체 UI 재구성과 동급이라 채택 안 함) — 헤더에 "🌙 Dark Mode" 체크박스 추가. 실제 버그로 발견해 함께 수정: 흰색 고정 `fillRect`, mplcursors 호버 툴팁 5곳, 다크모드에서 안 보이던 주간 손익 라벨. 검증: 라이트/다크 각각 실제 프로세스로 `MainWindow()`를 생성해 위젯 스타일시트 문자열에 해당 테마 색상이 반영됐는지 자동 확인, pytest 76/76 통과, 실사용자 `custom_settings.json`은 테스트 후 원본대로 복원. 육안 확인은 미실시(헤드리스 환경 한계) — 사용자가 직접 실행해 다크 모드 체크 후 재시작하여 확인 필요. |
+| 2026-08-29 (5차) | 3-6 다크 모드 구현(전체 범위) 후 병합 전 수동 테스트 단계에서 사용자 요청으로 **제외 및 코드 전체 삭제**(`ui/theme.py` 삭제, main.py·ui/*.py의 관련 변경 `git revert`). 자동 검증은 모두 통과했었고 기능 결함이 보고된 것은 아님 — 재도전 시 참고할 수 있도록 방향/설계 노트는 3-6 섹션에 유지. 이 되돌림은 같은 커밋에 함께 있던 3-5 로드맵 문서화도 되돌려버려서 별도로 복원함(3-5 코드 자체는 되돌려지지 않고 그대로 유지됨). 우선순위 매트릭스 3-6 상태 '미착수'로 복귀. |
+| 2026-08-29 (6차) | `TradingRecordTab`(Total Assets 탭)이 `trading_record.json`을 잘못된 경로(`ui/`)에서 찾던 Phase 4 회귀 버그를 사용자의 수동 테스트(TEST_PLAN.md)로 발견해 수정. `os.path.dirname(os.path.abspath(__file__))` 기반 경로를 `ui/universe_tab.py`와 동일한 상대경로 방식으로 교체. 실제 데이터(35개 레코드) 정상 로딩 확인. 자동 테스트·스크립트 검증으로는 잡지 못했던 사례 — `TEST_PLAN.md`를 리포지토리에 추가해 병합 전 수동 확인 절차를 문서화. |

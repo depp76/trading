@@ -45,7 +45,6 @@ from threads.fetch_threads import (
 )
 from ui.widgets import StockTable
 from ui.dialogs import StockMaDialog
-from ui import theme
 
 logger = logging.getLogger(__name__)
 
@@ -376,7 +375,7 @@ class UniverseTab(QWidget):
 
         title_lbl = QLabel("Enter stock filter conditions in natural language")
         title_lbl.setFont(create_font(11, QFont.Weight.Bold))
-        title_lbl.setStyleSheet(f"color:{theme.c('info_text')};")
+        title_lbl.setStyleSheet("color:#0a3d62;")
         v.addWidget(title_lbl)
 
         example_lbl = QLabel(
@@ -385,7 +384,7 @@ class UniverseTab(QWidget):
         )
         example_lbl.setTextFormat(Qt.TextFormat.RichText)
         example_lbl.setFont(create_font(9, style_name="Semilight"))
-        example_lbl.setStyleSheet(f"color:{theme.c('text_muted')};")
+        example_lbl.setStyleSheet("color:#555;")
         v.addWidget(example_lbl)
 
         query_edit = QLineEdit()
@@ -397,7 +396,7 @@ class UniverseTab(QWidget):
         # Status label
         status_lbl = QLabel("")
         status_lbl.setFont(create_font(9, style_name="Semilight"))
-        status_lbl.setStyleSheet(f"color:{theme.c('success_text')};")
+        status_lbl.setStyleSheet("color:#107c10;")
         v.addWidget(status_lbl)
 
         btn_row = QHBoxLayout()
@@ -413,8 +412,8 @@ class UniverseTab(QWidget):
         apply_btn.setDefault(True)
         apply_btn.setFixedWidth(80)
         apply_btn.setStyleSheet(
-            f"QPushButton {{ background:{theme.c('accent')}; color:white; border-radius:4px; padding:3px 8px; }}"
-            f"QPushButton:hover {{ background:{theme.c('accent_hover')}; }}"
+            "QPushButton { background:#0078d4; color:white; border-radius:4px; padding:3px 8px; }"
+            "QPushButton:hover { background:#005a9e; }"
         )
 
         cancel_btn = QPushButton("Cancel")
@@ -448,7 +447,7 @@ class UniverseTab(QWidget):
             apply_btn.setEnabled(True)
 
             if result is None:
-                status_lbl.setStyleSheet(f"color:{theme.c('danger_text')};")
+                status_lbl.setStyleSheet("color:#c0392b;")
                 status_lbl.setText("⚠️ AI conversion failed. Please check your API key and network connection.")
                 return
 

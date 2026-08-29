@@ -30,7 +30,6 @@ from ui.dialogs import (
     TradeEntryDialog,
     StockTradeHistoryDialog,
 )
-from ui import theme
 
 logger = logging.getLogger(__name__)
 
@@ -152,12 +151,12 @@ class TradingHistoryTab(QWidget):
         def _create_card(title_text):
             card = QFrame()
             card.setObjectName("DashboardCard")
-            card.setStyleSheet(f"""
-                QFrame#DashboardCard {{
-                    background-color: {theme.c('card_bg')};
-                    border: 1px solid {theme.c('border_light')};
+            card.setStyleSheet("""
+                QFrame#DashboardCard {
+                    background-color: #ffffff;
+                    border: 1px solid #dcdcdc;
                     border-radius: 8px;
-                }}
+                }
             """)
             vbox = QVBoxLayout(card)
             vbox.setContentsMargins(12, 10, 12, 10)
@@ -165,7 +164,7 @@ class TradingHistoryTab(QWidget):
             vbox.setAlignment(Qt.AlignmentFlag.AlignTop)
             if title_text:
                 lbl = QLabel(title_text)
-                lbl.setStyleSheet(f"font-size: 10pt; font-weight: bold; color: {theme.c('accent')};")
+                lbl.setStyleSheet("font-size: 10pt; font-weight: bold; color: #0078d4;")
                 vbox.addWidget(lbl)
             return card, vbox
 
@@ -195,28 +194,28 @@ class TradingHistoryTab(QWidget):
         pos_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         pos_table.setFixedWidth(400)
         pos_table.setFixedHeight(110)
-        pos_table.setStyleSheet(f"""
-            QTableWidget {{
-                border: 1px solid {theme.c('border')};
+        pos_table.setStyleSheet("""
+            QTableWidget {
+                border: 1px solid #c8c8c8;
                 border-radius: 6px;
-                background-color: {theme.c('panel_bg')};
-                gridline-color: {theme.c('border_light')};
+                background-color: #ffffff;
+                gridline-color: #e4e4e4;
                 font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
                 font-size: 12px;
                 font-weight: bold;
-                color: {theme.c('text')};
-            }}
-            QHeaderView::section {{
-                background-color: {theme.c('header_bg_alt')};
+                color: #1a1a2e;
+            }
+            QHeaderView::section {
+                background-color: #f0f2f5;
                 border: none;
-                border-right: 1px solid {theme.c('border')};
-                border-bottom: 1px solid {theme.c('border')};
+                border-right: 1px solid #d0d0d0;
+                border-bottom: 1px solid #d0d0d0;
                 font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
                 font-weight: bold;
                 font-size: 12px;
-                color: {theme.c('text_secondary')};
+                color: #444;
                 padding: 2px 4px;
-            }}
+            }
         """)
         pos_layout.addWidget(pos_table)
         top_panel.addWidget(pos_card)
@@ -229,7 +228,7 @@ class TradingHistoryTab(QWidget):
         metrics_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         INPUT_STYLE = (
-            f"QLineEdit {{ background:{theme.c('input_bg')}; color:{theme.c('text')}; border:1px solid {theme.c('border_input')}; "
+            "QLineEdit { background:#fff; color:#111; border:1px solid #ccc; "
             "border-radius:4px; padding:3px 6px; font-size:12px; font-weight:bold; }"
         )
         BTN_H = 28
@@ -237,7 +236,7 @@ class TradingHistoryTab(QWidget):
 
         def make_lbl(text):
             l = QLabel(text)
-            l.setStyleSheet(f"font-size:12px; font-weight:bold; color:{theme.c('text_secondary')};")
+            l.setStyleSheet("font-size:12px; font-weight:bold; color:#444;")
             l.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             return l
 
@@ -311,7 +310,7 @@ class TradingHistoryTab(QWidget):
         lbl_field_pair(grid, 1, 4, "Deposit(%):", self._deposit_pct_edit)
 
         # ---Row 2: Summary | Sort by Date | Current Holdings | Search Company ---
-        btn_style_blue = f"QPushButton {{ background:{theme.c('accent')}; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; }} QPushButton:hover {{ background:{theme.c('accent_hover')}; }}"
+        btn_style_blue = "QPushButton { background:#0078d4; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; } QPushButton:hover { background:#005a9e; }"
         btn_style_green = "QPushButton { background:#107c10; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; } QPushButton:hover { background:#0b5e0b; }"
         btn_style_orange = "QPushButton { background:#d35400; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; } QPushButton:hover { background:#e67e22; }"
         btn_style_purple = "QPushButton { background:#6c3483; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; } QPushButton:hover { background:#9b59b6; }"
@@ -342,8 +341,8 @@ class TradingHistoryTab(QWidget):
         self._open_stocks_combo.setFixedHeight(BTN_H)
         self._open_stocks_combo.setFixedWidth(250)
         self._open_stocks_combo.setStyleSheet(
-            f"QComboBox {{ background:{theme.c('input_bg')}; color:{theme.c('text')}; border:1px solid {theme.c('border_input')}; border-radius:4px; padding:3px 6px; font-size:9pt; font-weight:bold; }}"
-            f"QComboBox::drop-down {{ border-left:1px solid {theme.c('border_input')}; }}"
+            "QComboBox { background:#fff; color:#111; border:1px solid #ccc; border-radius:4px; padding:3px 6px; font-size:9pt; font-weight:bold; }"
+            "QComboBox::drop-down { border-left:1px solid #ccc; }"
         )
         self._open_stocks_combo.currentTextChanged.connect(self._on_open_stock_combo_changed)
         # open_stocks_combo - controls_row (below)
@@ -387,7 +386,7 @@ class TradingHistoryTab(QWidget):
        
         # Status label in row 1, rightmost
         self._deposit_status_lbl = QLabel("")
-        self._deposit_status_lbl.setStyleSheet(f"font-size:9pt; color:{theme.c('success_text')}; font-weight:bold;")
+        self._deposit_status_lbl.setStyleSheet("font-size:9pt; color:#107c10; font-weight:bold;")
         self._deposit_status_lbl.setFixedHeight(BTN_H)
 
         # Spanned horizontal layout for buttons in row 1, col 6-9
@@ -429,7 +428,7 @@ class TradingHistoryTab(QWidget):
         metrics_layout.addLayout(lower_layout)
 
         self._path_label = QLabel("")
-        self._path_label.setStyleSheet(f"color:{theme.c('text_muted')}; font-size:9px; border:none;")
+        self._path_label.setStyleSheet("color:#777; font-size:9px; border:none;")
         self._path_label.setFixedHeight(12)
         metrics_layout.addWidget(self._path_label)
 
@@ -503,7 +502,7 @@ class TradingHistoryTab(QWidget):
         grouped_hdr.setMinimumSectionSize(40)
         tbl.setHorizontalHeader(grouped_hdr)
         tbl.setStyleSheet(
-            f"QTableWidget {{ gridline-color: {theme.c('gridline')}; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 9pt; }}"
+            "QTableWidget { gridline-color: #d0d0d0; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
         )
 
@@ -898,14 +897,14 @@ class TradingHistoryTab(QWidget):
             self._on_deposit_changed()
             # Inline status display (instead of QMessageBox) - immediate edit possible
             if hasattr(self, "_deposit_status_lbl"):
-                self._deposit_status_lbl.setStyleSheet(f"font-size:10pt; color:{theme.c('success_text')}; font-weight:bold;")
+                self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#107c10; font-weight:bold;")
                 self._deposit_status_lbl.setText(f"💰 {int(val):,} KRW (Est.)")
                 QTimer.singleShot(4000, lambda: self._deposit_status_lbl.setText("") if hasattr(self, "_deposit_status_lbl") else None)
             self._deposit_edit.selectAll()
             self._deposit_edit.setFocus()
         except Exception as e:
             if hasattr(self, "_deposit_status_lbl"):
-                self._deposit_status_lbl.setStyleSheet(f"font-size:10pt; color:{theme.c('danger_text')}; font-weight:bold;")
+                self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#d32f2f; font-weight:bold;")
                 self._deposit_status_lbl.setText(f"❌ Failed to fetch")
                 QTimer.singleShot(5000, lambda: self._deposit_status_lbl.setText("") if hasattr(self, "_deposit_status_lbl") else None)
             QMessageBox.critical(self, "Error", f"Failed to fetch data:\n{e}")
@@ -1042,7 +1041,7 @@ class TradingHistoryTab(QWidget):
 
         # Update Total Asset / P/L inline labels
         INPUT_STYLE_BASE = (
-            f"QLineEdit {{ border:1px solid {theme.c('border_input')}; "
+            "QLineEdit { border:1px solid #ccc; "
             "border-radius:4px; padding:3px 6px; font-size:12px; font-weight:bold; }"
         )
         if hasattr(self, "_total_invest_edit"):
@@ -1053,12 +1052,12 @@ class TradingHistoryTab(QWidget):
             self._total_pl_edit.setText(f"{total_pl:+,.0f}")
             self._total_pl_edit.setToolTip(f"Total Asset ({total:,.0f}) - Principal ({principal:,.0f})")
             self._total_pl_edit.setStyleSheet(
-                INPUT_STYLE_BASE + f" QLineEdit {{ background:{theme.c('input_bg')}; color:{theme.c('text')}; }}"
+                INPUT_STYLE_BASE + " QLineEdit { background:#fff; color:#111; }"
             )
         if hasattr(self, "_total_pl_pct_edit"):
             self._total_pl_pct_edit.setText(f"{total_pl_pct:+.1f}%")
             self._total_pl_pct_edit.setStyleSheet(
-                INPUT_STYLE_BASE + f" QLineEdit {{ background:{theme.c('input_bg')}; color:{theme.c('text')}; }}"
+                INPUT_STYLE_BASE + " QLineEdit { background:#fff; color:#111; }"
             )
 
     def _on_search_stock_pl(self):
@@ -1236,10 +1235,10 @@ class TradingHistoryTab(QWidget):
         tbl.verticalHeader().setVisible(False)
         tbl.setShowGrid(True)
         tbl.setStyleSheet(
-            f"QTableWidget {{ border:1px solid {theme.c('border')}; border-radius:6px; }}"
+            "QTableWidget { border:1px solid #d0d0d0; border-radius:6px; }"
             "QTableWidget::item { padding:2px 6px; }"
-            f"QHeaderView::section {{ background:{theme.c('header_bg_alt')}; color:{theme.c('text_secondary')}; font-weight:bold; padding:4px; "
-            f"border:none; border-right:1px solid {theme.c('border')}; border-bottom:1px solid {theme.c('border')}; }}"
+            "QHeaderView::section { background:#f0f2f5; font-weight:bold; padding:4px; "
+            "border:none; border-right:1px solid #d0d0d0; border-bottom:1px solid #d0d0d0; }"
         )
         tbl_font = create_font(9, style_name="Semilight")
         tbl.setFont(tbl_font)
@@ -1365,7 +1364,7 @@ class TradingHistoryTab(QWidget):
 
         title_lbl = QLabel("📊 AI Portfolio Diagnosis Result")
         title_lbl.setFont(create_font(12, QFont.Weight.Bold))
-        title_lbl.setStyleSheet(f"color:{theme.c('info_text')}; margin-bottom:4px;")
+        title_lbl.setStyleSheet("color:#0a3d62; margin-bottom:4px;")
         v.addWidget(title_lbl)
 
         from PyQt6.QtWidgets import QTextEdit
@@ -1373,8 +1372,7 @@ class TradingHistoryTab(QWidget):
         text_edit.setReadOnly(True)
         text_edit.setFont(create_font(10, style_name="Semilight"))
         text_edit.setStyleSheet(
-            f"QTextEdit {{ border:1px solid {theme.c('border')}; border-radius:6px; padding:8px; "
-            f"background:{theme.c('panel_bg_alt')}; color:{theme.c('text')}; }}"
+            "QTextEdit { border:1px solid #d0d0d0; border-radius:6px; padding:8px; background:#fafafa; }"
         )
         # Convert markdown-style bold (**text**) to minimal HTML for readability
         import re
@@ -1385,7 +1383,7 @@ class TradingHistoryTab(QWidget):
 
         disclaimer_lbl = QLabel("※ This analysis is for reference only and does not constitute investment advice.")
         disclaimer_lbl.setFont(create_font(8, style_name="Semilight"))
-        disclaimer_lbl.setStyleSheet(f"color:{theme.c('text_muted')};")
+        disclaimer_lbl.setStyleSheet("color:#888;")
         v.addWidget(disclaimer_lbl)
 
         close_btn = QPushButton("Close")
