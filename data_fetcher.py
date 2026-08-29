@@ -2613,3 +2613,179 @@ def fetch_quarterly_financials(ticker: str, market: str):
     except Exception as e:
         logger.error("Quarterly financials fetch failed for ticker=%s", ticker, exc_info=True)
         return []
+
+
+# ---------------------------------------------------------------------------
+# Weekly rebalance signal generation (trading.md 3-1: factor scoring + rank
+# rebalancing). v1 defaults below (equal-weighted factors, top_n=20,
+# band_multiplier=1.5) are a starting point per trading.md's own framing --
+# tune based on the backtest/paper-trading verification trading.md section 6
+# calls for before relying on this for real capital.
+# ---------------------------------------------------------------------------
+
+# factor_name -> (extractor(universe_item) -> float | None, higher_is_better)
+# All six factors are already computed for every Trading Universe row by
+# fetch_historical_changes() / the trailing_per field, so no new data fetch
+# is needed here.
+_REBALANCE_FACTORS = {
+    "value_per":         (lambda it: it.get("trailing_per"), False),
+    "ma20_momentum":     (lambda it: (it.get("changes") or {}).get("ma20_div"), True),
+    "ma50_momentum":     (lambda it: (it.get("changes") or {}).get("ma50_div"), True),
+    "high52w_proximity": (lambda it: (it.get("changes") or {}).get("52w_high_diff"), True),
+    "ret_20d":           (lambda it: (it.get("changes") or {}).get("20d"), True),
+    "ret_60d":           (lambda it: (it.get("changes") or {}).get("60d"), True),
+}
+_REBALANCE_MIN_FACTORS = 3  # a stock needs at least this many valid factors to be ranked at all
+
+
+def compute_weekly_rebalance_signals(
+    universe_data: list,
+    current_holdings=None,
+    top_n: int = 20,
+    band_multiplier: float = 1.5,
+) -> dict:
+    """Factor-score and rank the Trading Universe for weekly rebalancing
+    (trading.md section 3-1: "팩터 스코어링 + 순위 리밸런싱").
+
+    Each of 6 factors (trailing PER, MA20/MA50 divergence, 52-week-high
+    proximity, 20D/60D returns) is z-scored across `universe_data`, sign-
+    flipped so higher-z is always "better" (e.g. PER is inverted -- cheaper
+    is better), then averaged into one composite score per stock. Stocks are
+    ranked by that score; the top `top_n` are the target portfolio.
+
+    Parameters
+    ----------
+    universe_data : list[dict]
+        Same shape as UniverseTab.all_data (from fetch_market_data() et al.):
+        each item has 'ticker', 'name', 'market', 'trailing_per', and a
+        'changes' dict with 'ma20_div'/'ma50_div'/'52w_high_diff'/'20d'/'60d'
+        (see fetch_historical_changes()). Index rows (is_index=True) and
+        entries missing a ticker are skipped.
+    current_holdings : Iterable[str] | None
+        Tickers currently held (e.g. from trade_db.get_open_trades()). Used
+        only to classify buy/sell/hold -- does not affect the ranking itself.
+    top_n : int
+        Target portfolio size (trading.md decision: 20).
+    band_multiplier : float
+        A held stock only becomes a sell candidate once its rank falls below
+        top_n * band_multiplier (trading.md decision: 1.5, i.e. rank > 30 for
+        top_n=20) -- reduces weekly turnover per trading.md section 4.
+
+    Returns
+    -------
+    dict:
+        as_of                 -- "YYYY-MM-DD" (today)
+        top_n, sell_threshold_rank
+        ranked                -- every scored stock, best score first:
+                                  {ticker, name, market, score, rank, factors, raw}
+                                  (factors = per-factor z-score after sign-flip;
+                                  raw = the unmodified extracted values)
+        buy_candidates        -- ranked entries with rank <= top_n, not already held
+        sell_candidates       -- held entries with rank > sell_threshold_rank,
+                                  plus held tickers absent from the ranked
+                                  universe entirely (rank=None: delisted, no
+                                  longer tracked, or too little data)
+        hold                  -- held entries with rank <= sell_threshold_rank
+        excluded_count        -- universe items skipped (indices, no ticker, or
+                                  fewer than _REBALANCE_MIN_FACTORS valid factors)
+    """
+    current_holdings = set(current_holdings or [])
+
+    # ── Step 1: extract raw factor values per stock ──────────────────────
+    candidates = []
+    for item in universe_data:
+        if item.get("is_index"):
+            continue
+        ticker = item.get("ticker")
+        if not ticker:
+            continue
+        raw = {}
+        for fname, (extractor, _higher_better) in _REBALANCE_FACTORS.items():
+            try:
+                v = extractor(item)
+                raw[fname] = float(v) if v is not None else None
+            except (TypeError, ValueError):
+                raw[fname] = None
+        if sum(1 for v in raw.values() if v is not None) < _REBALANCE_MIN_FACTORS:
+            continue
+        candidates.append({
+            "ticker": ticker,
+            "name": item.get("name", ticker),
+            "market": item.get("market", ""),
+            "raw": raw,
+        })
+
+    excluded_count = len(universe_data) - len(candidates)
+
+    # ── Step 2: z-score each factor across all candidates, sign-flipped so
+    # higher is always better ─────────────────────────────────────────────
+    zscores = {fname: {} for fname in _REBALANCE_FACTORS}
+    for fname, (_extractor, higher_better) in _REBALANCE_FACTORS.items():
+        values = np.array(
+            [c["raw"][fname] for c in candidates if c["raw"][fname] is not None],
+            dtype=float,
+        )
+        if values.size == 0:
+            continue
+        mean = float(values.mean())
+        std = float(values.std())
+        for c in candidates:
+            v = c["raw"][fname]
+            if v is None:
+                continue
+            z = 0.0 if std == 0 else (v - mean) / std
+            zscores[fname][c["ticker"]] = z if higher_better else -z
+
+    # ── Step 3: composite score = mean of a stock's available z-scores ───
+    ranked = []
+    for c in candidates:
+        z_vals = [
+            zscores[fname][c["ticker"]]
+            for fname in _REBALANCE_FACTORS
+            if c["ticker"] in zscores[fname]
+        ]
+        score = float(np.mean(z_vals)) if z_vals else float("-inf")
+        ranked.append({
+            "ticker": c["ticker"],
+            "name": c["name"],
+            "market": c["market"],
+            "score": score,
+            "factors": {fname: zscores[fname].get(c["ticker"]) for fname in _REBALANCE_FACTORS},
+            "raw": c["raw"],
+        })
+
+    ranked.sort(key=lambda r: r["score"], reverse=True)
+    for i, r in enumerate(ranked, start=1):
+        r["rank"] = i
+
+    rank_by_ticker = {r["ticker"]: r["rank"] for r in ranked}
+    sell_threshold_rank = int(top_n * band_multiplier)
+
+    buy_candidates = [
+        r for r in ranked if r["rank"] <= top_n and r["ticker"] not in current_holdings
+    ]
+    hold = [
+        r for r in ranked if r["ticker"] in current_holdings and r["rank"] <= sell_threshold_rank
+    ]
+    sell_candidates = [
+        r for r in ranked if r["ticker"] in current_holdings and r["rank"] > sell_threshold_rank
+    ]
+    # Held tickers absent from the ranked universe entirely (delisted, or no
+    # longer tracked in Trading Universe) are also sell candidates.
+    for ticker in current_holdings:
+        if ticker not in rank_by_ticker:
+            sell_candidates.append({
+                "ticker": ticker, "name": ticker, "market": "",
+                "score": None, "factors": {}, "raw": {}, "rank": None,
+            })
+
+    return {
+        "as_of": datetime.now().strftime("%Y-%m-%d"),
+        "top_n": top_n,
+        "sell_threshold_rank": sell_threshold_rank,
+        "ranked": ranked,
+        "buy_candidates": buy_candidates,
+        "sell_candidates": sell_candidates,
+        "hold": hold,
+        "excluded_count": excluded_count,
+    }
