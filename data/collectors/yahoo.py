@@ -366,29 +366,29 @@ def fetch_us_market_data(market="NASDAQ 100", top_n=200, progress_callback=None)
     from data.market import get_stock_listing, get_usd_krw_rate
 
     try:
+        df_list = pd.DataFrame()
         if market == "NASDAQ 100":
             try:
                 import io
                 res = requests.get('https://en.wikipedia.org/wiki/Nasdaq-100', headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-                tables = pd.read_html(io.StringIO(res.text))
-                df_list = None
+                tables = pd.read_html(io.StringIO(res.text), flavor='lxml')
                 for tbl in tables:
                     if 'Ticker' in tbl.columns:
-                        df_list = tbl
+                        df_list = tbl.rename(columns={'Ticker': 'Symbol', 'Company': 'Name'})
                         break
-                if df_list is not None:
-                    df_list = df_list.rename(columns={'Ticker': 'Symbol', 'Company': 'Name'})
-                    logger.debug("NASDAQ 100 listing fetched: %d stocks", len(df_list))
-                else:
-                    logger.warning("NASDAQ 100 table not found on Wikipedia page")
-                    return []
-            except Exception as e:
-                logger.error("Error fetching NASDAQ 100 listing", exc_info=True)
-                return []
+                    elif 'Symbol' in tbl.columns:
+                        df_list = tbl.rename(columns={'Company': 'Name'})
+                        break
+            except Exception:
+                logger.debug("Wikipedia NASDAQ-100 table fetch error, falling back to NASDAQ listing", exc_info=True)
+
+            if df_list.empty:
+                df_list = get_stock_listing('NASDAQ')
         else:
             df_list = get_stock_listing(market)
-            if df_list.empty:
-                return []
+
+        if df_list.empty:
+            return []
 
         _VALID_SYM = re.compile(r'^[A-Z]{1,5}(\.[A-Z]{1,2})?$')
         mask = df_list['Symbol'].astype(str).str.strip().str.upper().str.match(_VALID_SYM)

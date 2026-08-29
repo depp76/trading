@@ -24,6 +24,7 @@ _CHANGE_KEYS = tuple(_TD_PERIODS.keys())
 _FDR_ONLY_TICKERS = frozenset({
     "JP10YT", "KR3YT",                       # Bond yields (handled elsewhere too)
     "USD/KRW",                               # FX pair
+    "KS11", "KQ11",                          # Korean indices without caret
 })
 
 # Module-level USD/KRW rate cache (refreshed once per process run)

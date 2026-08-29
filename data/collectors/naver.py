@@ -183,38 +183,35 @@ def _fetch_naver_info(code: str) -> tuple:
     return "", 0
 
 
-def _fetch_kr_listing_naver(market: str, top_n: int) -> list:
-    """Fetch Korean stock listings by scraping Naver Finance's market-cap ranking pages."""
+def _fetch_kr_listing_naver(market, top_n):
+    """Primary KR market-listing source: scrape Naver sise_market_sum pages in
+    parallel (price/marcap/PER all in one pass). Raises on total failure —
+    callers decide whether/how to fall back (roadmap 3-5)."""
     sosok = 0 if market == "KOSPI" else 1
-    pages_to_fetch = (top_n // 50) + 1
+    max_pages = (top_n // 50) + 2
 
     def _fetch_page(pg):
-        page_items = []
-        try:
-            url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={pg}"
-            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=6)
-            res.encoding = 'euc-kr'
-            soup = BeautifulSoup(res.text, 'html.parser')
-            for tr in soup.select('table.type_2 tbody tr'):
-                tds = tr.select('td')
-                if len(tds) > 1 and tds[1].select_one('a'):
-                    a = tds[1].select_one('a')
-                    name = a.text.strip()
-                    code = a['href'].split('code=')[-1].strip()
-                    try:
-                        marcap = int(tds[6].text.replace(',', '').strip()) * 100_000_000
-                    except Exception:
-                        marcap = 0
-                    page_items.append({"ticker": code, "name": name, "market_cap": marcap})
-        except Exception:
-            logger.warning("_fetch_kr_listing_naver: page %d fetch failed for %s", pg, market, exc_info=True)
-        return page_items
+        url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={pg}"
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+        soup = BeautifulSoup(r.content, 'html.parser', from_encoding='euc-kr')
+        rows = []
+        for tr in soup.select('table.type_2 tbody tr'):
+            a_tag = tr.select_one('a.tltle')
+            if not a_tag:
+                continue
+            code = a_tag['href'].split('code=')[-1].zfill(6)
+            name = a_tag.text.strip()
+            cols = [td.text.strip().replace(',', '') for td in tr.select('td')]
+            marcap = int(cols[6]) * 100_000_000 if len(cols) > 6 and cols[6].isdigit() else 0
+            rows.append({'Code': code, 'Name': name, 'Marcap': marcap})
+        return rows
 
-    items = []
-    with ThreadPoolExecutor(max_workers=min(pages_to_fetch, 5)) as exe:
-        for page_items in exe.map(_fetch_page, range(1, pages_to_fetch + 1)):
-            items.extend(page_items)
-    return items
+    results_list = []
+    with ThreadPoolExecutor(max_workers=min(max_pages, 8)) as exe:
+        for rows in exe.map(_fetch_page, range(1, max_pages + 1)):
+            results_list.extend(rows)
+
+    return results_list[:top_n]
 
 
 def _get_kr3y_df():
