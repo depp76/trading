@@ -62,6 +62,11 @@ plt.rcParams['axes.unicode_minus'] = False
 _HIST_KEYS = ["3d", "5d", "10d", "20d", "60d", "120d"]
 _MARKET_ORDER = {"KOSPI": 0, "KOSDAQ": 1, "NASDAQ 100": 2, "S&P500": 3}
 
+# Shared accent color, named so it's set in one place instead of being
+# repeated as a literal across the header checkbox and the app-wide QSS.
+_ACCENT_COLOR = "#0078d4"
+_ACCENT_HOVER_COLOR = "#005a9e"
+
 # ---
 # Shared: 1,000-separator auto-formatter for QLineEdit
 # ---
@@ -178,7 +183,7 @@ class MainWindow(QMainWindow):
         # Add Auto Refresh Checkbox
         self.auto_refresh_cb = QCheckBox("Auto Update (1 min)")
         self.auto_refresh_cb.setFont(create_font(10, QFont.Weight.Bold))
-        self.auto_refresh_cb.setStyleSheet("QCheckBox { color: #0078d4; margin-right: 15px; }")
+        self.auto_refresh_cb.setStyleSheet(f"QCheckBox {{ color: {_ACCENT_COLOR}; margin-right: 15px; }}")
         self.auto_refresh_cb.toggled.connect(self._toggle_global_auto_timer)
         header_layout.addWidget(self.auto_refresh_cb)
         
@@ -303,16 +308,7 @@ class MainWindow(QMainWindow):
             threads_to_stop.extend(self.universe_tab.collect_threads_to_stop())
 
         if hasattr(self, 'trading_history_tab'):
-            p_thread = getattr(self.trading_history_tab, '_price_thread', None)
-            if p_thread is not None:
-                threads_to_stop.append(p_thread)
-            
-            rt_thread = getattr(self.trading_history_tab, '_rt_price_thread', None)
-            if rt_thread is not None:
-                threads_to_stop.append(rt_thread)
-                
-            for zt in getattr(self.trading_history_tab, '_zombie_threads', []):
-                threads_to_stop.append(zt)
+            threads_to_stop.extend(self.trading_history_tab.collect_threads_to_stop())
 
         for t in threads_to_stop:
             try:
@@ -333,62 +329,62 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app_font = create_font(10, style_name="Semilight")
     app.setFont(app_font)
-    app.setStyleSheet("""
-        QMainWindow { background-color: #f0f0f0; }
-        QTableWidget {
+    app.setStyleSheet(f"""
+        QMainWindow {{ background-color: #f0f0f0; }}
+        QTableWidget {{
             background-color: white;
             alternate-background-color: #f9f9f9;
             gridline-color: #d0d0d0;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QHeaderView::section {
+        }}
+        QHeaderView::section {{
             background-color: #e0e0e0;
             padding: 4px;
             border: 1px solid #d0d0d0;
             font-weight: bold;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QLineEdit {
+        }}
+        QLineEdit {{
             padding: 5px;
             border: 1px solid #c0c0c0;
             border-radius: 4px;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QComboBox {
+        }}
+        QComboBox {{
             padding: 5px;
             border: 1px solid #c0c0c0;
             border-radius: 4px;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QPushButton {
+        }}
+        QPushButton {{
             padding: 8px 16px;
-            background-color: #0078d4;
+            background-color: {_ACCENT_COLOR};
             color: white;
             border: none;
             border-radius: 4px;
             font-weight: bold;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QPushButton:hover { background-color: #005a9e; }
-        QPushButton:disabled { background-color: #cccccc; }
-        QPushButton:checked { background-color: #005a9e; border: 2px solid #003f7f; }
-        
-        QTabWidget::pane {
+        }}
+        QPushButton:hover {{ background-color: {_ACCENT_HOVER_COLOR}; }}
+        QPushButton:disabled {{ background-color: #cccccc; }}
+        QPushButton:checked {{ background-color: {_ACCENT_HOVER_COLOR}; border: 2px solid #003f7f; }}
+
+        QTabWidget::pane {{
             border: 1px solid #d0d0d0;
             background: white;
             border-radius: 4px;
-        }
-        QTabBar::tab {
+        }}
+        QTabBar::tab {{
             background: #e0e0e0;
             border: 1px solid #d0d0d0;
             padding: 10px 30px;
             font-weight: bold;
             font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
-        }
-        QTabBar::tab:selected {
+        }}
+        QTabBar::tab:selected {{
             background: white;
-            border-bottom: 2px solid #0078d4;
-        }
+            border-bottom: 2px solid {_ACCENT_COLOR};
+        }}
     """)
 
     window = MainWindow()
@@ -396,6 +392,5 @@ if __name__ == "__main__":
     ret = app.exec()
     # Ensure all remaining non-daemon threads (ThreadPoolExecutor workers
     # started by data_fetcher) don't block process exit.
-    import os
     os._exit(ret if ret else 0)
 

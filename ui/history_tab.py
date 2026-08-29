@@ -686,6 +686,20 @@ class TradingHistoryTab(QWidget):
         self._rt_price_thread.status_message.connect(self.status_message.emit)
         self._rt_price_thread.start()
 
+    def collect_threads_to_stop(self):
+        """Return every QThread this tab may have started, for MainWindow.closeEvent
+        (mirrors UniverseTab.collect_threads_to_stop())."""
+        threads = []
+        pt = getattr(self, '_price_thread', None)
+        if pt is not None:
+            threads.append(pt)
+        rt = getattr(self, '_rt_price_thread', None)
+        if rt is not None:
+            threads.append(rt)
+        for t in getattr(self, '_zombie_threads', []):
+            threads.append(t)
+        return threads
+
     def _on_realtime_prices_fetched(self, prices_dict):
         if not prices_dict:
             return
