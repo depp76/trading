@@ -89,7 +89,14 @@ def _set_field_error(edit: QLineEdit, message: str = "") -> None:
 
 
 def _validate_date_str(text: str) -> bool:
-    """True if text is a valid YYYY-MM-DD date."""
+    """True if text is a valid YYYY-MM-DD date.
+
+    strptime's %Y-%m-%d accepts non-zero-padded month/day too (e.g. "2026-7-8"),
+    so this validates parseability only -- callers that persist the value must
+    run it through _normalize_date_str() first to get a consistent
+    zero-padded form (portfolio.db's sell_date/buy_date columns previously
+    ended up with a mix of both, which pandas parses fine but other tools may not).
+    """
     text = text.strip()
     if not text:
         return False
@@ -98,6 +105,18 @@ def _validate_date_str(text: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _normalize_date_str(text: str) -> str:
+    """Reformats an already-valid YYYY-MM-DD date string to zero-padded form
+    (e.g. "2026-7-8" -> "2026-07-08"). Returns the input stripped and
+    unchanged if it doesn't parse -- callers should validate with
+    _validate_date_str() first."""
+    text = text.strip()
+    try:
+        return _dt.datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return text
 
 
 def _validate_positive_number(text: str) -> bool:

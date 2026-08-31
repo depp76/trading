@@ -34,6 +34,7 @@ from ui.common import (
     create_font,
     _fmt_num_edit,
     _validate_date_str,
+    _normalize_date_str,
     _validate_positive_number,
     _mk_field_validator,
 )
@@ -1098,7 +1099,7 @@ class BuyEditDialog(QDialog):
         b_amt = to_f(self.buy_amount_edit.text())
 
         self.result_data = {
-            "buy_date": self.buy_date_edit.text().strip(),
+            "buy_date": _normalize_date_str(self.buy_date_edit.text()),
             "buy_price": b_price,
             "qty": b_qty,
             "buy_amount": b_amt if b_amt > 0 else b_price * b_qty,
@@ -1196,7 +1197,7 @@ class SellEditDialog(QDialog):
             QMessageBox.warning(self, "Input Error", "Please check the highlighted fields (shown with a red border).")
             return
 
-        sell_date_str = self.sell_date_edit.text().strip()
+        sell_date_str = _normalize_date_str(self.sell_date_edit.text())
         if sell_date_str and self._buy_date_str:
             try:
                 buy_d = _dt.datetime.strptime(self._buy_date_str, "%Y-%m-%d").date()
@@ -1369,7 +1370,7 @@ class TradeEntryDialog(QDialog):
             "market": market,
             "ticker": ticker,
             "company": company,
-            "buy_date": self.buy_date_edit.text().strip(),
+            "buy_date": _normalize_date_str(self.buy_date_edit.text()),
             "buy_price": b_price,
             "qty": qty,
             "buy_amount": b_amt,
