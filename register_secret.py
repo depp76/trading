@@ -1,7 +1,5 @@
 import subprocess
 import getpass
-import tempfile
-import os
 import shutil
 
 def register_secret():
@@ -22,23 +20,19 @@ def register_secret():
         return
         
     print(f"\n⏳ 구글 클라우드에 [{secret_name}] 시크릿 생성 중...")
-    
-    # 임시 파일로 값을 안전하게 전달
-    temp_path = ""
-    try:
-        with tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as temp:
-            temp.write(secret_value)
-            temp_path = temp.name
 
-        # gcloud 명령어 호출
-        # shutil.which() resolves the .cmd/.bat extension (PATHEXT) so this
-        # works on Windows without shell=True, which would otherwise pass
-        # secret_name through cmd.exe and let shell metacharacters in it
-        # (e.g. `&`, `|`) run as separate commands.
+    # Invoke the gcloud command.
+    # shutil.which() resolves the .cmd/.bat extension (PATHEXT) so this
+    # works on Windows without shell=True, which would otherwise pass
+    # secret_name through cmd.exe and let shell metacharacters in it
+    # (e.g. `&`, `|`) run as separate commands.
+    # --data-file=- reads the secret from stdin, so the value is never
+    # written to a temp file on disk.
+    try:
         gcloud_exe = shutil.which('gcloud') or 'gcloud'
         result = subprocess.run(
-            [gcloud_exe, 'secrets', 'create', secret_name, f'--data-file={temp_path}'],
-            capture_output=True, text=True, shell=False
+            [gcloud_exe, 'secrets', 'create', secret_name, '--data-file=-'],
+            input=secret_value, capture_output=True, text=True, shell=False
         )
 
         if result.returncode == 0:
@@ -47,8 +41,8 @@ def register_secret():
             if "already exists" in result.stderr:
                 print(f"⚠️ 이미 [{secret_name}]라는 이름의 시크릿이 존재합니다. 새 버전을 추가합니다...")
                 result_ver = subprocess.run(
-                    [gcloud_exe, 'secrets', 'versions', 'add', secret_name, f'--data-file={temp_path}'],
-                    capture_output=True, text=True, shell=False
+                    [gcloud_exe, 'secrets', 'versions', 'add', secret_name, '--data-file=-'],
+                    input=secret_value, capture_output=True, text=True, shell=False
                 )
                 if result_ver.returncode == 0:
                     print(f"✅ 기존 [{secret_name}]에 새로운 버전의 키 값이 성공적으로 업데이트되었습니다!")
@@ -56,13 +50,9 @@ def register_secret():
                     print(f"❌ 버전 업데이트 실패: {result_ver.stderr}")
             else:
                 print(f"❌ gcloud 등록 실패:\n{result.stderr}")
-                
+
     except Exception as e:
         print(f"❌ 에러가 발생했습니다: {e}")
-    finally:
-        # 무조건 임시 파일 삭제하여 보안 유지
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
 
 if __name__ == "__main__":
     register_secret()

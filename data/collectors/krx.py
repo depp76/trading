@@ -1,6 +1,8 @@
 """data/collectors/krx.py — KRX Open API (VKOSPI, derivative indices) and JP10Y bond data."""
 import os
 import json
+import threading
+import time
 import requests
 from datetime import datetime, date as _date
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +13,7 @@ import logging
 from data.cache import (
     _START_DATE,
     _JP10Y_CACHE,
+    _MISC_CACHE_LOCK,
     _pdf_is_stale,
     safe_float,
 )
@@ -21,6 +24,7 @@ VKOSPI_INDEX_NAME = "코스피 200 변동성지수"
 _KRX_DERIV_IDX_URL = "https://openapi.krx.co.kr/OPN/DER/01/0101/der_0101_tab1.jsp"
 _KRX_KEY_CACHE: dict = {}
 _KRX_VKOSPI_CACHE_PATH = "vkospi_cache.json"
+_VKOSPI_CACHE_LOCK = threading.Lock()
 
 
 def _get_krx_auth_key() -> str:
@@ -86,36 +90,49 @@ def _load_vkospi_cache() -> dict:
 
 def _save_vkospi_cache(cache: dict):
     try:
-        with open(_KRX_VKOSPI_CACHE_PATH, "w", encoding="utf-8") as f:
+        temp_path = _KRX_VKOSPI_CACHE_PATH + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False)
+        os.replace(temp_path, _KRX_VKOSPI_CACHE_PATH)
     except Exception:
         logger.warning("VKOSPI cache save error", exc_info=True)
 
 
-def fetch_vkospi_history(start: str, end: str = None, max_workers: int = 8) -> pl.DataFrame:
-    """Builds daily VKOSPI OHLC history for [start, end] (default end: today)."""
+def fetch_vkospi_history(start: str, end: str = None, max_workers: int = 3, request_delay: float = 0.3) -> pl.DataFrame:
+    """Builds daily VKOSPI OHLC history for [start, end] (default end: today).
+
+    max_workers/request_delay default to a modest, throttled pace: a cold-start backfill
+    can span a year of business days, and hammering the KRX Open API with a large burst of
+    concurrent requests has triggered a WAF-level block (403 on every request, including
+    ones with a valid, approved auth key) that persists for a while.
+    """
     end = end or datetime.now().strftime("%Y-%m-%d")
     bas_dds = [d.strftime("%Y%m%d") for d in pd.bdate_range(start, end)]
 
-    cache = _load_vkospi_cache()
-    today_bd = datetime.now().strftime("%Y%m%d")
-    missing = [bd for bd in bas_dds if bd not in cache or (cache[bd] is None and bd == today_bd)]
+    def _throttled_fetch(bd):
+        time.sleep(request_delay)
+        return fetch_krx_derivative_index_day(bd)
 
-    if missing:
-        with ThreadPoolExecutor(max_workers=max_workers) as exe:
-            futures = {exe.submit(fetch_krx_derivative_index_day, bd): bd for bd in missing}
-            for fut in as_completed(futures):
-                bd = futures[fut]
-                try:
-                    item = fut.result()
-                except Exception:
-                    logger.warning("KRX VKOSPI fetch error for date=%s", bd, exc_info=True)
-                    continue
-                if item:
-                    cache[bd] = item
-                elif bd != today_bd:
-                    cache[bd] = None
-        _save_vkospi_cache(cache)
+    with _VKOSPI_CACHE_LOCK:
+        cache = _load_vkospi_cache()
+        today_bd = datetime.now().strftime("%Y%m%d")
+        missing = [bd for bd in bas_dds if bd not in cache or (cache[bd] is None and bd == today_bd)]
+
+        if missing:
+            with ThreadPoolExecutor(max_workers=max_workers) as exe:
+                futures = {exe.submit(_throttled_fetch, bd): bd for bd in missing}
+                for fut in as_completed(futures):
+                    bd = futures[fut]
+                    try:
+                        item = fut.result()
+                    except Exception:
+                        logger.warning("KRX VKOSPI fetch error for date=%s", bd, exc_info=True)
+                        continue
+                    if item:
+                        cache[bd] = item
+                    elif bd != today_bd:
+                        cache[bd] = None
+            _save_vkospi_cache(cache)
 
     rows = []
     for bd in bas_dds:
@@ -154,26 +171,27 @@ def _get_vkospi_pdf() -> pd.DataFrame:
 
 def _get_jp10y_df():
     """Fetch Japan 10-year government bond yield."""
-    cached = _JP10Y_CACHE["df"]
-    if cached is not None and not _pdf_is_stale(cached):
-        return cached
-    try:
-        df1 = pd.read_csv(
-            'https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv',
-            skiprows=1, encoding='shift_jis')
-        df2 = pd.read_csv(
-            'https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/jgbcme.csv',
-            skiprows=1, encoding='shift_jis')
-        df = pd.concat([df1, df2], ignore_index=True)
-        df.rename(columns={'Date': 'Date', '10Y': 'Close'}, inplace=True)
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
-        df = (df[['Date', 'Close']]
-              .dropna(subset=['Date', 'Close'])
-              .sort_values('Date')
-              .set_index('Date'))
-        _JP10Y_CACHE["df"] = df
-        return df
-    except Exception:
-        logger.error("JP10Y fetch failed", exc_info=True)
+    with _MISC_CACHE_LOCK:
+        cached = _JP10Y_CACHE["df"]
+        if cached is not None and not _pdf_is_stale(cached):
+            return cached
+        try:
+            df1 = pd.read_csv(
+                'https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/historical/jgbcme_all.csv',
+                skiprows=1, encoding='shift_jis')
+            df2 = pd.read_csv(
+                'https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/jgbcme.csv',
+                skiprows=1, encoding='shift_jis')
+            df = pd.concat([df1, df2], ignore_index=True)
+            df.rename(columns={'Date': 'Date', '10Y': 'Close'}, inplace=True)
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
+            df = (df[['Date', 'Close']]
+                  .dropna(subset=['Date', 'Close'])
+                  .sort_values('Date')
+                  .set_index('Date'))
+            _JP10Y_CACHE["df"] = df
+            return df
+        except Exception:
+            logger.error("JP10Y fetch failed", exc_info=True)
         return cached

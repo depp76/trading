@@ -34,6 +34,12 @@ _JP10Y_CACHE: dict = {"df": None}
 _KR3Y_CACHE: dict = {"df": None}
 _VKOSPI_CACHE: dict = {}
 
+# Shared lock serializing the check-then-fetch-then-set cycle of the
+# low-traffic caches above (_USD_KRW_CACHE, _JP10Y_CACHE, _KR3Y_CACHE), so
+# concurrent callers (e.g. fetch_major_indices_as_stocks fanning out one
+# thread per index) don't each redundantly fetch on a cold/stale cache.
+_MISC_CACHE_LOCK = threading.Lock()
+
 # Shared history cache — only non-empty DataFrames are stored,
 # so transient fetch failures (e.g. during parallel startup) are retried.
 # Capped at _HIST_CACHE_MAX entries; least-recently-used entries are evicted first.

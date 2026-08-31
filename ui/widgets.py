@@ -12,15 +12,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon
 
-# Shared helpers imported from main package (available at runtime when main.py loads)
-# We use a lazy import pattern to avoid circular imports.
-def _get_create_font():
-    import main as _m
-    return _m.create_font
-
-def _get_hist_keys():
-    import main as _m
-    return _m._HIST_KEYS
+from ui.common import create_font, _HIST_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -37,8 +29,6 @@ class FilterPopup(QFrame):
         self.setStyleSheet(
             "QFrame { background: white; border: 1px solid #aaa; border-radius: 4px; }"
         )
-
-        create_font = _get_create_font()
 
         layout = QVBoxLayout(self)
         layout.setSpacing(3)
@@ -214,7 +204,6 @@ class StockTable(QTableWidget):
 
     def __init__(self):
         super().__init__()
-        create_font = _get_create_font()
         self.setColumnCount(22)
         self.setHorizontalHeaderLabels(
             ["Name", "Pf", "Market", "Ticker", "Market Cap", "tPER", "fPER", "Price", "Div(20)", "Div(50)",
@@ -341,21 +330,23 @@ class StockTable(QTableWidget):
             highlights = {}
 
         self.setUpdatesEnabled(False)  # UI Batch Repaint Optimization
-        self.setSortingEnabled(False)
-        self.clearContents()
-        if self.rowCount() != len(data):
-            self.setRowCount(len(data))
+        try:
+            self.setSortingEnabled(False)
+            self.clearContents()
+            if self.rowCount() != len(data):
+                self.setRowCount(len(data))
 
-        for row, item in enumerate(data):
-            self._populate_row(row, item, highlights)
+            for row, item in enumerate(data):
+                self._populate_row(row, item, highlights)
 
-        # MA20 buttons are added externally after load_data via add_ma20_button
-        # Clear sort indicator BEFORE enabling sorting so Qt does not auto-resort
-        # the rows and overwrites the insertion order (Index-KOSPI-KOSDAQ-NASDAQ-S&P500, by market cap).
-        self._filter_header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
-        self.setSortingEnabled(True)
-        self._stretch_columns()
-        self.setUpdatesEnabled(True)
+            # MA20 buttons are added externally after load_data via add_ma20_button
+            # Clear sort indicator BEFORE enabling sorting so Qt does not auto-resort
+            # the rows and overwrites the insertion order (Index-KOSPI-KOSDAQ-NASDAQ-S&P500, by market cap).
+            self._filter_header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+            self.setSortingEnabled(True)
+            self._stretch_columns()
+        finally:
+            self.setUpdatesEnabled(True)
 
     def update_changed_rows(self, data, changed_rows, highlights=None):
         """Incremental counterpart to load_data(): re-renders only the rows
@@ -390,7 +381,6 @@ class StockTable(QTableWidget):
         add_action_buttons(), which callers only need to (re)run for rows whose
         highlight state actually changed -- shared by load_data() (every row)
         and update_changed_rows() (only rows whose data actually changed)."""
-        _HIST_KEYS = _get_hist_keys()
         center = Qt.AlignmentFlag.AlignCenter
         right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 

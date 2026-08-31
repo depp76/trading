@@ -19,8 +19,6 @@ from data.cache import (
     _YF_SESSION,
     _NAVER_SESSION,
     _KIWOOM_SESSION,
-    _YF_CRUMB,
-    _YF_CRUMB_LOCK,
     YFTlsAdapter,
     _get_yf_crumb,
     _log_hist_cache_stats,

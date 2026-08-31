@@ -20,6 +20,7 @@ from data_fetcher import (
     fetch_single_stock,
     fetch_all_indices_mas,
     fetch_stock_ma_multi,
+    INDEX_TICKERS,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ class StockMaThread(QThread):
                         ew_df = ew_df.select([pl.col("Date"), pl.col("Close").alias("EqualWeight")])
                         df = df.join(ew_df, on="Date", how="left")
             except Exception as e:
-                print(f"Error fetching KODEX 200 EW: {e}")
+                logger.warning("Error fetching KODEX 200 EW: %s", e, exc_info=True)
         # ----------------------------------------
 
         investor_data = []
@@ -113,14 +114,14 @@ class AllDataFetchThread(QThread):
 
         all_data = []
         try:
-            # ---Step 1: Fetch indices first (fast, 6 concurrent FDR calls) ---
+            # ---Step 1: Fetch indices first (fast, one concurrent call per index) ---
             try:
-                self.market_progress.emit("Indices", 0, 6)
+                self.market_progress.emit("Indices", 0, len(INDEX_TICKERS))
                 indices_data = fetch_major_indices_as_stocks()
                 self.market_loaded.emit("Indices", indices_data)
                 all_data.extend(indices_data)
             except Exception as e:
-                print(f"Error fetching indices: {e}")
+                logger.warning("Error fetching indices: %s", e, exc_info=True)
 
             # ---Step 2: Fetch all 4 markets IN PARALLEL ---
             markets_config = [
@@ -151,14 +152,14 @@ class AllDataFetchThread(QThread):
                         self.market_loaded.emit(market, data)
                     except Exception as e:
                         market = futures[future]
-                        print(f"Error fetching {market}: {e}")
+                        logger.warning("Error fetching %s: %s", market, e, exc_info=True)
                         market_results[market] = []
 
             for market, _ in markets_config:
                 all_data.extend(market_results.get(market, []))
             del market_results  # release the intermediate dict to free memory
         except Exception as e:
-            print(f"Error inside AllDataFetchThread.run: {e}")
+            logger.warning("Error inside AllDataFetchThread.run: %s", e, exc_info=True)
         finally:
             self.finished_all.emit(all_data)
 
@@ -306,7 +307,7 @@ class PositionPriceFetchThread(QThread):
                         market = "KOSDAQ"
                     name_to_info[name] = {"code": code, "market": market}
         except Exception as e:
-            print(f"[PositionPriceFetch] KRX/ETF listing error: {e}")
+            logger.warning("[PositionPriceFetch] KRX/ETF listing error: %s", e, exc_info=True)
 
         # ---Fetch real-time prices via Naver (KRX) ---
         unique_codes = list({v["code"] for v in name_to_info.values()})
@@ -316,7 +317,7 @@ class PositionPriceFetchThread(QThread):
             try:
                 price_map = fetch_naver_realtime_prices(unique_codes)
             except Exception as e:
-                print(f"[PositionPriceFetch] Naver price error: {e}")
+                logger.warning("[PositionPriceFetch] Naver price error: %s", e, exc_info=True)
 
         # ---Fetch real-time prices via YahooQuery (US/Other) ---
         us_names = []
@@ -352,7 +353,7 @@ class PositionPriceFetchThread(QThread):
                             us_price_map_usd[name] = raw_usd_price
                             us_price_map[name] = raw_usd_price * fx_rate
             except Exception as e:
-                print(f"[PositionPriceFetch] US price error: {e}")
+                logger.warning("[PositionPriceFetch] US price error: %s", e, exc_info=True)
 
         # ---Calculate P/L per position ---
         def _compute_pl(i, name):
@@ -422,7 +423,7 @@ class PositionPriceFetchThread(QThread):
                     wk2  = changes.get("10d", 0.0)
                     mth1 = changes.get("20d", 0.0)
                 except Exception as exc:
-                    print(f"Error fetching trend for {name}: {exc}")
+                    logger.warning("Error fetching trend for %s: %s", name, exc, exc_info=True)
 
             return {
                 "index":       i,
@@ -516,13 +517,26 @@ class RebalanceBacktestThread(QThread):
     progress = pyqtSignal(int, int)      # done, total tickers fetched so far
     finished = pyqtSignal(object, str)   # result dict | None, error message ("" on success)
 
-    def __init__(self, tickers, lookback_years, top_n, band_multiplier, initial_capital):
+    def __init__(
+        self,
+        tickers,
+        lookback_years,
+        top_n,
+        band_multiplier,
+        initial_capital,
+        buy_fee_rate: float = 0.00015,
+        sell_fee_rate: float = 0.00015,
+        sell_tax_rate: float = 0.0018,
+    ):
         super().__init__()
         self.tickers = tickers
         self.lookback_years = lookback_years
         self.top_n = top_n
         self.band_multiplier = band_multiplier
         self.initial_capital = initial_capital
+        self.buy_fee_rate = buy_fee_rate
+        self.sell_fee_rate = sell_fee_rate
+        self.sell_tax_rate = sell_tax_rate
 
     def run(self):
         from data_fetcher import run_rebalance_backtest
@@ -533,6 +547,9 @@ class RebalanceBacktestThread(QThread):
                 top_n=self.top_n,
                 band_multiplier=self.band_multiplier,
                 initial_capital=self.initial_capital,
+                buy_fee_rate=self.buy_fee_rate,
+                sell_fee_rate=self.sell_fee_rate,
+                sell_tax_rate=self.sell_tax_rate,
                 progress_callback=lambda done, total: self.progress.emit(done, total),
             )
             self.finished.emit(result, "")

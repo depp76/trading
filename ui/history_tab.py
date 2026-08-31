@@ -34,29 +34,7 @@ from ui.dialogs import (
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Lazy helpers -- avoid circular imports with main (main.py imports this
-# module at load time, so this module cannot import main at load time in
-# return). These forward to main's implementations so the class body below
-# can call create_font(...) / _fmt_num_edit(...) unchanged from their
-# original form in main.py.
-# ---------------------------------------------------------------------------
-def _get_create_font():
-    import main as _m
-    return _m.create_font
-
-
-def create_font(*args, **kwargs):
-    return _get_create_font()(*args, **kwargs)
-
-
-def _get_fmt_num_edit():
-    import main as _m
-    return _m._fmt_num_edit
-
-
-def _fmt_num_edit(*args, **kwargs):
-    return _get_fmt_num_edit()(*args, **kwargs)
+from ui.common import create_font, _fmt_num_edit
 
 
 class TradingHistoryTab(QWidget):
@@ -1520,6 +1498,15 @@ class TradingHistoryTab(QWidget):
         tbl = self._table
         tbl.setSortingEnabled(False)
         tbl.setUpdatesEnabled(False)
+        try:
+            self._fill_table_rows(tbl, rows)
+        finally:
+            tbl.setUpdatesEnabled(True)
+        self._update_open_stocks_combo()
+        self._fit_columns()
+        tbl.scrollToBottom()
+
+    def _fill_table_rows(self, tbl, rows: list):
         n_rows = len(rows)
         cur_rows = tbl.rowCount()
         # Adjust row count without full reset when possible
@@ -1684,11 +1671,6 @@ class TradingHistoryTab(QWidget):
                 it = tbl.item(r, c)
                 if it:
                     it.setBackground(bg)
-
-        tbl.setUpdatesEnabled(True)
-        self._update_open_stocks_combo()
-        self._fit_columns()
-        tbl.scrollToBottom()
 
     # ---Buy/Sell cell double-click edit ---
     # Editable columns: Buy(3=Date, 4=Price, 5=Qty, 6=Amount), Sell(8=Date, 10=Price, 11=Qty, 12=Amount)

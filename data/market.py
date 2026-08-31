@@ -20,6 +20,7 @@ from data.cache import (
     _HIST_CACHE_LOG_INTERVAL,
     _HIST_CACHE_LOCK,
     _USD_KRW_CACHE,
+    _MISC_CACHE_LOCK,
     _YF_SESSION,
     _NAVER_SESSION,
     _hist_df_is_stale,
@@ -590,21 +591,22 @@ def get_usd_krw_rate():
     fdr_mod = getattr(_df_mod, "fdr", fdr)
     usd_cache = getattr(_df_mod, "_USD_KRW_CACHE", _USD_KRW_CACHE)
     stale_check = getattr(_df_mod, "_hist_df_is_stale", _hist_df_is_stale)
-    if usd_cache["rate"] is not None and not stale_check(usd_cache["df"]):
-        return usd_cache["rate"]
-    try:
-        df = _to_polars(fdr_mod.DataReader('USD/KRW'))
-        if not df.is_empty():
-            usd_cache["df"] = df
-            close_s = df.get_column("Close").drop_nulls()
-            rate = float(close_s[-1]) if len(close_s) > 0 else 1450.0
-        else:
+    with _MISC_CACHE_LOCK:
+        if usd_cache["rate"] is not None and not stale_check(usd_cache["df"]):
+            return usd_cache["rate"]
+        try:
+            df = _to_polars(fdr_mod.DataReader('USD/KRW'))
+            if not df.is_empty():
+                usd_cache["df"] = df
+                close_s = df.get_column("Close").drop_nulls()
+                rate = float(close_s[-1]) if len(close_s) > 0 else 1450.0
+            else:
+                rate = usd_cache["rate"] if usd_cache["rate"] is not None else 1450.0
+        except Exception:
             rate = usd_cache["rate"] if usd_cache["rate"] is not None else 1450.0
-    except Exception:
-        rate = usd_cache["rate"] if usd_cache["rate"] is not None else 1450.0
-        logger.warning("USD/KRW rate fetch failed, using cached/fallback rate=%.1f", rate, exc_info=True)
-    usd_cache["rate"] = rate
-    return rate
+            logger.warning("USD/KRW rate fetch failed, using cached/fallback rate=%.1f", rate, exc_info=True)
+        usd_cache["rate"] = rate
+        return rate
 
 
 def get_index_close_for_date(ticker: str, date_str: str) -> float:

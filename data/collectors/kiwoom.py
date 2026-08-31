@@ -1,5 +1,6 @@
 """data/collectors/kiwoom.py — Kiwoom REST API client for quotes, balance, and investor trends."""
 import os
+import threading
 import time
 from datetime import datetime
 import pandas as pd
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 _KIWOOM_TOKEN_CACHE: dict = {"token": None, "expires": 0}
 _KIWOOM_KEYS_CACHE: dict = {}
+_KIWOOM_TOKEN_LOCK = threading.Lock()
 
 
 def _get_kiwoom_keys():
@@ -36,27 +38,28 @@ def _get_kiwoom_keys():
 
 def _get_kiwoom_token():
     """Returns a cached or newly-fetched Kiwoom REST API token."""
-    now = time.time()
-    if _KIWOOM_TOKEN_CACHE["token"] and now < _KIWOOM_TOKEN_CACHE["expires"]:
-        appkey, appsecret = _get_kiwoom_keys()
-        return _KIWOOM_TOKEN_CACHE["token"], appkey, appsecret
+    with _KIWOOM_TOKEN_LOCK:
+        now = time.time()
+        if _KIWOOM_TOKEN_CACHE["token"] and now < _KIWOOM_TOKEN_CACHE["expires"]:
+            appkey, appsecret = _get_kiwoom_keys()
+            return _KIWOOM_TOKEN_CACHE["token"], appkey, appsecret
 
-    appkey, appsecret = _get_kiwoom_keys()
-    token_url = "https://api.kiwoom.com/oauth2/token"
-    body = {"grant_type": "client_credentials", "appkey": appkey, "secretkey": appsecret}
-    res = _KIWOOM_SESSION.post(token_url, headers={"content-type": "application/json;charset=UTF-8"}, json=body, timeout=5)
-    res.raise_for_status()
-    res_data = res.json()
-    token = res_data.get("access_token") or res_data.get("token")
-    if not token:
-        msg = res_data.get("return_msg", "Unknown error")
-        code = res_data.get("return_code", "N/A")
-        if str(code) == "3" and "8050" in msg:
-            raise ValueError(f"Kiwoom Securities designated terminal authentication failed (8050 error).\nPlease register 'Designated PC' in OpenAPI details on the Kiwoom homepage and try again.\n(Message: {msg})")
-        raise ValueError(f"Failed to issue Kiwoom Securities API token: {msg} (Error Code: {code})")
-    _KIWOOM_TOKEN_CACHE["token"] = token
-    _KIWOOM_TOKEN_CACHE["expires"] = now + 3500  # ~1 hour
-    return token, appkey, appsecret
+        appkey, appsecret = _get_kiwoom_keys()
+        token_url = "https://api.kiwoom.com/oauth2/token"
+        body = {"grant_type": "client_credentials", "appkey": appkey, "secretkey": appsecret}
+        res = _KIWOOM_SESSION.post(token_url, headers={"content-type": "application/json;charset=UTF-8"}, json=body, timeout=5)
+        res.raise_for_status()
+        res_data = res.json()
+        token = res_data.get("access_token") or res_data.get("token")
+        if not token:
+            msg = res_data.get("return_msg", "Unknown error")
+            code = res_data.get("return_code", "N/A")
+            if str(code) == "3" and "8050" in msg:
+                raise ValueError(f"Kiwoom Securities designated terminal authentication failed (8050 error).\nPlease register 'Designated PC' in OpenAPI details on the Kiwoom homepage and try again.\n(Message: {msg})")
+            raise ValueError(f"Failed to issue Kiwoom Securities API token: {msg} (Error Code: {code})")
+        _KIWOOM_TOKEN_CACHE["token"] = token
+        _KIWOOM_TOKEN_CACHE["expires"] = now + 3500  # ~1 hour
+        return token, appkey, appsecret
 
 
 def _kiwoom_parse_price(val_str):
@@ -153,7 +156,10 @@ def fetch_account_deposit(pwd: str = "") -> float:
     access_token, appkey, appsecret = _get_kiwoom_token()
 
     # ── Step 1: Retrieve account number list (ka00001) → verify actual 10-digit acnt_no ──────
-    acnt_no = "4557390001"  # fallback: 8-digit account + "01" suffix
+    # Fallback account number (8-digit account + "01" suffix), used only if the
+    # ka00001 lookup below fails. Read from env rather than hardcoded so the
+    # account number isn't committed to source control.
+    acnt_no = os.environ.get("KIWOOM_ACCOUNT_NO", "")
     try:
         list_headers = {
             "content-type": "application/json;charset=UTF-8",
@@ -170,7 +176,7 @@ def fetch_account_deposit(pwd: str = "") -> float:
         )
         if list_res.status_code == 200:
             list_data = list_res.json()
-            logger.debug("[ka00001 Account list response] %s", list_data)
+            logger.debug("[ka00001 Account list response] keys=%s", list(list_data.keys()))
             acct_list = list_data.get("acnt_list") or list_data.get("acctList") or []
             if acct_list:
                 first = acct_list[0]
@@ -197,11 +203,11 @@ def fetch_account_deposit(pwd: str = "") -> float:
         "pwd": pwd,
         "qry_tp": "1",
     }
-    logger.debug("[kt00001 Request] acnt_no=%s, qry_tp=1", acnt_no)
+    logger.debug("[kt00001 Request] qry_tp=1")
     dep_res = _KIWOOM_SESSION.post(inquire_url, headers=headers, json=params, timeout=5)
     dep_res.raise_for_status()
     dep_data = dep_res.json()
-    logger.debug("[kt00001 Response] %s", dep_data)
+    logger.debug("[kt00001 Response] return_code=%s keys=%s", dep_data.get("return_code"), list(dep_data.keys()))
 
     if str(dep_data.get("return_code", "-1")) == "0":
         dep_keys = ["d2_entra", "d2_entr", "pymn_alow_amt", "ord_alow_amt", "entr"]

@@ -194,6 +194,7 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
     _lock = threading.Lock()
     _yf_semaphore = threading.Semaphore(3)
     _YQ_META_TIMEOUT = 35
+    _yf_bulk_keys_added = set()
 
     def process_chunk(chunk):
         yf_symbols = [s.replace(".", "-") for s, _ in chunk]
@@ -223,13 +224,17 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
                                 single_df = bulk_df.xs(sym, level=1, axis=1).dropna(how='all')
                                 if not single_df.empty:
                                     pl_df = _to_polars(single_df)
-                                    _YF_BULK_CACHE[f"{orig_sym}_{_START_DATE}"] = pl_df
+                                    key = f"{orig_sym}_{_START_DATE}"
+                                    _YF_BULK_CACHE[key] = pl_df
+                                    _yf_bulk_keys_added.add(key)
                         else:
                             if len(yf_symbols) == 1 and sym == yf_symbols[0]:
                                 single_df = bulk_df.dropna(how='all')
                                 if not single_df.empty:
                                     pl_df = _to_polars(single_df)
-                                    _YF_BULK_CACHE[f"{orig_sym}_{_START_DATE}"] = pl_df
+                                    key = f"{orig_sym}_{_START_DATE}"
+                                    _YF_BULK_CACHE[key] = pl_df
+                                    _yf_bulk_keys_added.add(key)
                     except Exception:
                         logger.debug("YF bulk history slice failed for sym=%s, skipping", sym, exc_info=True)
         except Exception:
@@ -359,7 +364,11 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
         for rs in executor.map(process_chunk, chunks):
             results.extend(rs)
 
-    _YF_BULK_CACHE.clear()
+    # Remove only the entries this call added, so an overlapping concurrent
+    # call to fetch_us_stock_data_bulk (e.g. NASDAQ 100 + S&P 500 refreshes
+    # overlapping) doesn't wipe the other call's still-in-use bulk cache entries.
+    for _k in _yf_bulk_keys_added:
+        _YF_BULK_CACHE.pop(_k, None)
     return results
 
 

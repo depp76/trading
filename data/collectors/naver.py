@@ -11,7 +11,7 @@ import pandas as pd
 import polars as pl
 import logging
 
-from data.cache import _KR3Y_CACHE, _NAVER_SESSION, _pdf_is_stale, safe_float
+from data.cache import _KR3Y_CACHE, _MISC_CACHE_LOCK, _NAVER_SESSION, _pdf_is_stale, safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -190,20 +190,24 @@ def _fetch_kr_listing_naver(market, top_n):
     max_pages = (top_n // 50) + 2
 
     def _fetch_page(pg):
-        url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={pg}"
-        r = _NAVER_SESSION.get(url, timeout=5)
-        soup = BeautifulSoup(r.content, 'html.parser', from_encoding='euc-kr')
-        rows = []
-        for tr in soup.select('table.type_2 tbody tr'):
-            a_tag = tr.select_one('a.tltle')
-            if not a_tag:
-                continue
-            code = a_tag['href'].split('code=')[-1].zfill(6)
-            name = a_tag.text.strip()
-            cols = [td.text.strip().replace(',', '') for td in tr.select('td')]
-            marcap = int(cols[6]) * 100_000_000 if len(cols) > 6 and cols[6].isdigit() else 0
-            rows.append({'Code': code, 'Name': name, 'Marcap': marcap})
-        return rows
+        try:
+            url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={pg}"
+            r = _NAVER_SESSION.get(url, timeout=5)
+            soup = BeautifulSoup(r.content, 'html.parser', from_encoding='euc-kr')
+            rows = []
+            for tr in soup.select('table.type_2 tbody tr'):
+                a_tag = tr.select_one('a.tltle')
+                if not a_tag:
+                    continue
+                code = a_tag['href'].split('code=')[-1].zfill(6)
+                name = a_tag.text.strip()
+                cols = [td.text.strip().replace(',', '') for td in tr.select('td')]
+                marcap = int(cols[6]) * 100_000_000 if len(cols) > 6 and cols[6].isdigit() else 0
+                rows.append({'Code': code, 'Name': name, 'Marcap': marcap})
+            return rows
+        except Exception:
+            logger.warning("Naver listing page fetch failed (sosok=%s, page=%d), skipping page", sosok, pg, exc_info=True)
+            return []
 
     results_list = []
     with ThreadPoolExecutor(max_workers=min(max_pages, 8)) as exe:
@@ -215,32 +219,33 @@ def _fetch_kr_listing_naver(market, top_n):
 
 def _get_kr3y_df():
     """Fetch KR 3-year bond yield from Naver."""
-    cached = _KR3Y_CACHE["df"]
-    if cached is not None and not _pdf_is_stale(cached):
-        return cached
-    try:
-        url_base = 'https://finance.naver.com/marketindex/interestDailyQuote.naver?marketindexCd=IRR_GOVT03Y&page='
+    with _MISC_CACHE_LOCK:
+        cached = _KR3Y_CACHE["df"]
+        if cached is not None and not _pdf_is_stale(cached):
+            return cached
+        try:
+            url_base = 'https://finance.naver.com/marketindex/interestDailyQuote.naver?marketindexCd=IRR_GOVT03Y&page='
 
-        def fetch_page(p):
-            res = _NAVER_SESSION.get(url_base + str(p), timeout=5)
-            df = pd.read_html(io.StringIO(res.text))[0]
-            return df.dropna(subset=[df.columns[1]])
+            def fetch_page(p):
+                res = _NAVER_SESSION.get(url_base + str(p), timeout=5)
+                df = pd.read_html(io.StringIO(res.text))[0]
+                return df.dropna(subset=[df.columns[1]])
 
-        with ThreadPoolExecutor(max_workers=10) as exe:
-            dfs = list(exe.map(fetch_page, range(1, 21)))
+            with ThreadPoolExecutor(max_workers=10) as exe:
+                dfs = list(exe.map(fetch_page, range(1, 21)))
 
-        hist = pd.concat(dfs, ignore_index=True)
-        hist.rename(columns={hist.columns[0]: 'Date', hist.columns[1]: 'Close'}, inplace=True)
-        hist['Date'] = pd.to_datetime(hist['Date'].astype(str).str.replace('.', '-'))
-        hist['Close'] = pd.to_numeric(hist['Close'], errors='coerce')
-        hist = (hist.dropna(subset=['Date', 'Close'])
-                    .sort_values('Date')
-                    .set_index('Date'))
-        _KR3Y_CACHE["df"] = hist
-        return hist
-    except Exception as e:
-        logger.error("KR3Y fetch failed", exc_info=True)
-        return cached
+            hist = pd.concat(dfs, ignore_index=True)
+            hist.rename(columns={hist.columns[0]: 'Date', hist.columns[1]: 'Close'}, inplace=True)
+            hist['Date'] = pd.to_datetime(hist['Date'].astype(str).str.replace('.', '-'))
+            hist['Close'] = pd.to_numeric(hist['Close'], errors='coerce')
+            hist = (hist.dropna(subset=['Date', 'Close'])
+                        .sort_values('Date')
+                        .set_index('Date'))
+            _KR3Y_CACHE["df"] = hist
+            return hist
+        except Exception as e:
+            logger.error("KR3Y fetch failed", exc_info=True)
+            return cached
 
 
 def _fetch_index_investor_trend(market: str, days: int = 60) -> list:

@@ -233,6 +233,10 @@ def upsert_trade(record: dict) -> str:
     co = record.get("company", "")
     buy_date = record.get("buy_date", "")
     qty = float(record.get("qty", 0))
+    # orig_key must be carried over from the loaded record on edits: the
+    # fallback key below is derived from the (possibly just-edited) qty, so
+    # editing qty without passing the original orig_key inserts a new row
+    # instead of updating the existing one.
     key = record.get("orig_key") or f"{co}_{buy_date}_{qty}"
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
