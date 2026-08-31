@@ -49,25 +49,12 @@ from ui.dialogs import StockMaDialog
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Lazy helpers -- avoid circular imports with main (main.py imports this
-# module at load time, so this module cannot import main at load time in
-# return). These forward to main's implementations so the class body below
-# can call create_font(...) / _MARKET_ORDER unchanged from their original
-# form in main.py.
-# ---------------------------------------------------------------------------
-def _get_create_font():
-    import main as _m
-    return _m.create_font
-
-
-def create_font(*args, **kwargs):
-    return _get_create_font()(*args, **kwargs)
-
-
-def _get_market_order():
-    import main as _m
-    return _m._MARKET_ORDER
+from ui.common import (
+    create_font,
+    _MARKET_ORDER,
+    atomic_save_json,
+    safe_load_json,
+)
 
 
 class UniverseTab(QWidget):
@@ -87,16 +74,13 @@ class UniverseTab(QWidget):
         self.load_custom_settings()
 
         # Try to load cached universe data to make startup instant, but always refresh to latest afterwards.
-        if os.path.exists("universe_cache.json"):
-            try:
-                with open("universe_cache.json", "r", encoding="utf-8") as f:
-                    self.all_data = json.load(f)
-                self.table.load_data(self.all_data, self.custom_settings.get("highlights", {}))
-                self._populate_action_buttons()
-                self.filter_table()
-                self.update_total_status(prefix="Loaded cached universe. Refreshing data...")
-            except Exception as e:
-                print(f"Error loading universe cache: {e}")
+        cached = safe_load_json("universe_cache.json", default=None)
+        if cached:
+            self.all_data = cached
+            self.table.load_data(self.all_data, self.custom_settings.get("highlights", {}))
+            self._populate_action_buttons()
+            self.filter_table()
+            self.update_total_status(prefix="Loaded cached universe. Refreshing data...")
 
     def _build_ui(self):
         universe_layout = QVBoxLayout(self)
@@ -188,27 +172,22 @@ class UniverseTab(QWidget):
 
     def load_custom_settings(self):
         self.custom_settings = {"added": [], "deleted": [], "highlights": {}}
-        try:
-            if os.path.exists("custom_settings.json"):
-                with open("custom_settings.json", "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.custom_settings.update(data)
-                    # Migration: old array "highlighted" -> dict "highlights"
-                    if isinstance(self.custom_settings.get("highlighted"), list):
-                        hl_dict = self.custom_settings.setdefault("highlights", {})
-                        for t in self.custom_settings["highlighted"]:
-                            hl_dict[t] = "Tg"
-                        del self.custom_settings["highlighted"]
-                        self.save_custom_settings()
-        except Exception:
-            logger.warning("Failed to load custom_settings.json", exc_info=True)
+        data = safe_load_json("custom_settings.json", default={})
+        if data:
+            self.custom_settings.update(data)
+            # Migration: old array "highlighted" -> dict "highlights"
+            if isinstance(self.custom_settings.get("highlighted"), list):
+                hl_dict = self.custom_settings.setdefault("highlights", {})
+                for t in self.custom_settings["highlighted"]:
+                    hl_dict[t] = "Tg"
+                del self.custom_settings["highlighted"]
+                self.save_custom_settings()
 
     def save_custom_settings(self):
         try:
-            with open("custom_settings.json", "w", encoding="utf-8") as f:
-                json.dump(self.custom_settings, f)
-        except Exception as e:
-            print(f"Error saving settings: {e}")
+            atomic_save_json("custom_settings.json", self.custom_settings)
+        except Exception:
+            logger.warning("Failed to save custom_settings.json", exc_info=True)
 
     def delete_stock(self, ticker):
         reply = QMessageBox.question(
@@ -344,7 +323,7 @@ class UniverseTab(QWidget):
         self.all_data.append(result)
         self.all_data.sort(key=lambda x: (
             0 if x.get('is_index') else 1,
-            x.get('index_order', 99) if x.get('is_index') else _get_market_order().get(x.get('market', ''), 99),
+            x.get('index_order', 99) if x.get('is_index') else _MARKET_ORDER.get(x.get('market', ''), 99),
             -float(x.get('market_cap', 0) or 0)
         ))
         self.table.load_data(self.all_data, self.custom_settings.get("highlights", {}))
@@ -645,7 +624,7 @@ class UniverseTab(QWidget):
                 filtered_data,
                 key=lambda x: (
                     0 if x.get('is_index') else 1,
-                    x.get('index_order', 99) if x.get('is_index') else _get_market_order().get(x.get('market', ''), 99),
+                    x.get('index_order', 99) if x.get('is_index') else _MARKET_ORDER.get(x.get('market', ''), 99),
                     -float(x.get('market_cap', 0) or 0)
                 )
             )
@@ -657,10 +636,9 @@ class UniverseTab(QWidget):
 
             # Cache the newly fetched data
             try:
-                with open("universe_cache.json", "w", encoding="utf-8") as f:
-                    json.dump(self.all_data, f, ensure_ascii=False)
+                atomic_save_json("universe_cache.json", self.all_data)
             except Exception as e:
-                print(f"Error caching universe data: {e}")
+                logger.warning("Error caching universe data: %s", e, exc_info=True)
 
             existing_tickers = {x.get("ticker") for x in self.all_data}
             missing_added = [x for x in added if x["ticker"] not in existing_tickers and x["ticker"] not in deleted]

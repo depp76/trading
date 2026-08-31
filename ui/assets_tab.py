@@ -25,19 +25,7 @@ from ui.dialogs import TotalAssetsGraphDialog
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Lazy helper -- avoid circular imports with main (main.py imports this
-# module at load time, so this module cannot import main at load time in
-# return). Forwards to main's implementation so the class body below can
-# call create_font(...) unchanged from its original form in main.py.
-# ---------------------------------------------------------------------------
-def _get_create_font():
-    import main as _m
-    return _m.create_font
-
-
-def create_font(*args, **kwargs):
-    return _get_create_font()(*args, **kwargs)
+from ui.common import create_font, atomic_save_json, safe_load_json
 
 
 class TradingRecordTab(QWidget):
@@ -274,29 +262,16 @@ class TradingRecordTab(QWidget):
 
     # ---JSON load/save ---
     def _load_records(self):
-        # Plain relative path (matches ui/universe_tab.py's custom_settings.json /
-        # universe_cache.json convention): the app is always launched from the
-        # project root, so this resolves there via cwd. Using
-        # os.path.dirname(os.path.abspath(__file__)) here (as this code did
-        # before the Phase 4 move out of main.py) would instead resolve to
-        # ui/, since that's this file's own directory now.
-        path = self._JSON_FILE
-        try:
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                self._records = sorted(data, key=lambda r: r["date"])
-        except Exception as e:
-            print(f"[TradingRecord] Load error: {e}")
+        data = safe_load_json(self._JSON_FILE, default=[])
+        if data:
+            self._records = sorted(data, key=lambda r: r.get("date", ""))
         self._refresh_table()
 
     def _save_records(self):
-        path = self._JSON_FILE
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(self._records, f, indent=2, ensure_ascii=False)
+            atomic_save_json(self._JSON_FILE, self._records, indent=2)
         except Exception as e:
-            print(f"[TradingRecord] Save error: {e}")
+            logger.warning("[TradingRecord] Save error: %s", e, exc_info=True)
 
     # ---CRUD ---
     def _add_record(self):

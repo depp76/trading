@@ -49,10 +49,11 @@ def _get_client():
     return _genai_client
 
 
-_MODEL = "gemini-3.6-flash"
+_DEFAULT_MODEL = "gemini-2.5-flash"
+_MODEL = os.environ.get("GEMINI_MODEL", _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
 
 
-def _generate(prompt: str, *, json_mode: bool = False) -> str:
+def _generate(prompt: str, *, json_mode: bool = False, model: str = None) -> str:
     """Call Gemini and return the text response."""
     client = _get_client()
 
@@ -62,8 +63,10 @@ def _generate(prompt: str, *, json_mode: bool = False) -> str:
 
     from google.genai import types as genai_types  # type: ignore
 
+    chosen_model = model or os.environ.get("GEMINI_MODEL", _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
+
     response = client.models.generate_content(
-        model=_MODEL,
+        model=chosen_model,
         contents=prompt,
         config=genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None,
     )

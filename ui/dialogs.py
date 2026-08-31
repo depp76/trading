@@ -25,32 +25,19 @@ import matplotlib.dates as mdates
 import mplcursors
 from matplotlib.figure import Figure
 from matplotlib.collections import PolyCollection
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Lazy helpers — avoid circular imports with main
-# ---------------------------------------------------------------------------
-def _get_create_font():
-    import main as _m
-    return _m.create_font
-
-
-def _get_index_tickers():
-    import main as _m
-    return _m.INDEX_TICKERS
-
-
-def _get_validators():
-    import main as _m
-    return (
-        _m._fmt_num_edit,
-        _m._validate_date_str,
-        _m._validate_positive_number,
-        _m._mk_field_validator,
-    )
+from ui.common import (
+    create_font,
+    _fmt_num_edit,
+    _validate_date_str,
+    _validate_positive_number,
+    _mk_field_validator,
+)
+from data_fetcher import INDEX_TICKERS
 
 
 # ---------------------------------------------------------------------------
@@ -64,8 +51,6 @@ class IndexMaDialog(QDialog):
         results: dict {label: (DataFrame | None, error_str)}
         """
         super().__init__(parent)
-        create_font = _get_create_font()
-        INDEX_TICKERS = _get_index_tickers()
         self.setWindowTitle("Major Index - 20 & 50-Day Moving Average")
         self.resize(1100, 620)
 
@@ -127,7 +112,6 @@ class StockMaDialog(QDialog):
 
     def __init__(self, ticker, name, market, df, investor_data=None, parent=None, change_mode='pct'):
         super().__init__(parent)
-        create_font = _get_create_font()
         import polars as pl
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint | Qt.WindowType.WindowMinimizeButtonHint)
         self.setWindowTitle(f"{name} ({ticker}) - 20 & 50-Day Moving Average")
@@ -543,18 +527,10 @@ class StockMaDialog(QDialog):
             cursor3 = None
             cursor4 = None
 
-            # ── mplcursors for ax3 divergence chart ──
-            if l_div3 is not None:
-                cursor3 = mplcursors.cursor([l_div3], hover=2)
-                @cursor3.connect("add")
-                def on_add_div(sel,
-                               _dates=dates_arr,
-                               _close=_arr_close,
-                               _div=_arr_div,
-                               _ma50=_arr_ma50,
-                               _fmt=fmt_str,
-                               _cur=currency,
-                               _sfx=unit_suffix):
+            def _make_ma_div_hover_handler(dates, close, div_arr, ma_arr, fmt_str, ma_label, div_label, edge_color):
+                """Builds an mplcursors 'add' handler for an MA-divergence hover
+                line (Div(50)/MA50 or Div(20)/MA20 -- only the arrays/labels/color differ)."""
+                def _handler(sel, _dates=dates, _close=close, _div=div_arr, _ma=ma_arr, _fmt=fmt_str):
                     try:
                         idx = int(sel.index)
                         n   = len(_dates)
@@ -564,82 +540,47 @@ class StockMaDialog(QDialog):
                         date_str = pd.to_datetime(_dates[idx]).strftime("%Y-%m-%d")
                         close_v  = float(_close[idx])
                         div_v    = float(_div[idx])
-                        ma50_v   = float(_ma50[idx]) if _ma50 is not None else None
+                        ma_v     = float(_ma[idx]) if _ma is not None else None
 
                         if change_mode == 'bp':
                             price_str = f"{close_v:.2f}"
-                            ma50_str  = f"{ma50_v:.2f}" if ma50_v is not None else "-"
+                            ma_str    = f"{ma_v:.2f}" if ma_v is not None else "-"
                         else:
                             price_str = f"{_fmt.format(close_v)}"
-                            ma50_str  = f"{_fmt.format(ma50_v)}" if ma50_v is not None else "-"
+                            ma_str    = f"{_fmt.format(ma_v)}" if ma_v is not None else "-"
 
                         div_str = f"{div_v:.0f}%"
 
-                        W      = max(len(price_str), len(ma50_str), len(div_str), 10)
+                        W      = max(len(price_str), len(ma_str), len(div_str), 10)
                         BOX_W  = W + 10
                         txt = (f"{date_str:^{BOX_W}}\n"
-                               f"  Price   {price_str:>{W}}\n"
-                               f"  MA50    {ma50_str:>{W}}\n"
-                               f"  Div(50) {div_str:>{W}}")
+                               f"  {'Price':<8}{price_str:>{W}}\n"
+                               f"  {ma_label:<8}{ma_str:>{W}}\n"
+                               f"  {div_label:<8}{div_str:>{W}}")
                         sel.annotation.set_text(txt)
                         sel.annotation.set_fontfamily("monospace")
                         sel.annotation.set_fontsize(8.5)
                         sel.annotation.get_bbox_patch().set(
-                            fc="white", alpha=0.93, edgecolor="#2980b9",
+                            fc="white", alpha=0.93, edgecolor=edge_color,
                             boxstyle="round,pad=0.5"
                         )
-                        sel.annotation.arrow_patch.set(arrowstyle="->", color="#2980b9")
+                        sel.annotation.arrow_patch.set(arrowstyle="->", color=edge_color)
                     except Exception:
+                        logger.debug("MA divergence hover tooltip render failed", exc_info=True)
                         sel.annotation.set_visible(False)
+                return _handler
+
+            # ── mplcursors for ax3 Div(50) line ──
+            if l_div3 is not None:
+                cursor3 = mplcursors.cursor([l_div3], hover=2)
+                cursor3.connect("add", _make_ma_div_hover_handler(
+                    dates_arr, _arr_close, _arr_div, _arr_ma50, fmt_str, "MA50", "Div(50)", "#2980b9"))
 
             # ── mplcursors for ax3 Div(20) line ──
             if l_div4 is not None:
                 cursor4 = mplcursors.cursor([l_div4], hover=2)
-                @cursor4.connect("add")
-                def on_add_div20(sel,
-                                 _dates=dates_arr,
-                                 _close=_arr_close,
-                                 _div20=_arr_div20,
-                                 _ma20=_arr_ma20,
-                                 _fmt=fmt_str,
-                                 _cur=currency,
-                                 _sfx=unit_suffix):
-                    try:
-                        idx = int(sel.index)
-                        n   = len(_dates)
-                        if not (0 <= idx < n):
-                            sel.annotation.set_visible(False)
-                            return
-                        date_str = pd.to_datetime(_dates[idx]).strftime("%Y-%m-%d")
-                        close_v  = float(_close[idx])
-                        div_v    = float(_div20[idx])
-                        ma20_v   = float(_ma20[idx]) if _ma20 is not None else None
-
-                        if change_mode == 'bp':
-                            price_str = f"{close_v:.2f}"
-                            ma20_str  = f"{ma20_v:.2f}" if ma20_v is not None else "-"
-                        else:
-                            price_str = f"{_fmt.format(close_v)}"
-                            ma20_str  = f"{_fmt.format(ma20_v)}" if ma20_v is not None else "-"
-
-                        div_str = f"{div_v:.0f}%"
-
-                        W      = max(len(price_str), len(ma20_str), len(div_str), 10)
-                        BOX_W  = W + 10
-                        txt = (f"{date_str:^{BOX_W}}\n"
-                               f"  Price   {price_str:>{W}}\n"
-                               f"  MA20    {ma20_str:>{W}}\n"
-                               f"  Div(20) {div_str:>{W}}")
-                        sel.annotation.set_text(txt)
-                        sel.annotation.set_fontfamily("monospace")
-                        sel.annotation.set_fontsize(8.5)
-                        sel.annotation.get_bbox_patch().set(
-                            fc="white", alpha=0.93, edgecolor="#e67e22",
-                            boxstyle="round,pad=0.5"
-                        )
-                        sel.annotation.arrow_patch.set(arrowstyle="->", color="#e67e22")
-                    except Exception:
-                        sel.annotation.set_visible(False)
+                cursor4.connect("add", _make_ma_div_hover_handler(
+                    dates_arr, _arr_close, _arr_div20, _arr_ma20, fmt_str, "MA20", "Div(20)", "#e67e22"))
 
             cursor_artists = [art for art in [l_close, l_ma5, l_ma10, l_ma20, l_ma50, l_div20_main, l_div50_main] if art is not None]
             if l_ew is not None:
@@ -715,7 +656,8 @@ class StockMaDialog(QDialog):
 
                         sel.annotation.set_text(txt)
                         sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9, edgecolor="gray")
-                except Exception as e:
+                except Exception:
+                    logger.debug("Main chart hover tooltip render failed", exc_info=True)
                     sel.annotation.set_text("Data load error")
 
             # Hide tooltips when mouse leaves the axes/figure
@@ -1082,7 +1024,6 @@ class BuyEditDialog(QDialog):
     """Dialog for editing buy details in TradingHistoryTab."""
     def __init__(self, current_data, parent=None):
         super().__init__(parent)
-        _fmt_num_edit, _validate_date_str, _validate_positive_number, _mk_field_validator = _get_validators()
         self.setWindowTitle("Edit Buy Information")
         self.setMinimumWidth(300)
         self.result_data = None
@@ -1172,7 +1113,6 @@ class SellEditDialog(QDialog):
     """Dialog for editing sell details in TradingHistoryTab."""
     def __init__(self, current_data, parent=None):
         super().__init__(parent)
-        _fmt_num_edit, _validate_date_str, _validate_positive_number, _mk_field_validator = _get_validators()
         self.setWindowTitle("Edit Sell Information")
         self.setMinimumWidth(300)
         self.result_data = None
@@ -1294,7 +1234,6 @@ class TradeEntryDialog(QDialog):
     """Dialog for entering a new trade into TradingHistoryTab."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        _fmt_num_edit, _validate_date_str, _validate_positive_number, _mk_field_validator = _get_validators()
         self.setWindowTitle("Add New Trade")
         self.setMinimumWidth(300)
         self.result_data = None
@@ -1844,13 +1783,15 @@ class BacktestResultDialog(QDialog):
         layout = QVBoxLayout(self)
 
         s = result["summary"]
+        cost_str = f" | Total Cost: {s.get('total_cost_amount', 0.0):,.0f} KRW ({s.get('total_cost_drag_pct', 0.0):.2f}%)" if s.get('total_cost_amount') else ""
         header = QLabel(
             f"<b>{result['start_date']} \u2192 {result['end_date']}</b> "
             f"({result['lookback_years']}y, top_n={result['top_n']}, band\u00d7{result['band_multiplier']}) \u2014 "
-            f"Return: <b style='color:{'#c0392b' if s['total_return_pct'] >= 0 else '#2980b9'}'>"
+            f"Net Return: <b style='color:{'#c0392b' if s['total_return_pct'] >= 0 else '#2980b9'}'>"
             f"{s['total_return_pct']:+.1f}%</b> vs benchmark {s['benchmark_return_pct']:+.1f}% | "
             f"CAGR {s['cagr_pct']:+.1f}% | Max Drawdown {s['max_drawdown_pct']:.1f}% | "
             f"{s['n_rebalances']} rebalances, {s['n_trades']} trades, win rate {s['win_rate_pct']:.0f}%"
+            f"{cost_str}"
         )
         header.setTextFormat(Qt.TextFormat.RichText)
         header.setWordWrap(True)
@@ -1923,8 +1864,8 @@ class BacktestResultDialog(QDialog):
         layout.addWidget(canvas, 1)
 
         disclaimer = QLabel(
-            "\u26a0\ufe0f Backtest excludes the trailing-PER factor (no cheap bulk historical source) and "
-            "does not model slippage/fees/taxes. Research tool, not investment advice \u2014 "
+            "\u26a0\ufe0f Backtest excludes trailing-PER factor (no bulk historical source). "
+            "Includes 0.015% brokerage commission + 0.18% sell tax. Research tool, not investment advice \u2014 "
             "see trading.md section 6."
         )
         disclaimer.setStyleSheet("color:#888; font-size:9pt;")

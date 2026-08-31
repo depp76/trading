@@ -97,5 +97,136 @@ class TestBacktestSignal(unittest.TestCase):
             self.assertAlmostEqual(cum_ret, manual_sum, places=6)
 
 
+class TestRebalanceFactorExtraction(unittest.TestCase):
+
+    def test_negative_and_zero_per_filtered_out(self):
+        from data_fetcher import _extract_live_candidates
+
+        sample_universe = [
+            {
+                "ticker": "005930",
+                "name": "Samsung",
+                "market": "KOSPI",
+                "is_index": False,
+                "trailing_per": -15.5,  # negative PER (loss-making)
+                "changes": {
+                    "ma20_div": 105.0,
+                    "ma50_div": 102.0,
+                    "52w_high_diff": -5.0,
+                    "20d": 3.5,
+                    "60d": 8.0,
+                },
+            },
+            {
+                "ticker": "000660",
+                "name": "SK Hynix",
+                "market": "KOSPI",
+                "is_index": False,
+                "trailing_per": 12.0,  # positive PER
+                "changes": {
+                    "ma20_div": 108.0,
+                    "ma50_div": 104.0,
+                    "52w_high_diff": -2.0,
+                    "20d": 5.0,
+                    "60d": 12.0,
+                },
+            },
+            {
+                "ticker": "035420",
+                "name": "NAVER",
+                "market": "KOSPI",
+                "is_index": False,
+                "trailing_per": 0.0,  # zero PER
+                "changes": {
+                    "ma20_div": 98.0,
+                    "ma50_div": 95.0,
+                    "52w_high_diff": -15.0,
+                    "20d": -2.0,
+                    "60d": -5.0,
+                },
+            },
+        ]
+
+        candidates = _extract_live_candidates(sample_universe)
+        self.assertEqual(len(candidates), 3)
+
+        cand_map = {c["ticker"]: c for c in candidates}
+        # Negative PER -> None
+        self.assertIsNone(cand_map["005930"]["raw"]["value_per"])
+        # Positive PER -> 12.0
+        self.assertEqual(cand_map["000660"]["raw"]["value_per"], 12.0)
+        # Zero PER -> None
+        self.assertIsNone(cand_map["035420"]["raw"]["value_per"])
+
+
+class TestRebalanceTransactionCosts(unittest.TestCase):
+
+    def _make_dummy_series(self, ticker: str, dates: list, prices: list, scores_high: bool):
+        # Create minimal Polars DataFrame matching _SNAPSHOT_COLUMNS
+        div_val = 110.0 if scores_high else 80.0
+        return pl.DataFrame({
+            "Date": dates,
+            "Close": prices,
+            "MA20_Div": [div_val] * len(dates),
+            "MA50_Div": [div_val] * len(dates),
+            "high52w_diff": [0.0 if scores_high else -30.0] * len(dates),
+            "ret_20d": [10.0 if scores_high else -10.0] * len(dates),
+            "ret_60d": [20.0 if scores_high else -20.0] * len(dates),
+        })
+
+    def test_fee_and_tax_deducted_in_simulation(self):
+        from data_fetcher import _run_walkforward_simulation, _summarize_backtest
+        from datetime import date
+
+        dates = [date(2025, 1, 3), date(2025, 1, 10), date(2025, 1, 17)]
+        # Ticker A starts strong (scores high), then weakens
+        series_a = self._make_dummy_series("A", dates, [100.0, 110.0, 90.0], scores_high=True)
+        # Ticker B starts weak, then strengthens
+        series_b = self._make_dummy_series("B", dates, [50.0, 50.0, 60.0], scores_high=False)
+
+        series_map = {"A": series_a, "B": series_b}
+
+        # Run simulation with 0.015% buy fee, 0.015% sell fee, 0.18% sell tax
+        sim = _run_walkforward_simulation(
+            series_map,
+            dates,
+            top_n=1,
+            band_multiplier=1.0,
+            initial_capital=10_000_000.0,
+            buy_fee_rate=0.00015,
+            sell_fee_rate=0.00015,
+            sell_tax_rate=0.0018,
+        )
+
+        self.assertIn("trades", sim)
+        self.assertGreater(len(sim["trades"]), 0)
+
+        # Check that trade entries record fee and tax fields
+        for tr in sim["trades"]:
+            self.assertIn("fee", tr)
+            self.assertIn("tax", tr)
+            self.assertGreaterEqual(tr["fee"], 0.0)
+            if tr["action"] == "sell":
+                self.assertGreater(tr["tax"], 0.0)
+
+        # Check total friction cost
+        self.assertGreater(sim["total_cost_paid"], 0.0)
+
+        # Check summary cost output
+        summary = _summarize_backtest(
+            sim["equity_curve"],
+            [],
+            10_000_000.0,
+            sim["closed_trade_returns"],
+            len(dates),
+            len(sim["trades"]),
+            total_cost_paid=sim["total_cost_paid"],
+        )
+        self.assertEqual(summary["total_cost_amount"], sim["total_cost_paid"])
+        self.assertGreater(summary["total_cost_drag_pct"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+

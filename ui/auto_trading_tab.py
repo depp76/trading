@@ -41,19 +41,7 @@ from ui.dialogs import BacktestResultDialog
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Lazy helper -- avoid circular imports with main (main.py imports this
-# module at load time, so this module cannot import main at load time in
-# return). Forwards to main's implementation so the class body below can
-# call create_font(...) unchanged from its original form elsewhere in the app.
-# ---------------------------------------------------------------------------
-def _get_create_font():
-    import main as _m
-    return _m.create_font
-
-
-def create_font(*args, **kwargs):
-    return _get_create_font()(*args, **kwargs)
+from ui.common import create_font
 
 
 class AutoTradingTab(QWidget):

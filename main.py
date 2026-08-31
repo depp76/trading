@@ -14,16 +14,21 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QShortcut, QKeySequence
 
-def create_font(size: int = 10, weight: QFont.Weight = QFont.Weight.Normal, style_name: str = None) -> QFont:
-    font = QFont()
-    font.setFamilies(["Malgun Gothic Semilight", "맑은 고딕 Semilight", "Malgun Gothic"])
-    font.setPointSize(size)
-    if weight == QFont.Weight.Bold:
-        font.setWeight(QFont.Weight.Bold)
-    else:
-        font.setWeight(QFont.Weight.Light)
-        font.setStyleName(style_name or "Semilight")
-    return font
+from ui.common import (
+    create_font,
+    _fmt_num_edit,
+    _set_field_error,
+    _validate_date_str,
+    _validate_positive_number,
+    _mk_field_validator,
+    _ACCENT_COLOR,
+    _ACCENT_HOVER_COLOR,
+    _HIST_KEYS,
+    _MARKET_ORDER,
+    _FIELD_ERROR_STYLE,
+    atomic_save_json,
+    safe_load_json,
+)
 
 load_dotenv()
 
@@ -31,9 +36,6 @@ import logging
 logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
 
 # ── Structured logging setup ──────────────────────────────────────────────────
-# Both file and console handlers are set to WARNING so only genuine API
-# failures (not normal fallback-chain silences) surface during runtime.
-# To debug: change _file_handler.setLevel(logging.DEBUG) at the bottom.
 _log_formatter = logging.Formatter(
     "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -47,103 +49,6 @@ _stream_handler.setFormatter(_log_formatter)
 logging.basicConfig(level=logging.DEBUG, handlers=[_file_handler, _stream_handler])
 logger = logging.getLogger(__name__)  # 'main' — module-level logger for main.py
 # ─────────────────────────────────────────────────────────────────────────────
-
-import matplotlib
-matplotlib.use("QtAgg")  # noqa: E402
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-import mplcursors
-
-plt.rcParams['font.family'] = ['Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic', 'sans-serif']
-plt.rcParams['axes.unicode_minus'] = False
-
-_HIST_KEYS = ["3d", "5d", "10d", "20d", "60d", "120d"]
-_MARKET_ORDER = {"KOSPI": 0, "KOSDAQ": 1, "NASDAQ 100": 2, "S&P500": 3}
-
-# Shared accent color, named so it's set in one place instead of being
-# repeated as a literal across the header checkbox and the app-wide QSS.
-_ACCENT_COLOR = "#0078d4"
-_ACCENT_HOVER_COLOR = "#005a9e"
-
-# ---
-# Shared: 1,000-separator auto-formatter for QLineEdit
-# ---
-def _fmt_num_edit(edit: "QLineEdit", text: str, decimal: bool = False) -> None:
-    """Re-format `text` with thousands commas and update `edit` in-place."
-    Preserves cursor position. Supports optional decimal part."""
-    raw = text.replace(',', '').strip()
-    if not raw:
-        return
-    try:
-        if decimal and '.' in raw:
-            int_part, dec_part = raw.split('.', 1)
-            int_part = int_part or '0'
-            formatted = f"{int(int_part):,}.{dec_part}"
-        else:
-            formatted = f"{int(float(raw)):,}"
-        if formatted != text:
-            pos = edit.cursorPosition()
-            delta = len(formatted) - len(text)
-            edit.blockSignals(True)
-            edit.setText(formatted)
-            edit.setCursorPosition(max(0, pos + delta))
-            edit.blockSignals(False)
-    except (ValueError, OverflowError):
-        pass
-
-
-# ---
-# Shared: trade-entry input validation (roadmap 2-5)
-# ---
-_FIELD_ERROR_STYLE = "border: 1px solid #e74c3c; background-color: #fdecea;"
-
-
-def _set_field_error(edit: "QLineEdit", message: str = "") -> None:
-    """Apply (message truthy) or clear (message falsy) red-border error styling
-    + tooltip on a QLineEdit, per the roadmap's 'red border + tooltip' spec."""
-    if message:
-        edit.setStyleSheet(_FIELD_ERROR_STYLE)
-        edit.setToolTip(message)
-    else:
-        edit.setStyleSheet("")
-        edit.setToolTip("")
-
-
-def _validate_date_str(text: str) -> bool:
-    """True if text is a valid YYYY-MM-DD date."""
-    text = text.strip()
-    if not text:
-        return False
-    try:
-        _dt.datetime.strptime(text, "%Y-%m-%d")
-        return True
-    except ValueError:
-        return False
-
-
-def _validate_positive_number(text: str) -> bool:
-    """True if text parses (after stripping ',' and '%') to a strictly positive float."""
-    text = text.replace(",", "").replace("%", "").strip()
-    if not text:
-        return False
-    try:
-        return float(text) > 0
-    except ValueError:
-        return False
-
-
-def _mk_field_validator(edit: "QLineEdit", check_fn, error_msg: str):
-    """Build a no-arg validator closure: re-reads `edit`'s current text, applies
-    check_fn, sets/clears the red-border+tooltip error style, and returns the
-    pass/fail bool. Connect the returned closure to `edit.textChanged` for
-    real-time feedback, and call it again in on_save() to gate saving."""
-    def _run(_ignored=None) -> bool:
-        ok = check_fn(edit.text())
-        _set_field_error(edit, "" if ok else error_msg)
-        return ok
-    return _run
 
 
 # --- Phase 3-1: split out to the threads/ package ---

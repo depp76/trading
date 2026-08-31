@@ -38,7 +38,16 @@ def _extract_live_candidates(universe_data: list) -> list:
         for fname, (extractor, _higher_better) in _REBALANCE_FACTORS.items():
             try:
                 v = extractor(item)
-                raw[fname] = float(v) if v is not None else None
+                if v is not None:
+                    v_float = float(v)
+                    # Non-positive PER indicates net loss or invalid ratio; treat as None
+                    # to prevent loss-making companies from scoring artificially high in value
+                    if fname == "value_per" and v_float <= 0:
+                        raw[fname] = None
+                    else:
+                        raw[fname] = v_float
+                else:
+                    raw[fname] = None
             except (TypeError, ValueError):
                 raw[fname] = None
         if sum(1 for v in raw.values() if v is not None) < _REBALANCE_MIN_FACTORS:
@@ -235,9 +244,17 @@ def _factor_snapshot_at(lookup: dict, as_of_date):
     return {key: _get(key) for key in _SNAPSHOT_COLUMNS}
 
 
-def _run_walkforward_simulation(series_map: dict, rebalance_dates: list, top_n: int,
-                                 band_multiplier: float, initial_capital: float) -> dict:
-    """Pure portfolio simulation over precomputed historical factor series."""
+def _run_walkforward_simulation(
+    series_map: dict,
+    rebalance_dates: list,
+    top_n: int,
+    band_multiplier: float,
+    initial_capital: float,
+    buy_fee_rate: float = 0.00015,
+    sell_fee_rate: float = 0.00015,
+    sell_tax_rate: float = 0.0018,
+) -> dict:
+    """Pure portfolio simulation over precomputed historical factor series with realistic fees and taxes."""
     cash = initial_capital
     shares: dict = {}
     last_price: dict = {}
@@ -247,6 +264,7 @@ def _run_walkforward_simulation(series_map: dict, rebalance_dates: list, top_n: 
     trades = []
     rebalance_log = []
     closed_trade_returns = []
+    total_cost_paid = 0.0
 
     # Extracted once per ticker (not once per rebalance date) — see
     # _build_snapshot_lookup's docstring for why this matters.
@@ -292,7 +310,7 @@ def _run_walkforward_simulation(series_map: dict, rebalance_dates: list, top_n: 
         current_holdings = set(shares.keys())
         cls = _classify_buy_sell_hold(ranked, current_holdings, top_n, band_multiplier)
 
-        # -- Execute sells --
+        # -- Execute sells: deduct sell broker commission + securities transaction tax --
         for r in cls["sell_candidates"]:
             t = r["ticker"]
             if t not in shares:
@@ -300,28 +318,64 @@ def _run_walkforward_simulation(series_map: dict, rebalance_dates: list, top_n: 
             px = prices_today.get(t, last_price.get(t))
             if px is None or px <= 0:
                 continue
-            cash += shares[t] * px
+            qty = shares[t]
+            gross_sell = qty * px
+            fee = gross_sell * sell_fee_rate
+            tax = gross_sell * sell_tax_rate
+            net_sell = gross_sell - fee - tax
+            cash += net_sell
+            total_cost_paid += (fee + tax)
+
             ep = entry_price.get(t)
-            if ep:
-                closed_trade_returns.append((px - ep) / ep * 100)
-            trades.append({"date": d.strftime("%Y-%m-%d"), "ticker": t, "action": "sell",
-                            "price": px, "shares": shares[t]})
+            if ep and ep > 0:
+                eff_entry = ep * (1.0 + buy_fee_rate)
+                eff_exit = px * (1.0 - sell_fee_rate - sell_tax_rate)
+                net_ret = (eff_exit - eff_entry) / eff_entry * 100.0
+                closed_trade_returns.append(net_ret)
+
+            trades.append({
+                "date": d.strftime("%Y-%m-%d"),
+                "ticker": t,
+                "action": "sell",
+                "price": px,
+                "shares": qty,
+                "gross_amount": gross_sell,
+                "fee": fee,
+                "tax": tax,
+                "net_amount": net_sell,
+            })
             del shares[t]
             entry_price.pop(t, None)
 
-        # -- Execute buys: split available cash evenly across this week's buy candidates --
+        # -- Execute buys: allocate available cash evenly with buy commission included --
         buy_list = [r for r in cls["buy_candidates"] if prices_today.get(r["ticker"], 0) > 0]
         if buy_list and cash > 0:
             alloc = cash / len(buy_list)
             for r in buy_list:
                 t = r["ticker"]
                 px = prices_today[t]
-                qty = alloc / px
+                if px <= 0:
+                    continue
+                qty = alloc / (px * (1.0 + buy_fee_rate))
+                gross_buy = qty * px
+                fee = gross_buy * buy_fee_rate
+                total_spent = gross_buy + fee
+
                 shares[t] = shares.get(t, 0.0) + qty
                 entry_price[t] = px
-                cash -= qty * px
-                trades.append({"date": d.strftime("%Y-%m-%d"), "ticker": t, "action": "buy",
-                                "price": px, "shares": qty})
+                cash -= total_spent
+                total_cost_paid += fee
+                trades.append({
+                    "date": d.strftime("%Y-%m-%d"),
+                    "ticker": t,
+                    "action": "buy",
+                    "price": px,
+                    "shares": qty,
+                    "gross_amount": gross_buy,
+                    "fee": fee,
+                    "tax": 0.0,
+                    "net_amount": total_spent,
+                })
 
         equity_curve.append({"date": d.strftime("%Y-%m-%d"), "value": _mark_to_market()})
         rebalance_log.append({
@@ -335,16 +389,25 @@ def _run_walkforward_simulation(series_map: dict, rebalance_dates: list, top_n: 
         "trades": trades,
         "rebalance_log": rebalance_log,
         "closed_trade_returns": closed_trade_returns,
+        "total_cost_paid": total_cost_paid,
     }
 
 
-def _summarize_backtest(equity_curve: list, benchmark_curve: list, initial_capital: float,
-                         closed_trade_returns: list, n_rebalances: int, n_trades: int) -> dict:
+def _summarize_backtest(
+    equity_curve: list,
+    benchmark_curve: list,
+    initial_capital: float,
+    closed_trade_returns: list,
+    n_rebalances: int,
+    n_trades: int,
+    total_cost_paid: float = 0.0,
+) -> dict:
     """Performance summary for one run_rebalance_backtest() result."""
     if not equity_curve:
         return {
             "total_return_pct": 0.0, "benchmark_return_pct": 0.0, "cagr_pct": 0.0,
             "max_drawdown_pct": 0.0, "n_rebalances": 0, "n_trades": 0, "win_rate_pct": 0.0,
+            "total_cost_amount": 0.0, "total_cost_drag_pct": 0.0,
         }
 
     final_value = equity_curve[-1]["value"]
@@ -376,6 +439,8 @@ def _summarize_backtest(equity_curve: list, benchmark_curve: list, initial_capit
         if closed_trade_returns else 0.0
     )
 
+    total_cost_drag_pct = (total_cost_paid / initial_capital * 100) if initial_capital else 0.0
+
     return {
         "total_return_pct": total_return_pct,
         "benchmark_return_pct": benchmark_return_pct,
@@ -384,6 +449,8 @@ def _summarize_backtest(equity_curve: list, benchmark_curve: list, initial_capit
         "n_rebalances": n_rebalances,
         "n_trades": n_trades,
         "win_rate_pct": win_rate_pct,
+        "total_cost_amount": total_cost_paid,
+        "total_cost_drag_pct": total_cost_drag_pct,
     }
 
 
@@ -394,9 +461,12 @@ def run_rebalance_backtest(
     band_multiplier: float = 1.5,
     initial_capital: float = 100_000_000.0,
     benchmark_ticker: str = "KS11",
+    buy_fee_rate: float = 0.00015,
+    sell_fee_rate: float = 0.00015,
+    sell_tax_rate: float = 0.0018,
     progress_callback=None,
 ) -> dict:
-    """Walk-forward backtest of compute_weekly_rebalance_signals's algorithm."""
+    """Walk-forward backtest of compute_weekly_rebalance_signals's algorithm with fees and taxes."""
     lookback_years = max(1, min(5, int(lookback_years)))
     end_date = datetime.now().date()
     fetch_start = end_date - timedelta(days=365 * lookback_years + 400)
@@ -424,7 +494,16 @@ def run_rebalance_backtest(
                 progress_callback(done, len(tickers))
 
     rebalance_dates = _rebalance_friday_dates(sim_start, end_date)
-    sim = _run_walkforward_simulation(series_map, rebalance_dates, top_n, band_multiplier, initial_capital)
+    sim = _run_walkforward_simulation(
+        series_map,
+        rebalance_dates,
+        top_n,
+        band_multiplier,
+        initial_capital,
+        buy_fee_rate=buy_fee_rate,
+        sell_fee_rate=sell_fee_rate,
+        sell_tax_rate=sell_tax_rate,
+    )
 
     benchmark_curve = []
     try:
@@ -444,14 +523,22 @@ def run_rebalance_backtest(
                 benchmark_curve.append({"date": d.strftime("%Y-%m-%d"), "value": initial_capital * px / base_price})
 
     summary = _summarize_backtest(
-        sim["equity_curve"], benchmark_curve, initial_capital,
-        sim["closed_trade_returns"], len(rebalance_dates), len(sim["trades"]),
+        sim["equity_curve"],
+        benchmark_curve,
+        initial_capital,
+        sim["closed_trade_returns"],
+        len(rebalance_dates),
+        len(sim["trades"]),
+        total_cost_paid=sim.get("total_cost_paid", 0.0),
     )
 
     return {
         "lookback_years": lookback_years,
         "top_n": top_n,
         "band_multiplier": band_multiplier,
+        "buy_fee_rate": buy_fee_rate,
+        "sell_fee_rate": sell_fee_rate,
+        "sell_tax_rate": sell_tax_rate,
         "start_date": sim_start.strftime("%Y-%m-%d"),
         "end_date": end_date.strftime("%Y-%m-%d"),
         "equity_curve": sim["equity_curve"],
