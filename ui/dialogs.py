@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QPushButton, QLineEdit, QLabel, QComboBox, QScrollBar,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QApplication, QSplitter, QWidget, QStyledItemDelegate,
+    QApplication, QSplitter, QWidget, QStyledItemDelegate, QTabWidget,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QPen
@@ -1775,11 +1775,12 @@ class BacktestResultDialog(QDialog):
     so changes to the backtest engine (data_fetcher.py) never require
     touching this dialog unless the result dict's shape itself changes."""
 
-    def __init__(self, result: dict, parent=None):
+    def __init__(self, result: dict, parent=None, ticker_name_map: dict = None):
         super().__init__(parent)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint | Qt.WindowType.WindowMinimizeButtonHint)
         self.setWindowTitle("Weekly Rebalance Backtest \u2014 trading.md 3-1")
-        self.resize(900, 650)
+        self.resize(900, 700)
+        self.showMaximized()
 
         layout = QVBoxLayout(self)
 
@@ -1807,6 +1808,14 @@ class BacktestResultDialog(QDialog):
             skipped.setStyleSheet("color:#d35400;")
             skipped.setWordWrap(True)
             layout.addWidget(skipped)
+
+        tabs = QTabWidget()
+        layout.addWidget(tabs, 1)
+
+        chart_tab = QWidget()
+        chart_layout = QVBoxLayout(chart_tab)
+        chart_layout.setContentsMargins(0, 0, 0, 0)
+        tabs.addTab(chart_tab, "Chart")
 
         fig = Figure(figsize=(9, 5.5), constrained_layout=True)
         ax = fig.add_subplot(111)
@@ -1862,7 +1871,54 @@ class BacktestResultDialog(QDialog):
                 sel.annotation.get_bbox_patch().set(fc="white", alpha=0.9, edgecolor="gray")
 
         canvas = FigureCanvas(fig)
-        layout.addWidget(canvas, 1)
+        chart_layout.addWidget(canvas, 1)
+
+        trades_tab = QWidget()
+        trades_layout = QVBoxLayout(trades_tab)
+        trades_layout.setContentsMargins(0, 0, 0, 0)
+        tabs.addTab(trades_tab, f"Trade History ({len(result.get('trades') or [])})")
+
+        ticker_name_map = ticker_name_map or {}
+
+        trades_tbl = QTableWidget()
+        cols = ["Date", "Name", "Ticker", "Action", "Price", "Shares", "Gross Amount", "Fee", "Tax", "Net Amount"]
+        trades_tbl.setColumnCount(len(cols))
+        trades_tbl.setHorizontalHeaderLabels(cols)
+        trades_tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        trades_tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        trades_tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        trades_tbl.verticalHeader().setVisible(False)
+        trades_tbl.setSortingEnabled(False)
+
+        def _trade_cell(text, align=Qt.AlignmentFlag.AlignCenter):
+            it = QTableWidgetItem(text)
+            it.setTextAlignment(align)
+            return it
+
+        trades = result.get("trades") or []
+        trades_tbl.setUpdatesEnabled(False)
+        try:
+            trades_tbl.setRowCount(len(trades))
+            for r, tr in enumerate(trades):
+                ticker = tr.get("ticker", "")
+                action = tr.get("action", "")
+                action_it = _trade_cell(action.upper())
+                action_it.setForeground(QColor("#c0392b" if action == "buy" else "#2980b9"))
+                right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                trades_tbl.setItem(r, 0, _trade_cell(tr.get("date", "")))
+                trades_tbl.setItem(r, 1, _trade_cell(ticker_name_map.get(ticker, "")))
+                trades_tbl.setItem(r, 2, _trade_cell(ticker))
+                trades_tbl.setItem(r, 3, action_it)
+                trades_tbl.setItem(r, 4, _trade_cell(f"{tr.get('price', 0):,.0f}", right))
+                trades_tbl.setItem(r, 5, _trade_cell(f"{tr.get('shares', 0):,.2f}", right))
+                trades_tbl.setItem(r, 6, _trade_cell(f"{tr.get('gross_amount', 0):,.0f}", right))
+                trades_tbl.setItem(r, 7, _trade_cell(f"{tr.get('fee', 0):,.0f}", right))
+                trades_tbl.setItem(r, 8, _trade_cell(f"{tr.get('tax', 0):,.0f}", right))
+                trades_tbl.setItem(r, 9, _trade_cell(f"{tr.get('net_amount', 0):,.0f}", right))
+        finally:
+            trades_tbl.setUpdatesEnabled(True)
+
+        trades_layout.addWidget(trades_tbl, 1)
 
         disclaimer = QLabel(
             "\u26a0\ufe0f Backtest excludes trailing-PER factor (no bulk historical source). "

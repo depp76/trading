@@ -270,6 +270,10 @@ class AutoTradingTab(QWidget):
             )
             return
 
+        self._backtest_ticker_name_map = {
+            it.get("ticker"): it.get("name", "") for it in universe_data if it.get("ticker")
+        }
+
         lookback_years = self._lookback_combo.currentData()
         self._backtest_btn.setEnabled(False)
         self._backtest_status_label.setText(f"Fetching history for {len(tickers)} tickers... (0/{len(tickers)})")
@@ -294,7 +298,10 @@ class AutoTradingTab(QWidget):
             f"Last backtest: {result['start_date']} → {result['end_date']}, "
             f"return {result['summary']['total_return_pct']:+.1f}%"
         )
-        dlg = BacktestResultDialog(result, parent=self)
+        dlg = BacktestResultDialog(
+            result, parent=self,
+            ticker_name_map=getattr(self, "_backtest_ticker_name_map", None),
+        )
         dlg.exec()
 
     def collect_threads_to_stop(self):
