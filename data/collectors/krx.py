@@ -25,6 +25,8 @@ _KRX_DERIV_IDX_URL = "https://openapi.krx.co.kr/OPN/DER/01/0101/der_0101_tab1.js
 _KRX_KEY_CACHE: dict = {}
 _KRX_VKOSPI_CACHE_PATH = "vkospi_cache.json"
 _VKOSPI_CACHE_LOCK = threading.Lock()
+_VKOSPI_FAIL_COOLDOWN_SEC = 1800
+_VKOSPI_LAST_FAIL_TS: dict = {"ts": 0.0}
 
 
 def _get_krx_auth_key() -> str:
@@ -104,7 +106,12 @@ def fetch_vkospi_history(start: str, end: str = None, max_workers: int = 3, requ
     max_workers/request_delay default to a modest, throttled pace: a cold-start backfill
     can span a year of business days, and hammering the KRX Open API with a large burst of
     concurrent requests has triggered a WAF-level block (403 on every request, including
-    ones with a valid, approved auth key) that persists for a while.
+    ones with a valid, approved auth key) that persists for a while. While such a block is
+    active, every missing date fails, and since _pdf_is_stale() re-triggers this function on
+    every call until the missing dates are backfilled, callers (chart renders, the 60s
+    auto-refresh timer) would otherwise retry against the still-blocked endpoint indefinitely.
+    _VKOSPI_LAST_FAIL_TS enforces a cooldown after an all-failed attempt so retries back off
+    instead of continuously feeding the block.
     """
     end = end or datetime.now().strftime("%Y-%m-%d")
     bas_dds = [d.strftime("%Y%m%d") for d in pd.bdate_range(start, end)]
@@ -118,7 +125,12 @@ def fetch_vkospi_history(start: str, end: str = None, max_workers: int = 3, requ
         today_bd = datetime.now().strftime("%Y%m%d")
         missing = [bd for bd in bas_dds if bd not in cache or (cache[bd] is None and bd == today_bd)]
 
+        now_ts = time.time()
+        if missing and (now_ts - _VKOSPI_LAST_FAIL_TS["ts"]) < _VKOSPI_FAIL_COOLDOWN_SEC:
+            missing = []
+
         if missing:
+            any_success = False
             with ThreadPoolExecutor(max_workers=max_workers) as exe:
                 futures = {exe.submit(_throttled_fetch, bd): bd for bd in missing}
                 for fut in as_completed(futures):
@@ -128,10 +140,12 @@ def fetch_vkospi_history(start: str, end: str = None, max_workers: int = 3, requ
                     except Exception:
                         logger.warning("KRX VKOSPI fetch error for date=%s", bd, exc_info=True)
                         continue
+                    any_success = True
                     if item:
                         cache[bd] = item
                     elif bd != today_bd:
                         cache[bd] = None
+            _VKOSPI_LAST_FAIL_TS["ts"] = 0.0 if any_success else now_ts
             _save_vkospi_cache(cache)
 
     rows = []
