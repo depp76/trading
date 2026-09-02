@@ -27,6 +27,12 @@ _KRX_VKOSPI_CACHE_PATH = "vkospi_cache.json"
 _VKOSPI_CACHE_LOCK = threading.Lock()
 _VKOSPI_FAIL_COOLDOWN_SEC = 1800
 _VKOSPI_LAST_FAIL_TS: dict = {"ts": 0.0}
+# openapi.krx.co.kr's derivative index endpoint has been returning a persistent 403 WAF
+# block since 2026-08-28 regardless of date/headers/retries (confirmed by manual testing
+# on 2026-09-02) — an IP/key-level block on KRX's side that the existing cooldown can't
+# resolve. Disabled here to stop burning requests against a dead endpoint; flip back to
+# False once KRX support confirms the block on this key/IP is lifted.
+_VKOSPI_API_DISABLED = True
 
 
 def _get_krx_auth_key() -> str:
@@ -49,6 +55,8 @@ def fetch_krx_derivative_index_day(bas_dd: str, index_name: str = VKOSPI_INDEX_N
 
     bas_dd: 'YYYYMMDD'.
     """
+    if _VKOSPI_API_DISABLED:
+        return None
     res = requests.get(
         _KRX_DERIV_IDX_URL,
         headers={"AUTH_KEY": _get_krx_auth_key()},
@@ -124,6 +132,9 @@ def fetch_vkospi_history(start: str, end: str = None, max_workers: int = 3, requ
         cache = _load_vkospi_cache()
         today_bd = datetime.now().strftime("%Y%m%d")
         missing = [bd for bd in bas_dds if bd not in cache or (cache[bd] is None and bd == today_bd)]
+
+        if _VKOSPI_API_DISABLED:
+            missing = []
 
         now_ts = time.time()
         if missing and (now_ts - _VKOSPI_LAST_FAIL_TS["ts"]) < _VKOSPI_FAIL_COOLDOWN_SEC:
