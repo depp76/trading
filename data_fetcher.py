@@ -118,6 +118,7 @@ from data import (
     run_bulk_backtest_chunk,
 
     # Rebalance
+    RebalanceConfig,
     _REBALANCE_FACTORS,
     _REBALANCE_MIN_FACTORS,
     _extract_live_candidates,

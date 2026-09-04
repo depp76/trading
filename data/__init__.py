@@ -110,6 +110,7 @@ from data.backtest import (
 )
 
 from data.rebalance import (
+    RebalanceConfig,
     _REBALANCE_FACTORS,
     _REBALANCE_MIN_FACTORS,
     _extract_live_candidates,

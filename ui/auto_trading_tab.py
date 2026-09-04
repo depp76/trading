@@ -34,7 +34,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
 import trade_db
-from data_fetcher import compute_weekly_rebalance_signals
+from data_fetcher import compute_weekly_rebalance_signals, RebalanceConfig
 from threads.fetch_threads import RebalanceBacktestThread
 from ui.dialogs import BacktestResultDialog
 
@@ -48,16 +48,22 @@ class AutoTradingTab(QWidget):
     """Weekly rebalance signal tab (trading.md 3-1: factor scoring + rank rebalancing).
 
     trading.md decisions this implementation follows:
-      - top_n = 20 target holdings
+      - top_n_by_market = {"KOSPI": 10, "KOSDAQ": 10} target holdings
+        (trading.md 3-5 -- ranked per market so KOSDAQ's higher volatility
+        doesn't crowd out KOSPI in a combined top-N)
       - band_multiplier = 1.5 -> a held stock is only a sell candidate once
-        its rank falls below 30 (reduces weekly turnover)
+        its rank within its own market falls below 15 (reduces weekly turnover)
+    Both values come from RebalanceConfig (trading.md 8-H / 11-4 step 3) --
+    the single source of truth shared with data/rebalance's own defaults, so
+    they're no longer duplicated as separate literals here.
     Factor weights are an equal-weighted v1 default (see
     data_fetcher.compute_weekly_rebalance_signals docstring) -- tune based on
     backtest results per trading.md section 6, not fixed here.
     """
 
-    TOP_N = 20
-    BAND_MULTIPLIER = 1.5
+    _REBALANCE_CONFIG = RebalanceConfig()
+    TOP_N_BY_MARKET = _REBALANCE_CONFIG.top_n_by_market
+    BAND_MULTIPLIER = _REBALANCE_CONFIG.band_multiplier
     INITIAL_CAPITAL = 100_000_000.0  # arbitrary notional for the backtest (trading.md section 6)
 
     def __init__(self, universe_tab, parent=None):
@@ -77,9 +83,10 @@ class AutoTradingTab(QWidget):
         title.setFont(create_font(16, QFont.Weight.Bold))
         root.addWidget(title)
 
+        top_n_str = ", ".join(f"{m} {n}" for m, n in self.TOP_N_BY_MARKET.items())
         subtitle = QLabel(
-            f"Factor scoring + rank rebalancing (trading.md 3-1) — target {self.TOP_N} holdings, "
-            f"sell band at rank > {int(self.TOP_N * self.BAND_MULTIPLIER)}"
+            f"Factor scoring + rank rebalancing (trading.md 3-1/3-5) — target {top_n_str}, "
+            f"sell band at per-market rank > {int(next(iter(self.TOP_N_BY_MARKET.values())) * self.BAND_MULTIPLIER)}"
         )
         subtitle.setFont(create_font(9, style_name="Semilight"))
         subtitle.setStyleSheet("color:#7f8c8d;")
@@ -160,10 +167,10 @@ class AutoTradingTab(QWidget):
         rank_lbl = QLabel("Full Ranking")
         rank_lbl.setFont(create_font(11, QFont.Weight.Bold))
         root.addWidget(rank_lbl)
-        self._rank_table = QTableWidget(0, 11)
+        self._rank_table = QTableWidget(0, 13)
         self._rank_table.setHorizontalHeaderLabels([
-            "Rank", "Ticker", "Name", "Market", "Score",
-            "PER", "MA20Div", "MA50Div", "52wHighDiff%", "Ret20D%", "Ret60D%",
+            "Rank", "MktRank", "Ticker", "Name", "Market", "Score",
+            "PER", "MA20Div", "MA50Div", "52wHighDiff%", "Ret20D%", "Ret60D%", "MA20Slope1W%",
         ])
         self._rank_table.setFont(create_font(9, style_name="Semilight"))
         self._rank_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -210,16 +217,17 @@ class AutoTradingTab(QWidget):
         result = compute_weekly_rebalance_signals(
             universe_data,
             current_holdings=current_holdings,
-            top_n=self.TOP_N,
+            top_n_by_market=self.TOP_N_BY_MARKET,
             band_multiplier=self.BAND_MULTIPLIER,
         )
         self._last_result = result
         self._render(result)
 
     def _render(self, result):
+        threshold_str = ", ".join(f"{m}>{n}" for m, n in result["sell_threshold_by_market"].items())
         self._as_of_label.setText(
             f"As of {result['as_of']} — {len(result['ranked'])} ranked "
-            f"({result['excluded_count']} excluded), sell threshold rank > {result['sell_threshold_rank']}"
+            f"({result['excluded_count']} excluded), sell threshold per-market rank: {threshold_str}"
         )
         self._fill_candidate_table(self._buy_table, result["buy_candidates"])
         self._fill_candidate_table(self._sell_table, result["sell_candidates"])
@@ -246,10 +254,11 @@ class AutoTradingTab(QWidget):
         for r, item in enumerate(ranked):
             raw = item["raw"]
             values = [
-                str(item["rank"]), item["ticker"], item["name"], item["market"],
+                str(item["rank"]), str(item.get("market_rank", "-")), item["ticker"], item["name"], item["market"],
                 f"{item['score']:.2f}",
                 fmt(raw.get("value_per")), fmt(raw.get("ma20_momentum")), fmt(raw.get("ma50_momentum")),
                 fmt(raw.get("high52w_proximity")), fmt(raw.get("ret_20d")), fmt(raw.get("ret_60d")),
+                fmt(raw.get("ma20_slope_1w")),
             ]
             for c, val in enumerate(values):
                 cell = QTableWidgetItem(val)
@@ -273,13 +282,17 @@ class AutoTradingTab(QWidget):
         self._backtest_ticker_name_map = {
             it.get("ticker"): it.get("name", "") for it in universe_data if it.get("ticker")
         }
+        market_by_ticker = {
+            it.get("ticker"): it.get("market", "") for it in universe_data if it.get("ticker")
+        }
 
         lookback_years = self._lookback_combo.currentData()
         self._backtest_btn.setEnabled(False)
         self._backtest_status_label.setText(f"Fetching history for {len(tickers)} tickers... (0/{len(tickers)})")
 
         self._backtest_thread = RebalanceBacktestThread(
-            tickers, lookback_years, self.TOP_N, self.BAND_MULTIPLIER, self.INITIAL_CAPITAL,
+            tickers, lookback_years, self.TOP_N_BY_MARKET, self.BAND_MULTIPLIER, self.INITIAL_CAPITAL,
+            market_by_ticker=market_by_ticker,
         )
         self._backtest_thread.progress.connect(self._on_backtest_progress)
         self._backtest_thread.finished.connect(self._on_backtest_finished)
