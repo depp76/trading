@@ -634,7 +634,48 @@ git merge feat/rebalance-regime-overlay    # A 반영된 master 기준으로 B
 | 강점 | 계획 수립, 문서화, 코드 리뷰, 소규모 변경 | 멀티 파일 리팩토링, pytest 실행·반복 수정 루프 |
 | 리스크 | 실행을 못 하니 "적용됐다고 착각"하기 쉬움 | 확인 없이 범위를 넓게 바꿀 수 있어 범위 통제 필요 (`--mode=accept-edits`, `toolPermission`, `permissions.allow/deny`로 조절) |
 
-### 12-9. 체크리스트
+### 12-9. Claude Code 자체의 멀티 에이전트 기능 (대안/보완)
+
+지금까지 12장은 "Claude Code라는 도구 자체엔 없는 기능을 `git worktree` + 수동 지시서로
+직접 구현"하는 방법이었다. 그런데 **Claude Code(공식 CLI, 이 세션이나 Antigravity CLI와는
+별개의 도구 — 사용자가 로컬에 설치해 쓸 수 있음)는 이런 멀티 에이전트 조율 기능을 이미
+내장하고 있다.** 이 프로젝트에서 Claude Code CLI를 쓴다면 12-3/12-4의 수동 절차 상당수를
+대체할 수 있으므로 대안으로 기록해 둔다. (2026-09 기준, 공식 문서 확인)
+
+**제공되는 5가지 방식**
+
+| 방식 | 조율 주체 | 이 프로젝트에 맞는 용도 |
+|------|-----------|------------------------|
+| Subagent | 메인 세션이 설명(description) 매칭으로 위임 | 8장 A~D처럼 담당 범위가 뚜렷한 반복 작업 |
+| `--worktree` 플래그 | 사용자가 터미널마다 직접 실행 | 12-3에서 수동으로 하던 `git worktree add`를 CLI가 대신 처리 |
+| Agent teams (실험적) | 리드 에이전트 + 팀원들이 공유 태스크리스트로 직접 메시지 주고받음 | A/B가 `signals.py`에 훅을 붙이는 것처럼 약간의 조율이 필요한 작업 |
+| Agent view | 백그라운드로 여러 작업 디스패치 후 한 화면에서 모니터링 | 8장 표 전체를 한 번에 던져놓고 진행상황만 확인하고 싶을 때 |
+| Dynamic workflows | 스크립트가 다수 서브에이전트를 오케스트레이션(최대 1,000개) | 이 프로젝트 규모(4~5개 작업)엔 과함 — 참고만 |
+
+**8장 예시(A~D)에 적용한다면 — 가장 실용적인 조합**
+
+1. `.claude/agents/` 아래에 서브에이전트 정의 파일을 4개 만든다(예:
+   `rebalance-sector.md`, `rebalance-regime.md`, `rebalance-sizing.md`,
+   `paper-trading-log.md`). 각 파일의 frontmatter에 `description`으로 담당 범위(8-1의 허용/
+   금지 범위 그대로)를 적고, `isolation: worktree`를 켜면 **Claude Code가 알아서 각
+   서브에이전트에게 독립된 워크트리를 만들어준다** — 12-3의 `git worktree add`를 손으로
+   칠 필요가 없어짐.
+2. 메인 Claude Code 세션에서 "8-A와 8-B를 각각 rebalance-sector, rebalance-regime
+   서브에이전트에게 동시에 맡겨줘"라고 지시하면, 12-4의 "작업 지시서"에 해당하는 내용이
+   `description`/frontmatter로 이미 고정돼 있으므로 매번 다시 타이핑할 필요가 없다.
+3. 완전히 독립된 세션으로 띄우고 싶으면 터미널을 나눠 `claude --worktree feat/rebalance-sector-cap`,
+   `claude --worktree feat/rebalance-regime-overlay`처럼 각각 실행 — 12-3과 동일한 결과를
+   CLI 한 줄로 얻는다.
+4. 병합은 여전히 12-6대로 순차적으로 한다 — Claude Code의 어떤 멀티 에이전트 기능도
+   "병합은 직렬로" 원칙을 대신해주지 않는다.
+
+**주의**: 이 세션(Cowork)과 지금까지 문서 전반에서 언급한 Antigravity CLI는 Claude Code와
+별개의 도구다. Antigravity CLI를 계속 주력으로 쓴다면 12-1~12-9의 수동 절차를 그대로
+따르고, 로컬에서 Claude Code CLI도 병행/전환한다면 이 절만 참고해 12-3/12-4를 CLI 기능으로
+대체하면 된다 — 두 경우 모두 12-2 핵심 원칙(git 기반, 모듈 단위 분할, 순차 병합)은 동일하게
+적용된다.
+
+### 12-10. 체크리스트
 
 **시작 전**: `git status` 확인 · 필요하면 worktree 분리(12-3) · 8장 표에서 파일이 겹치지
 않는 항목만 동시 배분 · 12-4 템플릿으로 지시서 작성
@@ -656,5 +697,7 @@ git merge feat/rebalance-regime-overlay    # A 반영된 master 기준으로 B
 | 2026-09-04 | Antigravity CLI가 실제 구현한 3-1 팩터 스코어링 알고리즘(`data/rebalance.py`, `ui/auto_trading_tab.py`)을 확인해 3~7장을 "구현 결과" 기준으로 갱신, 4장(현재 구현 상태)·8장(다음 단계)·9장(결정사항 체크) 신설/갱신 |
 | 2026-09-04 | 11장 "소스 코드 구성안"(`data/rebalance.py` → `data/rebalance/` 패키지화 제안) 신설, 12장 "멀티 에이전트 개발 방법론" 신설 — 기존 `multi_agent_guide.md`를 이 문서로 통합하고 8장 항목을 예시로 한 구체적 동시 작업 배분안 추가. 이후 매매/포트폴리오 알고리즘과 SW 개발 방법론은 모두 이 문서 하나에서 관리(사용자 요청) — `multi_agent_guide.md`는 삭제 |
 | 2026-09-04 | 8장 항목(A~G)을 8-1에서 실제 구현 가능한 수준(공식·파라미터·연결 지점)까지 구체화, 8-2에 파라미터 중복 문제를 근거로 `config.py`(8-H)/`signals.py`(8-I) 선행 작업 추가 — 11장 구조안과 12장 배분 예시를 이 선행 작업 반영해 갱신(사용자 요청: "리밸런싱 알고리즘을 더 구체적으로 구현할 필요, 이를 고려한 파일 구조 개선 필요성 검토") |
+| 2026-09-04 | 12-9 "Claude Code 자체의 멀티 에이전트 기능" 신설 — Subagent/`--worktree`/Agent teams/Agent view/Dynamic workflows 5가지 공식 기능을 정리하고, 8장 A~D 예시를 Claude Code 서브에이전트(`isolation: worktree`)로 구현하는 방법을 12-3/12-4의 수동 절차에 대한 대안으로 추가(사용자 요청: "claude code 내에서 multi agent로 구현하는 방법") |
 | 2026-09-04 | 11-4 마이그레이션 1~2단계 실행(사용자 요청) — `data/rebalance.py`(22.7KB, 12개 함수)를 `data/rebalance/{factors,classify,signals,walkforward,backtest}.py` + `__init__.py`(재노출)로 패키지화, `tests/test_backtest.py`의 리밸런싱 테스트 2개 클래스를 `tests/rebalance/{test_factors,test_walkforward}.py`로 이동. 로직 변경 없음 — `data/__init__.py`/`data_fetcher.py`/`ui/auto_trading_tab.py`/`tests/`는 전부 `data_fetcher` facade를 거쳐서만 참조하고 있어 무수정으로 통과, `pytest tests/` 85건 전부 통과로 회귀 확인. 3~5단계(`config.py`/`signals.py`로 `compute_weekly_rebalance_signals` 이관/8-A~8-C 병렬 배분)는 아직 미착수 |
 | 2026-09-04 | 11-4 마이그레이션 3단계(8-H) 실행(사용자 요청: "나머지 구현" → 범위 확인 후 3단계만 진행) — `data/rebalance/config.py`에 `RebalanceConfig` dataclass 신설(8-2 스펙: `top_n_by_market`/`band_multiplier` 외 8-A/B/C용 필드 5개 선반영, 아직 미사용). `classify.py`의 `_DEFAULT_TOP_N_BY_MARKET`, `signals.py`/`backtest.py`의 `band_multiplier` 기본값을 `RebalanceConfig()` 참조로 교체하고, `ui/auto_trading_tab.py`의 `TOP_N_BY_MARKET`/`BAND_MULTIPLIER` 클래스 상수(8-2가 지적한 중복 정의)도 동일 인스턴스에서 파생하도록 교체. `data/rebalance/__init__.py`→`data/__init__.py`→`data_fetcher.py` 3단 facade에 `RebalanceConfig` 재노출 추가. `pytest tests/` 85건 통과로 회귀 확인. 8-I는 11-4 1단계 때 `compute_weekly_rebalance_signals`를 처음부터 `signals.py`에 배치해 이미 완료 상태였음을 확인. 4~5단계(8-A~8-C 등 병렬 배분)는 사용자가 범위를 3단계로 한정해 미착수 |
+| 2026-09-04 | 11-4 1~3단계 완료 기록과 12-9(Claude Code 멀티 에이전트 기능) 신설이 서로 다른 세션에서 동시에 편집되어 충돌 — 12-9는 유지하고 11-4 완료 기록(위 두 항목)을 그 위에 재적용해 병합(사용자 요청: "두 변경 병합"). 문서 동시 편집 시 12-2("git 없이는 멀티 에이전트를 하지 않는다")의 실제 사례로, 향후 12-9에 이 케이스를 교훈으로 보강할 가치가 있음 |
