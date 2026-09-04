@@ -1786,9 +1786,10 @@ class BacktestResultDialog(QDialog):
 
         s = result["summary"]
         cost_str = f" | Total Cost: {s.get('total_cost_amount', 0.0):,.0f} KRW ({s.get('total_cost_drag_pct', 0.0):.2f}%)" if s.get('total_cost_amount') else ""
+        top_n_str = ", ".join(f"{m}={n}" for m, n in result.get("top_n_by_market", {}).items())
         header = QLabel(
             f"<b>{result['start_date']} \u2192 {result['end_date']}</b> "
-            f"({result['lookback_years']}y, top_n={result['top_n']}, band\u00d7{result['band_multiplier']}) \u2014 "
+            f"({result['lookback_years']}y, top_n=[{top_n_str}], band\u00d7{result['band_multiplier']}) \u2014 "
             f"Net Return: <b style='color:{'#c0392b' if s['total_return_pct'] >= 0 else '#2980b9'}'>"
             f"{s['total_return_pct']:+.1f}%</b> vs benchmark {s['benchmark_return_pct']:+.1f}% | "
             f"CAGR {s['cagr_pct']:+.1f}% | Max Drawdown {s['max_drawdown_pct']:.1f}% | "

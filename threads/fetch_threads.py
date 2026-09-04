@@ -521,9 +521,10 @@ class RebalanceBacktestThread(QThread):
         self,
         tickers,
         lookback_years,
-        top_n,
+        top_n_by_market,
         band_multiplier,
         initial_capital,
+        market_by_ticker=None,
         buy_fee_rate: float = 0.00015,
         sell_fee_rate: float = 0.00015,
         sell_tax_rate: float = 0.0018,
@@ -531,9 +532,10 @@ class RebalanceBacktestThread(QThread):
         super().__init__()
         self.tickers = tickers
         self.lookback_years = lookback_years
-        self.top_n = top_n
+        self.top_n_by_market = top_n_by_market
         self.band_multiplier = band_multiplier
         self.initial_capital = initial_capital
+        self.market_by_ticker = market_by_ticker
         self.buy_fee_rate = buy_fee_rate
         self.sell_fee_rate = sell_fee_rate
         self.sell_tax_rate = sell_tax_rate
@@ -544,9 +546,10 @@ class RebalanceBacktestThread(QThread):
             result = run_rebalance_backtest(
                 self.tickers,
                 lookback_years=self.lookback_years,
-                top_n=self.top_n,
+                top_n_by_market=self.top_n_by_market,
                 band_multiplier=self.band_multiplier,
                 initial_capital=self.initial_capital,
+                market_by_ticker=self.market_by_ticker,
                 buy_fee_rate=self.buy_fee_rate,
                 sell_fee_rate=self.sell_fee_rate,
                 sell_tax_rate=self.sell_tax_rate,

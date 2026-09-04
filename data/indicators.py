@@ -81,7 +81,7 @@ def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
     changes.update({
         "52w_high": 0.0, "52w_low": 0.0,
         "52w_high_diff": 0.0, "52w_low_diff": 0.0,
-        "ma20_div": 0.0, "ma50_div": 0.0
+        "ma20_div": 0.0, "ma50_div": 0.0, "ma20_roc_1w": 0.0
     })
 
     if current_price <= 0:
@@ -154,6 +154,13 @@ def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
             ma50 = float(np.mean(closes[-50:]))
             if ma50 > 0:
                 changes["ma50_div"] = current_price / ma50 * 100
+
+        # ── MA20 1-week rate of change (slope of the MA20 line itself, not price) ──
+        if mode == 'pct' and n >= 25:
+            ma20_today = float(np.mean(closes[-20:]))
+            ma20_5d_ago = float(np.mean(closes[-25:-5]))
+            if ma20_5d_ago > 0:
+                changes["ma20_roc_1w"] = (ma20_today / ma20_5d_ago - 1) * 100
 
     except Exception as e:
         logger.error("fetch_historical_changes failed for ticker=%s", ticker, exc_info=True)
