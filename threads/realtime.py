@@ -17,9 +17,9 @@ class RealtimePriceThread(QThread):
     def run(self):
         prices = {}
         if self.kr_tickers:
-            self.status_message.emit(f"Fetching KR quotes... (Naver, {len(self.kr_tickers)} tickers)")
-            from data_fetcher import fetch_naver_realtime_prices
-            prices.update(fetch_naver_realtime_prices(self.kr_tickers))
+            self.status_message.emit(f"Fetching KR quotes... (KIS, {len(self.kr_tickers)} tickers)")
+            from data_fetcher import fetch_kis_realtime_prices
+            prices.update(fetch_kis_realtime_prices(self.kr_tickers))
         if self.us_tickers:
             self.status_message.emit("Waiting for Yahoo Finance response...")
             from data_fetcher import fetch_us_realtime_prices, get_usd_krw_rate

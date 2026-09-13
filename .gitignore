@@ -24,6 +24,7 @@ custom_settings.json
 universe_cache.json
 vkospi_cache.json
 trading_record.json
+kis_token_cache.json
 
 # Legacy pre-SQLite state (still read once by trade_db._migrate_legacy_json)
 custom_history.json

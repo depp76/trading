@@ -29,7 +29,7 @@
 ### 기술 스택
 
 - **UI**: PyQt6 + matplotlib (QtAgg 백엔드)
-- **데이터**: pykrx / FinanceDataReader / yfinance / yahooquery / Naver / Kiwoom REST
+- **데이터**: pykrx / FinanceDataReader / yfinance / yahooquery / Naver / KIS(한국투자증권) REST·WebSocket
 - **연산**: polars (내부) → pandas (외부 라이브러리 경계)
 - **DB**: SQLite (WAL 모드), `trade_db.py`
 - **AI**: `google-genai` (`gemini_helper.py`로 포트폴리오 진단·자연어 필터에 실사용 중), `google-cloud-aiplatform` (requirements에 포함, 미사용)
@@ -438,4 +438,5 @@ tests/
 | 2026-08-31 | Phase 1 긴급 버그 수정 및 안정화: (1) `gemini_helper.py`의 미지원 모델명(`gemini-3.6-flash`)을 `gemini-2.5-flash` 및 `GEMINI_MODEL` 환경변수 오버라이드로 수정, (2) `data/rebalance.py`의 적자 기업(음수/0 PER) 팩터 추출 시 `None`으로 필터링하여 저평가 왜곡 방지 및 단위테스트 추가, (3) `ui/dialogs.py`의 레거시 `backend_qt5agg` 임포트를 Qt6 표준인 `backend_qtagg`로 통일. 백업: `archive/backup_20260831_095217/`. 검증: pytest 77/77 통과. |
 | 2026-08-31 (2차) | Phase 2 아키텍처 정돈 및 데이터 무결성 강화: (1) `ui/common.py` 신설 (`create_font`, `_fmt_num_edit`, `_validate_date_str`, `_validate_positive_number`, `_mk_field_validator`, `atomic_save_json`, `safe_load_json`, UI 상수), (2) `main.py` 및 `ui/*.py`의 모든 지연 임포트(`def _get_*`)를 제거하고 `ui.common` 단방향 임포트로 통일, (3) `universe_cache.json`, `custom_settings.json`, `trading_record.json`, `vkospi_cache.json`에 임시파일 기반 원자적 교체(`atomic_save_json`/`os.replace`) 적용하여 강제 종료 시 파일 깨짐 원천 차단, (4) `tests/test_ui_common.py` 신설. 백업: `archive/backup_20260831_095811/`. 검증: pytest 84/84 통과 (100%), 스모크 테스트 완료. |
 | 2026-08-31 (3차) | Phase 3-1 실전 퀀트 백테스트 거래비용 모델링 완료: (1) `data/rebalance.py`의 `run_rebalance_backtest` 및 `_run_walkforward_simulation`에 실전 매수/매도 수수료(기본 0.015%) 및 매도 증권거래세(기본 0.18%)를 반영하여 순수익률(Net Return)과 총 거래비용(Total Cost Amount/Drag %)을 정밀 계산, (2) `threads/fetch_threads.py`의 `RebalanceBacktestThread` 연동, (3) `ui/dialogs.py`의 `BacktestResultDialog`에 순수익률 및 총 거래비용 지표 표시, (4) `tests/test_backtest.py`에 `TestRebalanceTransactionCosts` 단위테스트 추가. 백업: `archive/backup_20260831_100645/`. 검증: pytest 85/85 통과 (100%). |
+| 2026-09-13 | 국내주식 관련 기능(예수금 조회, 종목 시세/일봉, 투자자 매매동향, 실시간 시세)을 키움증권 REST API에서 한국투자증권(KIS) REST/WebSocket API로 전면 교체, `data/collectors/kiwoom.py` 삭제 및 `data/collectors/kis.py` 신설(298번째 줄 재조사 결론이 KIS에도 동일 적용 — 대량 조회 불가, 보유 종목 소수 실시간 갱신에만 사용). 예수금 Fetch 버튼의 비밀번호/OTP 입력창 제거(KIS 잔고조회는 비밀번호 불필요). 실시간 시세는 미국주식(Yahoo) 제외, 국내주식만 전환. `requirements.txt`에 `websocket-client` 추가, 키 파일은 기존 Kiwoom 키와 같은 외부 폴더(`D:\Source Code\Kiwoom MCP`)에 `kis_appkey.txt`/`kis_secretkey.txt`로 위치. 백업: `archive/backup_20260913_173206/`. 검증: pytest 85/85 통과, 실제 KIS 응답 필드명은 사용자가 키 파일을 배치한 뒤 스모크 테스트로 최종 확인 예정. |
 

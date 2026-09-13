@@ -41,12 +41,13 @@ Three files hold essentially all application logic:
 - **`data_fetcher.py`** (~2,150 lines) — all external data access: market listings and OHLCV via
   `pykrx`/`FinanceDataReader`/`yfinance`/`yahooquery`, real-time quotes via Naver and Yahoo
   (`yf_quote_batch` is the shared batching/crumb/retry helper — reuse it rather than adding a new
-  direct `yfinance` call site), Kiwoom Securities REST API for account deposit/live KR quotes,
+  direct `yfinance` call site), Korea Investment & Securities (한국투자증권, KIS) Open API for
+  account deposit, KR quotes/OHLCV, investor trend, and real-time KR prices (WebSocket),
   KRX derivatives API for VKOSPI. Uses `polars` internally for indicator/backtest computation
   (`_to_polars`, `_compute_indicators`, `run_backtest_strategy`) and converts to `pandas` at the
   boundary because upstream libraries only speak pandas. Has module-level caches
-  (`_HIST_CACHE` as an `OrderedDict` LRU, `_YF_BULK_CACHE`, `_KIWOOM_TOKEN_CACHE`,
-  `_KIWOOM_KEYS_CACHE`) — reuse these rather than adding parallel caching.
+  (`_HIST_CACHE` as an `OrderedDict` LRU, `_YF_BULK_CACHE`, `_KIS_TOKEN_CACHE`,
+  `_KIS_KEYS_CACHE`) — reuse these rather than adding parallel caching.
 - **`trade_db.py`** — SQLite persistence (`portfolio.db`, WAL mode) for the trade log, replacing
   the older `custom_history.json` + `trade_overrides.json` pair (still read once, on first run,
   by `_migrate_legacy_json` for backward compatibility). Prefer `upsert_trades()` (batched,
@@ -55,10 +56,14 @@ Three files hold essentially all application logic:
 ### External dependencies / credentials
 
 - `.env` holds `KRX_AUTH_KEY` (KRX derivatives/VKOSPI API), loaded via `python-dotenv`.
-- Kiwoom Securities API keys are **not** in this repo: `_get_kiwoom_keys()` in `data_fetcher.py`
-  reads them from `D:\Source Code\Kiwoom MCP\45573900_appkey.txt` / `..._secretkey.txt`, an
-  external sibling project on this machine. Code touching Kiwoom calls will fail without that
-  path present.
+- KIS (한국투자증권) Open API keys are **not** in this repo: `_get_kis_keys()` in
+  `data/collectors/kis.py` reads them from `D:\Source Code\Trading MCP\kis_appkey.txt` /
+  `kis_secretkey.txt` (real/실전투자 credentials) — an external sibling-project folder,
+  renamed from `Kiwoom MCP` since it now holds keys for more than one brokerage API.
+  The account number is read the same way, from `kis_account.txt` in the same folder
+  (10 digits: 8-digit CANO + 2-digit product code) via `_get_kis_account()`, required
+  for the deposit/balance lookup. Code touching KIS calls will fail without that
+  folder present.
 - `register_secret.py` is a standalone CLI helper for pushing secrets to Google Cloud Secret
   Manager (`gcloud secrets create/versions add`) — unrelated to the app's runtime secret loading.
 

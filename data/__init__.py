@@ -18,7 +18,7 @@ from data.cache import (
     _HIST_CACHE_LOG_INTERVAL,
     _YF_SESSION,
     _NAVER_SESSION,
-    _KIWOOM_SESSION,
+    _KIS_SESSION,
     YFTlsAdapter,
     _get_yf_crumb,
     _log_hist_cache_stats,
@@ -55,17 +55,17 @@ from data.collectors.yahoo import (
     fetch_us_market_data,
 )
 
-from data.collectors.kiwoom import (
-    _KIWOOM_TOKEN_CACHE,
-    _KIWOOM_KEYS_CACHE,
-    _get_kiwoom_keys,
-    _get_kiwoom_token,
-    _kiwoom_parse_price,
-    _kiwoom_parse_signed_int,
-    fetch_kiwoom_stock_info,
-    fetch_kiwoom_daily_ohlcv,
+from data.collectors.kis import (
+    _KIS_TOKEN_CACHE,
+    _KIS_KEYS_CACHE,
+    _get_kis_keys,
+    _get_kis_token,
+    _get_kis_approval_key,
+    fetch_kis_stock_info,
+    fetch_kis_daily_ohlcv,
     fetch_account_deposit,
     fetch_investor_trend,
+    fetch_kis_realtime_prices,
 )
 
 from data.collectors.krx import (

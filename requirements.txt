@@ -5,6 +5,7 @@ PyQt6
 finance-datareader
 yahooquery
 requests
+websocket-client
 openpyxl
 mplcursors
 python-dotenv

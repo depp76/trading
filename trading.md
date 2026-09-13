@@ -56,7 +56,7 @@
 | `run_backtest_strategy()` | `data/backtest.py` | MA 이격도/데드크로스 매도 조건, +30% 익절 조건이 벡터화되어 검증 완료된, 종목별 개별 백테스트 로직 (리밸런싱과는 별개의 기존 자산) |
 | `compute_weekly_rebalance_signals()` / `run_rebalance_backtest()` | `data/rebalance.py` | **4장의 실제 구현 결과물** — 이 문서의 최초 작성 시점엔 미구현이었으나 이후 완성됨 |
 | `fetch_stock_ma_multi()` | `data/market.py` | 개별 종목 MA10/20/60 시계열 |
-| `fetch_investor_trend()` / `_fetch_index_investor_trend()` | `data/collectors/kiwoom.py`, `data/collectors/naver.py` | 기관/외국인 순매수 동향 — 아직 리밸런싱 팩터로는 미사용 (8장 참고) |
+| `fetch_investor_trend()` / `_fetch_index_investor_trend()` | `data/collectors/kis.py`, `data/collectors/naver.py` | 기관/외국인 순매수 동향 — 아직 리밸런싱 팩터로는 미사용 (8장 참고) |
 | `fetch_vkospi_history()` / `fetch_vkospi()` | `data/collectors/krx.py` | 시장 변동성 게이지 — 아직 리밸런싱 로직에 미통합 (8장 "레짐 오버레이") |
 | `fetch_quarterly_financials()` | `data/collectors/naver.py` | 분기 재무 데이터 — 현재 팩터는 PER만 사용, 추가 밸류 팩터 후보로 미사용 |
 | pykrx `get_market_sector_classifications()` | 미사용 (ROADMAP 4-5) | 섹터 집중도 제약에 필요 (8장 참고) |
@@ -402,7 +402,7 @@ data/
   backtest.py          # run_backtest_strategy (개별 종목 백테스트, 3-1과 무관)
   rebalance.py          # 팩터/스코어링/분류/워크포워드백테스트 전부 (22.7KB, 12개 함수) ⚠
   collectors/
-    kiwoom.py, krx.py, naver.py, yahoo.py
+    kis.py, krx.py, naver.py, yahoo.py
 ui/
   auto_trading_tab.py   # AutoTradingTab (14.6KB)
   assets_tab.py, dialogs.py, history_tab.py, universe_tab.py, widgets.py, common.py

@@ -80,8 +80,8 @@ _NAVER_SESSION = requests.Session()
 _NAVER_SESSION.mount("https://", HTTPAdapter(pool_maxsize=100))
 _NAVER_SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
 
-# Shared session for the Kiwoom Securities REST API (data/collectors/kiwoom.py).
-_KIWOOM_SESSION = requests.Session()
+# Shared session for the KIS (한국투자증권) Open API (data/collectors/kis.py).
+_KIS_SESSION = requests.Session()
 
 
 def _get_yf_crumb(force_refresh: bool = False):

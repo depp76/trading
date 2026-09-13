@@ -95,7 +95,7 @@
       - [ ] 이 Reload가 **Trading Universe 탭의 Refresh**를 눌렀을 때도 자동으로
         같이 실행되는지 확인 (Phase 5의 `refresh_started` 시그널 — Universe를
         새로고침하면 History도 같이 리로드되던 기존 동작이 유지되는지가 핵심)
-- [ ] **🔄 Fetch** (예수금 조회, Kiwoom 연동) — Kiwoom 키 파일이 있는 환경에서만
+- [ ] **🔄 Fetch** (예수금 조회, KIS 연동, 비밀번호 입력 없이 즉시 조회) — KIS 키 파일이 있는 환경에서만
       정상 동작 확인 가능. 없으면 에러 메시지가 뜨는지만 확인(죽지 않는지)
 - [ ] **Sort by Date** 토글 → 정렬 기준 전환 확인
 - [ ] **Search Company** → 검색어 입력 → 매칭 결과 다이얼로그

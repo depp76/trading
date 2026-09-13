@@ -881,10 +881,7 @@ class TradingHistoryTab(QWidget):
 
     def _fetch_account_deposit(self):
         try:
-            pwd, ok = QInputDialog.getText(self, "Account Auth", "Enter Account Password or Mobile OTP (6 digits):", QLineEdit.EchoMode.Password)
-            if not ok:
-                return
-            val = fetch_account_deposit(pwd.strip())
+            val = fetch_account_deposit()
             self._deposit_edit.setText(f"{int(val):,}")
             self._on_deposit_changed()
             # Inline status display (instead of QMessageBox) - immediate edit possible
