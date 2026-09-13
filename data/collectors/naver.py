@@ -231,8 +231,13 @@ def _get_kr3y_df():
                 df = pd.read_html(io.StringIO(res.text))[0]
                 return df.dropna(subset=[df.columns[1]])
 
+            # Matches the page ceiling of the inline scraper this replaced (data/market.py,
+            # pre-refactor) — that version scraped up to 39 pages with an early stop once it
+            # crossed the caller's `start` date; fetching a fixed 20 pages here silently
+            # truncated any lookback longer than ~200 rows. The result is day-cached, so the
+            # extra pages are a one-time cost per day, not per call.
             with ThreadPoolExecutor(max_workers=10) as exe:
-                dfs = list(exe.map(fetch_page, range(1, 21)))
+                dfs = list(exe.map(fetch_page, range(1, 40)))
 
             hist = pd.concat(dfs, ignore_index=True)
             hist.rename(columns={hist.columns[0]: 'Date', hist.columns[1]: 'Close'}, inplace=True)

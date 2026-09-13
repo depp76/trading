@@ -8,7 +8,7 @@ import json
 import threading
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, time as dt_time
 
 import pandas as pd
 
@@ -35,6 +35,19 @@ _KIS_TOKEN_CACHE_PATH = "kis_token_cache.json"
 # no separate scheduler needed.
 _KIS_TOKEN_REFRESH_MARGIN_SEC = 6 * 3600
 _KIS_APPROVAL_ASSUMED_LIFETIME_SEC = 24 * 3600
+
+_KST = timezone(timedelta(hours=9))
+
+
+def is_krx_market_open() -> bool:
+    """Check if the Korean stock market (KRX) is currently open for regular trading.
+    Regular trading hours: Monday through Friday, 09:00 - 15:30 KST.
+    """
+    now_kst = datetime.now(_KST)
+    if now_kst.weekday() >= 5:  # Saturday (5) or Sunday (6)
+        return False
+    current_time = now_kst.time()
+    return dt_time(9, 0) <= current_time <= dt_time(15, 30)
 
 
 def _get_kis_keys():
@@ -63,10 +76,15 @@ def _get_kis_keys():
 def _get_kis_account():
     """Reads the account number (10 digits: 8-digit CANO + 2-digit product code)
     from kis_account.txt in the KIS_KEY_PATH folder, and splits it into
-    (cano, acnt_prdt_cd). Cached in-memory like _get_kis_keys()."""
-    if "cano" in _KIS_KEYS_CACHE:
-        return _KIS_KEYS_CACHE["cano"], _KIS_KEYS_CACHE["acnt_prdt_cd"]
+    (cano, acnt_prdt_cd).
 
+    Re-read from disk on every call rather than cached forever: unlike appkey/
+    appsecret (used on every request but never edited live), this file is the one
+    most likely to get corrected in place after a first-time typo, and KIS's deposit
+    API has no equivalent to the old Kiwoom flow's live ka00001 account-list lookup
+    to catch that — the file read itself is a few bytes and negligible overhead next
+    to the network call each caller makes right after this.
+    """
     key_dir = os.environ.get("KIS_KEY_PATH", r"D:\Source Code\Trading MCP")
     account_path = os.path.join(key_dir, "kis_account.txt")
     if not os.path.exists(account_path):
@@ -78,10 +96,7 @@ def _get_kis_account():
             f"{account_path} must contain 10 digits (8-digit CANO + 2-digit "
             f"product code, e.g. 1234567801 or 12345678-01) — found {acct!r}."
         )
-    cano, acnt_prdt_cd = acct[:8], acct[8:]
-    _KIS_KEYS_CACHE["cano"] = cano
-    _KIS_KEYS_CACHE["acnt_prdt_cd"] = acnt_prdt_cd
-    return cano, acnt_prdt_cd
+    return acct[:8], acct[8:]
 
 
 def _load_kis_token_cache() -> dict:
@@ -138,7 +153,14 @@ def _get_kis_token():
         data = res.json()
         token = data.get("access_token")
         if not token:
-            raise ValueError(f"Failed to issue KIS access token: {data}")
+            reason = data.get("error_description") or data.get("msg1") or str(data)
+            raise ValueError(
+                f"Failed to issue KIS access token: {reason} "
+                "(check kis_appkey.txt/kis_secretkey.txt in the KIS_KEY_PATH folder are "
+                "correct and current, that the account is registered for real/실전투자 "
+                "Open API access, and that token issuance hasn't been rate-limited — "
+                "KIS allows roughly one issuance per minute per appkey)."
+            )
         expires_in = int(data.get("expires_in", 86400))
         expires = now + max(expires_in - _KIS_TOKEN_REFRESH_MARGIN_SEC, 60)
         _KIS_TOKEN_CACHE["token"] = token
@@ -296,8 +318,22 @@ def fetch_account_deposit() -> float:
     if not output2:
         return 0.0
     row = output2[0]
-    deposit_str = row.get("dnca_tot_amt") or row.get("prvs_rcdl_excc_amt") or "0"
-    return float(str(deposit_str).replace(",", "").strip() or "0")
+
+    def _to_float(s):
+        try:
+            return float(str(s).replace(",", "").strip() or "0")
+        except (ValueError, TypeError):
+            return 0.0
+
+    primary = _to_float(row.get("dnca_tot_amt", "0"))
+    secondary = _to_float(row.get("prvs_rcdl_excc_amt", "0"))
+    # Mirrors the old Kiwoom flow's rule: don't trust a "0" in the primary deposit
+    # field when a secondary field shows a real balance — a plain truthy-OR chain
+    # would never even look at the secondary field here, since the string "0" is
+    # truthy in Python even though it's numerically zero.
+    if primary == 0.0 and secondary > 0.0:
+        return secondary
+    return primary
 
 
 def fetch_investor_trend(ticker: str, days: int = 60) -> list:
@@ -382,6 +418,12 @@ def fetch_kis_realtime_prices(tickers: list, timeout: float = 6.0) -> dict:
     if not tickers:
         return prices
 
+    # Outside regular KRX market hours (e.g. weekends, nights), no ticks are generated.
+    # Bypass the WebSocket connection and immediately use REST fallback to avoid 6s timeout delays.
+    if not is_krx_market_open():
+        logger.debug("[fetch_kis_realtime_prices] KRX is closed; bypassing WebSocket and using REST fallback")
+        return _kis_rest_price_fallback(tickers, {})
+
     try:
         import websocket  # websocket-client
     except ImportError:
@@ -462,11 +504,36 @@ def fetch_kis_realtime_prices(tickers: list, timeout: float = 6.0) -> dict:
 
 def _kis_rest_price_fallback(tickers: list, existing: dict) -> dict:
     out = {}
-    for code in tickers:
+    if not tickers:
+        return out
+
+    def _fetch_one(code):
         try:
             info = fetch_kis_stock_info(code)
-            if info and info.get("price"):
-                out[code] = float(info["price"])
+            # `is not None` (not a truthy check on price): a halted or not-yet-traded
+            # ticker can legitimately report price 0, and that's still a real answer —
+            # `if info.get("price")` would silently drop it as if the fetch had failed.
+            if info is not None:
+                return code, float(info.get("price", 0))
         except Exception:
             logger.debug("[fetch_kis_realtime_prices] REST fallback failed for %s", code, exc_info=True)
+        return code, None
+
+    if len(tickers) == 1:
+        c, p = _fetch_one(tickers[0])
+        if p is not None:
+            out[c] = p
+        return out
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    max_workers = min(len(tickers), 5)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_fetch_one, code): code for code in tickers}
+        for future in as_completed(futures):
+            try:
+                c, p = future.result()
+                if p is not None:
+                    out[c] = p
+            except Exception:
+                pass
     return out

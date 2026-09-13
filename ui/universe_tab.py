@@ -42,6 +42,7 @@ from threads.fetch_threads import (
     AllDataFetchThread,
     UniverseLightweightFetchThread,
     StockMaThread,
+    GeminiFilterThread,
 )
 from ui.widgets import StockTable
 from ui.dialogs import StockMaDialog
@@ -70,6 +71,10 @@ class UniverseTab(QWidget):
         super().__init__(parent)
         self.all_data = []
         self.market_status = {}
+        self._ai_filter_thread = None
+        self._ai_filter_dlg = None
+        self._ai_filter_status_lbl = None
+        self._ai_filter_set_busy = None
         self._build_ui()
         self.load_custom_settings()
 
@@ -306,9 +311,8 @@ class UniverseTab(QWidget):
             if not is_startup:
                 self.status_text_changed.emit(f"Error: {error}" if error else "Stock not found.")
             else:
-                # Startup failures were previously silent - now visible in console for diagnosis
                 label = ticker_hint or (result.get('ticker', '') if result else '?')
-                print(f"[Startup] Added ticker '{label}' failed to load: {error or 'No data returned'}")
+                logger.warning("[Startup] Added ticker '%s' failed to load: %s", label, error or "No data returned")
             return
 
         self.load_custom_settings()
@@ -405,6 +409,11 @@ class UniverseTab(QWidget):
         btn_row.addWidget(apply_btn)
         v.addLayout(btn_row)
 
+        def _set_ui_busy(busy: bool):
+            apply_btn.setEnabled(not busy)
+            clear_btn.setEnabled(not busy)
+            query_edit.setEnabled(not busy)
+
         def _do_clear():
             self.table.clear_ai_filter()
             self.filter_table()
@@ -418,42 +427,64 @@ class UniverseTab(QWidget):
             nl_query = query_edit.text().strip()
             if not nl_query:
                 return
-            status_lbl.setText("⏳ AI is analysing conditions…")
-            apply_btn.setEnabled(False)
-            QApplication.processEvents()
-
-            result = gemini_helper.nl_to_filter(nl_query)
-            apply_btn.setEnabled(True)
-
-            if result is None:
-                status_lbl.setStyleSheet("color:#c0392b;")
-                status_lbl.setText("⚠️ AI conversion failed. Please check your API key and network connection.")
+            if self._ai_filter_thread is not None and self._ai_filter_thread.isRunning():
                 return
+            status_lbl.setStyleSheet("color:#0078d4;")
+            status_lbl.setText("⏳ AI is analysing conditions…")
+            _set_ui_busy(True)
 
-            conditions = result.get("conditions", [])
-            text_filter = result.get("text_filter", "")
-            explanation = result.get("explanation", "")
+            # Stash the dialog/widgets this run needs so the finished-signal handler can be a
+            # bound method (self._on_ai_filter_finished) instead of a closure — connecting a
+            # QThread.finished signal to a plain closure defeats Qt's automatic cross-thread
+            # queuing (it can only detect thread affinity via a QObject receiver), so the slot
+            # would otherwise run on the worker thread and touch these widgets unsafely.
+            self._ai_filter_dlg = dlg
+            self._ai_filter_status_lbl = status_lbl
+            self._ai_filter_set_busy = _set_ui_busy
 
-            self.table.set_ai_conditions(conditions)
-            if text_filter:
-                self.search_input.setText(text_filter)
-            self.filter_table()
-
-            # Highlight the AI filter button to indicate an active AI filter
-            self.ai_filter_btn.setStyleSheet(
-                "QPushButton { background:#107c10; color:white; border-radius:4px; padding:2px 6px; font-size:9pt; font-weight:bold; }"
-                "QPushButton:hover { background:#0b5e0b; }"
-            )
-
-            # Show explanation in status bar
-            self.status_text_changed.emit(f"🤖 AI filter applied: {explanation}")
-            dlg.accept()
+            self._ai_filter_thread = GeminiFilterThread(nl_query)
+            self._ai_filter_thread.finished.connect(self._on_ai_filter_finished)
+            self._ai_filter_thread.start()
 
         clear_btn.clicked.connect(_do_clear)
         apply_btn.clicked.connect(_do_apply)
         query_edit.returnPressed.connect(_do_apply)
 
         dlg.exec()
+
+    def _on_ai_filter_finished(self, result, err):
+        """Bound-method handler for GeminiFilterThread.finished (see _do_apply's comment
+        in _show_ai_filter_dialog for why this must not be a closure)."""
+        if self._ai_filter_set_busy is not None:
+            self._ai_filter_set_busy(False)
+        dlg = self._ai_filter_dlg
+        status_lbl = self._ai_filter_status_lbl
+        if dlg is None or not dlg.isVisible():
+            return
+
+        if result is None:
+            status_lbl.setStyleSheet("color:#c0392b;")
+            status_lbl.setText(f"⚠️ AI conversion failed: {err or 'Please check API key and network connection.'}")
+            return
+
+        conditions = result.get("conditions", [])
+        text_filter = result.get("text_filter", "")
+        explanation = result.get("explanation", "")
+
+        self.table.set_ai_conditions(conditions)
+        if text_filter:
+            self.search_input.setText(text_filter)
+        self.filter_table()
+
+        # Highlight the AI filter button to indicate an active AI filter
+        self.ai_filter_btn.setStyleSheet(
+            "QPushButton { background:#107c10; color:white; border-radius:4px; padding:2px 6px; font-size:9pt; font-weight:bold; }"
+            "QPushButton:hover { background:#0b5e0b; }"
+        )
+
+        # Show explanation in status bar
+        self.status_text_changed.emit(f"🤖 AI filter applied: {explanation}")
+        dlg.accept()
 
     # ---Per-stock MA (20 + 60) ---
     def _populate_action_buttons(self):
@@ -655,7 +686,7 @@ class UniverseTab(QWidget):
                 thread.start()
 
         except Exception as e:
-            print(traceback.format_exc())
+            logger.error("Data sort/load error in on_finished_all", exc_info=True)
             self.status_text_changed.emit(f"Data sort/load error: {e}")
         finally:
             self.refresh_btn.setEnabled(True)

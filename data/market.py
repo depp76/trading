@@ -255,38 +255,12 @@ def _fetch_historical_uncached(ticker: str, start: str) -> pl.DataFrame:
 
         if ticker in _FDR_ONLY_TICKERS:
             if ticker == "KR3YT":
-                rows = []
-                start_d = datetime.strptime(start, "%Y-%m-%d").date() if start else None
-                for page in range(1, 40):
-                    url = f"https://finance.naver.com/marketindex/interestDailyQuote.naver?marketindexCd=IRR_GOVT03Y&page={page}"
-                    try:
-                        res = _NAVER_SESSION.get(url, timeout=5)
-                        soup = BeautifulSoup(res.text, 'html.parser')
-                        tr_list = soup.select('table.tbl_exchange.today tbody tr')
-                        if not tr_list:
-                            break
-
-                        done = False
-                        for tr in tr_list:
-                            tds = tr.select('td')
-                            if len(tds) < 4:
-                                continue
-                            date_str = tds[0].text.strip()
-                            if not date_str:
-                                continue
-                            val = float(tds[1].text.strip())
-                            d_obj = datetime.strptime(date_str, "%Y.%m.%d").date()
-                            if start_d and d_obj < start_d:
-                                done = True
-                                break
-                            rows.append({"Date": d_obj, "Close": val, "Open": val, "High": val, "Low": val, "Volume": 0})
-                        if done:
-                            break
-                    except Exception as e:
-                        logger.warning("Error scraping KR3YT page %d", page, exc_info=True)
-                        break
-                if rows:
-                    return pl.DataFrame(rows).sort("Date")
+                df_pd = _get_kr3y_df()
+                if df_pd is not None and not df_pd.empty:
+                    if start:
+                        df_pd = df_pd[df_pd.index >= start]
+                    return _to_polars(df_pd)
+                return pl.DataFrame()
 
             df_pd = fdr.DataReader(ticker, start)
             return _to_polars(df_pd)

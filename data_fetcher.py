@@ -78,6 +78,7 @@ from data import (
     fetch_account_deposit,
     fetch_investor_trend,
     fetch_kis_realtime_prices,
+    is_krx_market_open,
 
     # Collectors — KRX
     VKOSPI_INDEX_NAME,

@@ -118,6 +118,19 @@ class TestUpsertAndGet(TempDBMixin, unittest.TestCase):
         self.assertIn("현대차", key)
         self.assertIn("2024-03-01", key)
 
+    def test_orig_key_collision_avoidance_on_new_insert(self):
+        # When two records with the exact same natural parameters are inserted without orig_key,
+        # the second record must not overwrite the first one.
+        key1 = trade_db.upsert_trade(_make_record(company="현대차", buy_date="2024-03-01", qty=3.0, buy_price=100000.0))
+        key2 = trade_db.upsert_trade(_make_record(company="현대차", buy_date="2024-03-01", qty=3.0, buy_price=150000.0))
+        self.assertNotEqual(key1, key2)
+        all_trades = trade_db.load_all_trades()
+        self.assertEqual(len(all_trades), 2)
+        rec1 = trade_db.get_trade(key1)
+        rec2 = trade_db.get_trade(key2)
+        self.assertAlmostEqual(rec1["buy_price"], 100000.0)
+        self.assertAlmostEqual(rec2["buy_price"], 150000.0)
+
     def test_row_to_dict_has_runtime_fields(self):
         key = trade_db.upsert_trade(_make_record())
         fetched = trade_db.get_trade(key)
@@ -150,6 +163,15 @@ class TestBatchUpsert(TempDBMixin, unittest.TestCase):
         keys = trade_db.upsert_trades(self._make_batch(3))
         trade_db.upsert_trades([_make_record(orig_key=keys[0], buy_price=99999.0)])
         self.assertAlmostEqual(trade_db.get_trade(keys[0])["buy_price"], 99999.0)
+
+    def test_batch_upsert_collision_avoidance(self):
+        rec1 = _make_record(company="동일종목", buy_date="2024-05-01", qty=10.0, buy_price=50000.0)
+        rec2 = _make_record(company="동일종목", buy_date="2024-05-01", qty=10.0, buy_price=52000.0)
+        keys = trade_db.upsert_trades([rec1, rec2])
+        self.assertEqual(len(keys), 2)
+        self.assertNotEqual(keys[0], keys[1])
+        all_trades = trade_db.load_all_trades()
+        self.assertEqual(len(all_trades), 2)
 
 
 class TestQueries(TempDBMixin, unittest.TestCase):

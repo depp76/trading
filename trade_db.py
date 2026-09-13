@@ -28,8 +28,11 @@ trades
 import sqlite3
 import json
 import os
+import logging
 import datetime as _dt
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _DB_FILE       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "portfolio.db")
 _CUSTOM_JSON   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "custom_history.json")
@@ -62,8 +65,10 @@ def checkpoint_wal() -> None:
             # only do a partial flush -- rare for this single-user app (every
             # trade_db call opens/commits/closes immediately), but worth a
             # heads-up since a backup taken right now may still be incomplete.
-            print("[trade_db] WAL checkpoint could not fully complete (another connection is active); "
-                  "a backup taken right now may miss the most recent commit(s).")
+            logger.warning(
+                "[trade_db] WAL checkpoint could not fully complete (another connection is active); "
+                "a backup taken right now may miss the most recent commit(s)."
+            )
     finally:
         conn.close()
 
@@ -116,7 +121,7 @@ def _migrate_legacy_json(conn: sqlite3.Connection) -> None:
             with open(_OVERRIDES_JSON, "r", encoding="utf-8") as f:
                 overrides = json.load(f)
         except Exception as e:
-            print(f"[trade_db] Warning: could not read trade_overrides.json: {e}")
+            logger.warning("[trade_db] Could not read trade_overrides.json: %s", e)
 
     # ── Load custom_history.json ─────────────────────────────────────────────
     custom_records: list = []
@@ -125,7 +130,7 @@ def _migrate_legacy_json(conn: sqlite3.Connection) -> None:
             with open(_CUSTOM_JSON, "r", encoding="utf-8") as f:
                 custom_records = json.load(f)
         except Exception as e:
-            print(f"[trade_db] Warning: could not read custom_history.json: {e}")
+            logger.warning("[trade_db] Could not read custom_history.json: %s", e)
 
     # ── First: import override entries (these are the canonical closed trades) ─
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -153,7 +158,7 @@ def _migrate_legacy_json(conn: sqlite3.Connection) -> None:
             ))
             imported += conn.execute("SELECT changes()").fetchone()[0]
         except Exception as e:
-            print(f"[trade_db] Migration error for override '{key}': {e}")
+            logger.warning("[trade_db] Migration error for override '%s': %s", key, e)
 
     # ── Second: import custom_history.json (open positions not yet in DB) ─────
     for rec in custom_records:
@@ -187,11 +192,11 @@ def _migrate_legacy_json(conn: sqlite3.Connection) -> None:
             ))
             imported += conn.execute("SELECT changes()").fetchone()[0]
         except Exception as e:
-            print(f"[trade_db] Migration error for custom trade '{key}': {e}")
+            logger.warning("[trade_db] Migration error for custom trade '%s': %s", key, e)
 
     conn.commit()
     if imported:
-        print(f"[trade_db] Migrated {imported} legacy record(s) into portfolio.db")
+        logger.info("[trade_db] Migrated %d legacy record(s) into portfolio.db", imported)
 
 
 # ── CRUD helpers ───────────────────────────────────────────────────────────────
@@ -227,50 +232,81 @@ def load_all_trades() -> list[dict]:
         conn.close()
 
 
-def upsert_trade(record: dict) -> str:
+_UPSERT_SQL = """
+    INSERT INTO trades
+        (orig_key, company, market, ticker,
+         buy_date, buy_price, qty, buy_amount,
+         sell_date, sell_price, sell_qty, sell_amount,
+         is_custom, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
+    ON CONFLICT(orig_key) DO UPDATE SET
+        company     = excluded.company,
+        market      = excluded.market,
+        ticker      = excluded.ticker,
+        buy_date    = excluded.buy_date,
+        buy_price   = excluded.buy_price,
+        qty         = excluded.qty,
+        buy_amount  = excluded.buy_amount,
+        sell_date   = excluded.sell_date,
+        sell_price  = excluded.sell_price,
+        sell_qty    = excluded.sell_qty,
+        sell_amount = excluded.sell_amount,
+        updated_at  = excluded.updated_at
+"""
 
+# Plain INSERT (no ON CONFLICT) used only for the auto-generated-key path: letting the
+# UNIQUE constraint itself reject a collision — instead of pre-checking with a separate
+# SELECT — closes the TOCTOU window where two concurrent callers could both see the same
+# base_key as free and one silently overwrite the other's row via ON CONFLICT DO UPDATE.
+_INSERT_ONLY_SQL = """
+    INSERT INTO trades
+        (orig_key, company, market, ticker,
+         buy_date, buy_price, qty, buy_amount,
+         sell_date, sell_price, sell_qty, sell_amount,
+         is_custom, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
+"""
+
+
+def _insert_with_generated_key(conn, base_key: str, values_tail: tuple) -> str:
+    """Atomically claims a free orig_key derived from base_key by retrying the INSERT
+    on a UNIQUE-constraint collision, rather than pre-checking with a SELECT."""
+    candidate = base_key
+    suffix = 2
+    while True:
+        try:
+            conn.execute(_INSERT_ONLY_SQL, (candidate, *values_tail))
+            return candidate
+        except sqlite3.IntegrityError:
+            candidate = f"{base_key}_{suffix}"
+            suffix += 1
+
+
+def upsert_trade(record: dict) -> str:
     """Insert or update a trade. Returns the orig_key of the saved record."""
     co = record.get("company", "")
     buy_date = record.get("buy_date", "")
     qty = float(record.get("qty", 0))
-    # orig_key must be carried over from the loaded record on edits: the
-    # fallback key below is derived from the (possibly just-edited) qty, so
-    # editing qty without passing the original orig_key inserts a new row
-    # instead of updating the existing one.
-    key = record.get("orig_key") or f"{co}_{buy_date}_{qty}"
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    values_tail = (
+        co, record.get("market", ""), record.get("ticker", ""),
+        buy_date, float(record.get("buy_price", 0)),
+        qty, float(record.get("buy_amount", 0)),
+        record.get("sell_date", ""), float(record.get("sell_price", 0)),
+        float(record.get("sell_qty", 0)), float(record.get("sell_amount", 0)),
+        now, now,
+    )
 
     conn = _connect()
     try:
-        conn.execute("""
-            INSERT INTO trades
-                (orig_key, company, market, ticker,
-                 buy_date, buy_price, qty, buy_amount,
-                 sell_date, sell_price, sell_qty, sell_amount,
-                 is_custom, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
-            ON CONFLICT(orig_key) DO UPDATE SET
-                company     = excluded.company,
-                market      = excluded.market,
-                ticker      = excluded.ticker,
-                buy_date    = excluded.buy_date,
-                buy_price   = excluded.buy_price,
-                qty         = excluded.qty,
-                buy_amount  = excluded.buy_amount,
-                sell_date   = excluded.sell_date,
-                sell_price  = excluded.sell_price,
-                sell_qty    = excluded.sell_qty,
-                sell_amount = excluded.sell_amount,
-                updated_at  = excluded.updated_at
-        """, (
-            key, co,
-            record.get("market", ""), record.get("ticker", ""),
-            buy_date, float(record.get("buy_price", 0)),
-            qty, float(record.get("buy_amount", 0)),
-            record.get("sell_date", ""), float(record.get("sell_price", 0)),
-            float(record.get("sell_qty", 0)), float(record.get("sell_amount", 0)),
-            now, now,
-        ))
+        key = record.get("orig_key")
+        if key:
+            # Caller already knows which record it's updating — upsert is correct here,
+            # there's no key to generate and thus no collision to race against.
+            conn.execute(_UPSERT_SQL, (key, *values_tail))
+        else:
+            key = _insert_with_generated_key(conn, f"{co}_{buy_date}_{qty}", values_tail)
+            record["orig_key"] = key
         conn.commit()
         return key
     finally:
@@ -280,52 +316,48 @@ def upsert_trade(record: dict) -> str:
 def upsert_trades(records: list[dict]) -> list[str]:
     """Insert or update many trades in a single connection/transaction.
     Returns the list of orig_keys that were saved, in input order.
+
+    Rows with an explicit orig_key are batched through one executemany upsert (no
+    collision possible — the caller already identified the row). Rows needing a
+    generated key are inserted individually via _insert_with_generated_key so a
+    collision retries against the DB itself instead of an in-memory snapshot that
+    could go stale against a concurrent writer (see upsert_trade's TOCTOU note).
     """
     if not records:
         return []
 
     now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    keys: list[str] = []
-    rows = []
-    for record in records:
+    keys: list[str] = [None] * len(records)
+    keyed_rows = []
+    unkeyed_indices = []
+
+    for i, record in enumerate(records):
         co = record.get("company", "")
         buy_date = record.get("buy_date", "")
         qty = float(record.get("qty", 0))
-        key = record.get("orig_key") or f"{co}_{buy_date}_{qty}"
-        keys.append(key)
-        rows.append((
-            key, co,
-            record.get("market", ""), record.get("ticker", ""),
+        values_tail = (
+            co, record.get("market", ""), record.get("ticker", ""),
             buy_date, float(record.get("buy_price", 0)),
             qty, float(record.get("buy_amount", 0)),
             record.get("sell_date", ""), float(record.get("sell_price", 0)),
             float(record.get("sell_qty", 0)), float(record.get("sell_amount", 0)),
             now, now,
-        ))
+        )
+        key = record.get("orig_key")
+        if key:
+            keys[i] = key
+            keyed_rows.append((key, *values_tail))
+        else:
+            unkeyed_indices.append((i, record, co, buy_date, qty, values_tail))
 
     conn = _connect()
     try:
-        conn.executemany("""
-            INSERT INTO trades
-                (orig_key, company, market, ticker,
-                 buy_date, buy_price, qty, buy_amount,
-                 sell_date, sell_price, sell_qty, sell_amount,
-                 is_custom, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
-            ON CONFLICT(orig_key) DO UPDATE SET
-                company     = excluded.company,
-                market      = excluded.market,
-                ticker      = excluded.ticker,
-                buy_date    = excluded.buy_date,
-                buy_price   = excluded.buy_price,
-                qty         = excluded.qty,
-                buy_amount  = excluded.buy_amount,
-                sell_date   = excluded.sell_date,
-                sell_price  = excluded.sell_price,
-                sell_qty    = excluded.sell_qty,
-                sell_amount = excluded.sell_amount,
-                updated_at  = excluded.updated_at
-        """, rows)
+        if keyed_rows:
+            conn.executemany(_UPSERT_SQL, keyed_rows)
+        for i, record, co, buy_date, qty, values_tail in unkeyed_indices:
+            key = _insert_with_generated_key(conn, f"{co}_{buy_date}_{qty}", values_tail)
+            record["orig_key"] = key
+            keys[i] = key
         conn.commit()
         return keys
     finally:

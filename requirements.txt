@@ -1,5 +1,9 @@
 pykrx
 pandas
+polars
+numpy
+matplotlib
+mplcursors
 yfinance
 PyQt6
 finance-datareader
@@ -7,8 +11,6 @@ yahooquery
 requests
 websocket-client
 openpyxl
-mplcursors
 python-dotenv
-google-cloud-aiplatform
 google-genai
 pytest

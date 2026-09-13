@@ -5,7 +5,8 @@ Contains:
   IndexMaThread, StockMaThread,
   SingleStockFetchThread, AllDataFetchThread,
   UniverseLightweightFetchThread, PositionPriceFetchThread,
-  AutoBackupThread, RebalanceBacktestThread
+  AutoBackupThread, RebalanceBacktestThread,
+  GeminiFilterThread, GeminiDiagnosisThread
 """
 import os
 import shutil
@@ -559,3 +560,46 @@ class RebalanceBacktestThread(QThread):
         except Exception as e:
             logger.warning("Rebalance backtest failed", exc_info=True)
             self.finished.emit(None, str(e))
+
+
+# ---------------------------------------------------------------------------
+# Gemini AI Background Threads
+# ---------------------------------------------------------------------------
+class GeminiFilterThread(QThread):
+    """Background thread to convert natural language query into filter conditions via Gemini."""
+    finished = pyqtSignal(object, str)  # result dict | None, error_message ("" on success)
+
+    def __init__(self, nl_query: str):
+        super().__init__()
+        self.nl_query = nl_query
+
+    def run(self):
+        try:
+            import gemini_helper
+            result = gemini_helper.nl_to_filter(self.nl_query)
+            if result is None:
+                self.finished.emit(None, "AI conversion failed or returned empty result.")
+            else:
+                self.finished.emit(result, "")
+        except Exception as e:
+            logger.warning("Gemini filter query failed", exc_info=True)
+            self.finished.emit(None, str(e))
+
+
+class GeminiDiagnosisThread(QThread):
+    """Background thread to perform AI portfolio diagnosis via Gemini."""
+    finished = pyqtSignal(str, str)  # result_text, error_message ("" on success)
+
+    def __init__(self, open_data: list, closed_data: list):
+        super().__init__()
+        self.open_data = open_data
+        self.closed_data = closed_data
+
+    def run(self):
+        try:
+            import gemini_helper
+            result_text = gemini_helper.portfolio_diagnosis(self.open_data, self.closed_data)
+            self.finished.emit(result_text, "")
+        except Exception as e:
+            logger.warning("Gemini portfolio diagnosis failed", exc_info=True)
+            self.finished.emit("", str(e))

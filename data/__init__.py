@@ -66,6 +66,7 @@ from data.collectors.kis import (
     fetch_account_deposit,
     fetch_investor_trend,
     fetch_kis_realtime_prices,
+    is_krx_market_open,
 )
 
 from data.collectors.krx import (

@@ -21,7 +21,7 @@ import trade_db
 import gemini_helper
 from data_fetcher import fetch_account_deposit
 
-from threads.fetch_threads import PositionPriceFetchThread
+from threads.fetch_threads import PositionPriceFetchThread, GeminiDiagnosisThread
 from threads.realtime import RealtimePriceThread
 from ui.widgets import GroupedHeaderView
 from ui.dialogs import (
@@ -83,6 +83,8 @@ class TradingHistoryTab(QWidget):
         self._open_data    = []
         self._current_path = ""
         self._price_thread: QThread | None = None
+        self._ai_diagnosis_thread = None
+        self._ai_diagnosis_loading_dlg = None
         self._row_data: list = []   # (kind, rec) per visible table row
         self._settings = QSettings("MyCompany", "PortfolioManager")
         self._settings_save_timer = QTimer(self)
@@ -505,7 +507,7 @@ class TradingHistoryTab(QWidget):
             70,   70,   70,  # 18-20 Trend: 5D 10D 20D
         ]
         if len(mins) != 20:
-            print(f"[_fit_columns] mins length mismatch: {len(mins)}, expected 20")
+            logger.warning("[_fit_columns] mins length mismatch: %d, expected 20", len(mins))
             return
 
         fixed_total = sum(mins)
@@ -561,12 +563,19 @@ class TradingHistoryTab(QWidget):
         pass
 
 
-    def _save_custom_trade(self, record):
+    def _save_custom_trade(self, record) -> bool:
         """Persist a manually-added trade to the SQLite database."""
         try:
-            trade_db.upsert_trade(record)
+            saved_key = trade_db.upsert_trade(record)
+            record["orig_key"] = saved_key
+            return True
         except Exception as e:
-            print(f"Error saving trade to DB: {e}")
+            logger.error("Failed to save trade to DB: %s", e, exc_info=True)
+            QMessageBox.critical(
+                self, "Database Error",
+                f"Failed to save trade to database:\n{e}\n\nThe record was not added."
+            )
+            return False
 
 
     @staticmethod
@@ -617,9 +626,14 @@ class TradingHistoryTab(QWidget):
                 if rec.get("is_overridden") or rec.get("is_custom") or
                    rec.get("sell_date") or rec.get("sell_price")
             ]
-            trade_db.upsert_trades(to_save)
+            if to_save:
+                trade_db.upsert_trades(to_save)
         except Exception as e:
-            print(f"Error saving overrides to DB: {e}")
+            logger.error("Failed to save overrides to DB: %s", e, exc_info=True)
+            QMessageBox.warning(
+                self, "Database Warning",
+                f"Failed to save modified trades to database:\n{e}"
+            )
 
 
     # ---Real-time lightweight price fetch (1-min loop) ---
@@ -856,7 +870,7 @@ class TradingHistoryTab(QWidget):
             self._settings_save_timer.start()
             self._refresh_summary()
         except Exception as e:
-            print(f"Error in _on_deposit_changed: {e}")
+            logger.error("Error in _on_deposit_changed: %s", e, exc_info=True)
 
     def _get_deposit(self) -> float:
         raw = self._deposit_edit.text().replace(',', '').strip()
@@ -1321,29 +1335,71 @@ class TradingHistoryTab(QWidget):
 
     def _show_ai_diagnosis(self):
         """Show an AI-powered portfolio diagnosis dialog using Gemini API."""
-        # Show a brief "loading" dialog while the API is called in background
+        if hasattr(self, "_ai_diagnosis_thread") and self._ai_diagnosis_thread is not None and self._ai_diagnosis_thread.isRunning():
+            return
+
+        # Show non-blocking loading dialog while the API is called in background thread
         loading_dlg = QDialog(self)
         loading_dlg.setWindowTitle("🤖 AI Portfolio Diagnosis")
         loading_dlg.setModal(True)
-        loading_dlg.resize(400, 100)
+        loading_dlg.resize(400, 110)
         loading_layout = QVBoxLayout(loading_dlg)
-        loading_lbl = QLabel("⏳ Analysing your portfolio with Gemini AI…")
+        loading_layout.setContentsMargins(16, 14, 16, 14)
+        loading_layout.setSpacing(12)
+
+        loading_lbl = QLabel("⏳ Analysing your portfolio with Gemini AI…\nPlease wait.")
         loading_lbl.setFont(create_font(10, style_name="Semilight"))
         loading_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         loading_layout.addWidget(loading_lbl)
-        loading_dlg.show()
-        QApplication.processEvents()
 
-        try:
-            result_text = gemini_helper.portfolio_diagnosis(
-                self._open_data, self._closed_data
-            )
-        except Exception as e:
-            result_text = f"⚠️ AI analysis error:\n{e}"
-        finally:
-            loading_dlg.close()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedWidth(80)
+        cancel_btn.setStyleSheet(
+            "QPushButton { background:#888; color:white; border-radius:4px; padding:3px 8px; }"
+            "QPushButton:hover { background:#666; }"
+        )
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(cancel_btn)
+        loading_layout.addLayout(btn_layout)
 
-        # Build result dialog
+        # Stashed on self (not captured in a closure) so the finished-signal handler and the
+        # Cancel button can be bound methods — connecting QThread.finished to a plain closure
+        # defeats Qt's automatic cross-thread queuing (it can only detect thread affinity via
+        # a QObject receiver), so the slot would otherwise run on the worker thread.
+        self._ai_diagnosis_loading_dlg = loading_dlg
+        self._ai_diagnosis_thread = GeminiDiagnosisThread(self._open_data, self._closed_data)
+        self._ai_diagnosis_thread.finished.connect(self._on_ai_diagnosis_finished)
+        cancel_btn.clicked.connect(self._cancel_ai_diagnosis)
+        self._ai_diagnosis_thread.start()
+        loading_dlg.exec()
+
+    def _on_ai_diagnosis_finished(self, result_text: str, err: str):
+        loading_dlg = self._ai_diagnosis_loading_dlg
+        if loading_dlg is None or not loading_dlg.isVisible():
+            return
+        loading_dlg.close()
+        if err:
+            final_text = f"⚠️ AI analysis error:\n{err}"
+        else:
+            final_text = result_text
+        self._display_ai_diagnosis_result(final_text)
+
+    def _cancel_ai_diagnosis(self):
+        """Cancel button handler: actually stops the background Gemini call instead of just
+        hiding the loading dialog, since GeminiDiagnosisThread has no cooperative cancellation
+        (the Gemini HTTP call is blocking) — terminate() mirrors the same forced-stop escape
+        hatch MainWindow.closeEvent already uses for stuck threads."""
+        thread = getattr(self, "_ai_diagnosis_thread", None)
+        if thread is not None and thread.isRunning():
+            thread.terminate()
+            thread.wait(500)
+        loading_dlg = getattr(self, "_ai_diagnosis_loading_dlg", None)
+        if loading_dlg is not None:
+            loading_dlg.reject()
+
+    def _display_ai_diagnosis_result(self, result_text: str):
+        """Display the AI portfolio diagnosis result in a modal dialog."""
         result_dlg = QDialog(self)
         result_dlg.setWindowTitle("🤖 AI Portfolio Diagnosis")
         result_dlg.resize(560, 420)
@@ -1792,8 +1848,18 @@ class TradingHistoryTab(QWidget):
                 days_held = 0
                 curr_days = 0
                 
+            existing_keys = {
+                r.get("orig_key") for r in self._open_data + self._closed_data if r.get("orig_key")
+            }
+            base_key = f"{res.get('company', '')}_{res['buy_date']}_{qty}"
+            key = base_key
+            suffix = 2
+            while key in existing_keys or trade_db.get_trade(key) is not None:
+                key = f"{base_key}_{suffix}"
+                suffix += 1
+
             record = {
-                "orig_key":    f"{res.get('company', '')}_{res['buy_date']}_{qty}",
+                "orig_key":    key,
                 "company":     res.get("company", ""),
                 "market":      res.get("market", ""),
                 "ticker":      res.get("ticker", ""),
@@ -1818,13 +1884,14 @@ class TradingHistoryTab(QWidget):
                 "is_custom":   True  # flag to indicate it's a manual entry if needed
             }
             
+            if not self._save_custom_trade(record):
+                return
+
             if is_closed:
                 self._closed_data.append(record)
             else:
                 self._open_data.append(record)
                 
-            self._save_custom_trade(record)
-            
             self._refresh_summary()
             self._start_price_fetch()
             self._apply_filter()

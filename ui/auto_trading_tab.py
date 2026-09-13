@@ -235,35 +235,43 @@ class AutoTradingTab(QWidget):
 
     @staticmethod
     def _fill_candidate_table(tbl, rows):
-        tbl.setRowCount(len(rows))
-        for r, item in enumerate(rows):
-            rank_str = str(item["rank"]) if item["rank"] is not None else "-"
-            score_str = f"{item['score']:.2f}" if item.get("score") is not None else "-"
-            for c, val in enumerate([rank_str, item["ticker"], item["name"], item["market"], score_str]):
-                cell = QTableWidgetItem(val)
-                cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                tbl.setItem(r, c, cell)
+        tbl.setUpdatesEnabled(False)
+        try:
+            tbl.setRowCount(len(rows))
+            for r, item in enumerate(rows):
+                rank_str = str(item["rank"]) if item["rank"] is not None else "-"
+                score_str = f"{item['score']:.2f}" if item.get("score") is not None else "-"
+                for c, val in enumerate([rank_str, item["ticker"], item["name"], item["market"], score_str]):
+                    cell = QTableWidgetItem(val)
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    tbl.setItem(r, c, cell)
+        finally:
+            tbl.setUpdatesEnabled(True)
 
     def _fill_rank_table(self, ranked):
         tbl = self._rank_table
-        tbl.setRowCount(len(ranked))
+        tbl.setUpdatesEnabled(False)
+        try:
+            tbl.setRowCount(len(ranked))
 
-        def fmt(v):
-            return f"{v:.2f}" if isinstance(v, (int, float)) else "-"
+            def fmt(v):
+                return f"{v:.2f}" if isinstance(v, (int, float)) else "-"
 
-        for r, item in enumerate(ranked):
-            raw = item["raw"]
-            values = [
-                str(item["rank"]), str(item.get("market_rank", "-")), item["ticker"], item["name"], item["market"],
-                f"{item['score']:.2f}",
-                fmt(raw.get("value_per")), fmt(raw.get("ma20_momentum")), fmt(raw.get("ma50_momentum")),
-                fmt(raw.get("high52w_proximity")), fmt(raw.get("ret_20d")), fmt(raw.get("ret_60d")),
-                fmt(raw.get("ma20_slope_1w")),
-            ]
-            for c, val in enumerate(values):
-                cell = QTableWidgetItem(val)
-                cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                tbl.setItem(r, c, cell)
+            for r, item in enumerate(ranked):
+                raw = item["raw"]
+                values = [
+                    str(item["rank"]), str(item.get("market_rank", "-")), item["ticker"], item["name"], item["market"],
+                    f"{item['score']:.2f}",
+                    fmt(raw.get("value_per")), fmt(raw.get("ma20_momentum")), fmt(raw.get("ma50_momentum")),
+                    fmt(raw.get("high52w_proximity")), fmt(raw.get("ret_20d")), fmt(raw.get("ret_60d")),
+                    fmt(raw.get("ma20_slope_1w")),
+                ]
+                for c, val in enumerate(values):
+                    cell = QTableWidgetItem(val)
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    tbl.setItem(r, c, cell)
+        finally:
+            tbl.setUpdatesEnabled(True)
 
     # ---Backtest (trading.md section 6) ---
     def _on_backtest_clicked(self):
