@@ -50,6 +50,7 @@ from data import (
     # Collectors — Naver
     _fast_kr_history,
     fetch_naver_realtime_prices,
+    fetch_naver_realtime_index_prices,
     _fetch_naver_per_single,
     fetch_naver_per_batch,
     _fetch_naver_info,

@@ -96,6 +96,46 @@ def fetch_naver_realtime_prices(tickers: list) -> dict:
     return results
 
 
+def fetch_naver_realtime_index_prices(symbols=("KOSPI", "KOSDAQ")) -> dict:
+    """Batch-fetch real-time prices for Korean indices using Naver mobile polling API.
+
+    Returns a dict mapping symbol aliases (e.g. 'KOSPI', '^KS11', 'KS11', 'KOSDAQ', '^KQ11', 'KQ11')
+    to current index prices.
+    """
+    if not symbols:
+        return {}
+    query_codes = set()
+    for s in symbols:
+        s_clean = str(s).strip().upper()
+        if s_clean in ("KOSPI", "^KS11", "KS11"):
+            query_codes.add("KOSPI")
+        elif s_clean in ("KOSDAQ", "^KQ11", "KQ11"):
+            query_codes.add("KOSDAQ")
+
+    results = {}
+    for code in query_codes:
+        url = f"https://polling.finance.naver.com/api/realtime/domestic/index/{code}"
+        try:
+            r = _NAVER_SESSION.get(url, timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                for item in data.get("datas", []):
+                    item_code = item.get("itemCode", "").upper()
+                    raw_val = item.get("closePriceRaw")
+                    if raw_val is not None:
+                        val = float(str(raw_val).replace(",", ""))
+                        results[item_code] = val
+                        if item_code == "KOSPI":
+                            results["^KS11"] = val
+                            results["KS11"] = val
+                        elif item_code == "KOSDAQ":
+                            results["^KQ11"] = val
+                            results["KQ11"] = val
+        except Exception:
+            logger.debug("Failed to fetch Naver realtime index price for %s", code, exc_info=True)
+    return results
+
+
 def _fetch_naver_per_single(code: str) -> tuple:
     """Fetch trailing and forward PER for a single stock via Naver mobile integration API.
 
@@ -155,7 +195,46 @@ def fetch_naver_per_batch(codes: list, max_workers: int = 30) -> tuple:
 
 
 def _fetch_naver_info(code: str) -> tuple:
-    """Fallback: fetch market cap and real name from Naver Finance item page."""
+    """Fallback: fetch market cap and real name from Naver Finance item integration API or page."""
+    # First attempt: mobile integration API (clean JSON, reliable)
+    try:
+        url_api = f"https://m.stock.naver.com/api/stock/{code}/integration"
+        r = _NAVER_SESSION.get(url_api, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            name = data.get("stockName", "").strip()
+            marcap = 0
+            for item in data.get("totalInfos", []):
+                if item.get("code") == "marketValue" or item.get("key") == "시총":
+                    val = item.get("value", "")
+                    if "조" in val:
+                        parts = val.split("조")
+                        jo = int(re.sub(r'[^\d]', '', parts[0]) or 0)
+                        eok = int(re.sub(r'[^\d]', '', parts[1]) or 0) if len(parts) > 1 else 0
+                        total_eok = jo * 10000 + eok
+                    else:
+                        cleaned = re.sub(r'[^\d]', '', val)
+                        total_eok = int(cleaned) if cleaned else 0
+                    marcap = total_eok * 100_000_000
+                    break
+            if name or marcap > 0:
+                return name, marcap
+    except Exception:
+        logger.debug("Naver integration info fetch failed for code=%s", code, exc_info=True)
+
+    # Second attempt: mobile basic API
+    try:
+        url_basic = f"https://m.stock.naver.com/api/stock/{code}/basic"
+        r = _NAVER_SESSION.get(url_basic, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            name = data.get("stockName", "").strip()
+            if name:
+                return name, 0
+    except Exception:
+        logger.debug("Naver basic info fetch failed for code=%s", code, exc_info=True)
+
+    # Third attempt: HTML scraping fallback
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
         r = _NAVER_SESSION.get(url, timeout=5)
@@ -183,35 +262,44 @@ def _fetch_naver_info(code: str) -> tuple:
 
 
 def _fetch_kr_listing_naver(market, top_n):
-    """Primary KR market-listing source: scrape Naver sise_market_sum pages in
-    parallel (price/marcap/PER all in one pass). Raises on total failure —
-    callers decide whether/how to fall back (roadmap 3-5)."""
-    sosok = 0 if market == "KOSPI" else 1
-    max_pages = (top_n // 50) + 2
+    """Primary KR market-listing source: fetch top stocks sorted by market cap
+    via Naver Mobile JSON API. Returns list of dicts: [{'Code', 'Name', 'Marcap'}]."""
+    page_size = 100
+    needed_pages = (top_n + page_size - 1) // page_size
 
     def _fetch_page(pg):
         try:
-            url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={pg}"
-            r = _NAVER_SESSION.get(url, timeout=5)
-            soup = BeautifulSoup(r.content, 'html.parser', from_encoding='euc-kr')
+            url = f"https://m.stock.naver.com/api/stocks/marketValue/{market}?page={pg}&pageSize={page_size}"
+            r = _NAVER_SESSION.get(url, timeout=8)
+            if r.status_code != 200:
+                logger.warning("Naver marketValue API returned status %d for %s page %d", r.status_code, market, pg)
+                return []
+            data = r.json()
+            stocks = data.get("stocks", [])
             rows = []
-            for tr in soup.select('table.type_2 tbody tr'):
-                a_tag = tr.select_one('a.tltle')
-                if not a_tag:
+            for s in stocks:
+                code = str(s.get("itemCode", "")).strip().zfill(6)
+                name = str(s.get("stockName", "")).strip()
+                if not code or not name:
                     continue
-                code = a_tag['href'].split('code=')[-1].zfill(6)
-                name = a_tag.text.strip()
-                cols = [td.text.strip().replace(',', '') for td in tr.select('td')]
-                marcap = int(cols[6]) * 100_000_000 if len(cols) > 6 and cols[6].isdigit() else 0
-                rows.append({'Code': code, 'Name': name, 'Marcap': marcap})
+                # marketValueRaw is the exact market capitalization in KRW
+                raw_marcap = s.get("marketValueRaw")
+                if raw_marcap is not None:
+                    marcap = int(raw_marcap)
+                else:
+                    # Fallback to marketValue in 100M KRW (억)
+                    mv_str = str(s.get("marketValue", "0")).replace(",", "")
+                    cleaned = re.sub(r'[^\d]', '', mv_str)
+                    marcap = int(cleaned) * 100_000_000 if cleaned else 0
+                rows.append({"Code": code, "Name": name, "Marcap": marcap})
             return rows
         except Exception:
-            logger.warning("Naver listing page fetch failed (sosok=%s, page=%d), skipping page", sosok, pg, exc_info=True)
+            logger.warning("Naver listing API fetch failed for market=%s page=%d", market, pg, exc_info=True)
             return []
 
     results_list = []
-    with ThreadPoolExecutor(max_workers=min(max_pages, 8)) as exe:
-        for rows in exe.map(_fetch_page, range(1, max_pages + 1)):
+    with ThreadPoolExecutor(max_workers=min(needed_pages, 5)) as exe:
+        for rows in exe.map(_fetch_page, range(1, needed_pages + 1)):
             results_list.extend(rows)
 
     return results_list[:top_n]

@@ -278,12 +278,7 @@ class UniverseTab(QWidget):
 
         if ticker in self.custom_settings.get("deleted", []):
             self.custom_settings["deleted"].remove(ticker)
-
-        added_list = self.custom_settings.setdefault("added", [])
-        if not any(x["ticker"] == ticker for x in added_list):
-            added_list.append({"market": market, "ticker": ticker})
-
-        self.save_custom_settings()
+            self.save_custom_settings()
 
         self.add_ticker_btn.setEnabled(False)
         self.status_text_changed.emit(f"Fetching '{ticker}' from {market}...")
@@ -313,6 +308,14 @@ class UniverseTab(QWidget):
             else:
                 label = ticker_hint or (result.get('ticker', '') if result else '?')
                 logger.warning("[Startup] Added ticker '%s' failed to load: %s", label, error or "No data returned")
+                if label:
+                    self.load_custom_settings()
+                    added_list = self.custom_settings.get("added", [])
+                    new_added = [x for x in added_list if x.get("ticker") != label]
+                    if len(new_added) != len(added_list):
+                        self.custom_settings["added"] = new_added
+                        self.save_custom_settings()
+                        logger.info("[Startup] Cleaned up invalid ticker '%s' from custom settings", label)
             return
 
         self.load_custom_settings()
@@ -323,6 +326,12 @@ class UniverseTab(QWidget):
             if not is_startup:
                 self.status_text_changed.emit(f"'{ticker}' is already in the table.")
             return
+
+        target_market = result.get('market', '') or self.market_combo.currentText()
+        added_list = self.custom_settings.setdefault("added", [])
+        if not any(x.get("ticker") == ticker for x in added_list):
+            added_list.append({"market": target_market, "ticker": ticker})
+            self.save_custom_settings()
 
         self.all_data.append(result)
         self.all_data.sort(key=lambda x: (

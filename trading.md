@@ -623,6 +623,10 @@ git merge feat/rebalance-regime-overlay    # A 반영된 master 기준으로 B
   쓰게 하면 텍스트 충돌이 나더라도 git이 대부분 자동으로 풀어준다.
 - `requirements.txt`처럼 항목 추가형 파일은 서로 다른 패키지를 추가하는 한 병합 시 문제
   없음.
+- **코드 변경과 문서 갱신을 같은 커밋 사이클로 묶는다.** 12-11에서 실제로 겪었듯,
+  `trading.md`는 git 커밋 단위가 아니라 "파일을 직접 읽고 쓰는" 방식으로 다뤄지면 12-2의
+  보호를 못 받는다. 코드를 커밋할 때 관련 문서 갱신도 같은 커밋(또는 바로 다음 커밋)에
+  포함시킬 것.
 
 ### 12-8. 도구별 특성 비교
 
@@ -675,7 +679,146 @@ git merge feat/rebalance-regime-overlay    # A 반영된 master 기준으로 B
 대체하면 된다 — 두 경우 모두 12-2 핵심 원칙(git 기반, 모듈 단위 분할, 순차 병합)은 동일하게
 적용된다.
 
-### 12-10. 체크리스트
+### 12-11. 실전 사례 1 — 이 문서 자체의 동시 편집 충돌 (2026-09-04 실제 발생)
+
+12장 전체가 이론이 아니라는 걸 보여준 사건이 실제로 있었다 — **`trading.md` 자신이
+충돌 사례가 됐다.**
+
+**무슨 일이 있었나**: Antigravity CLI가 11-4의 1~3단계(패키지화, `config.py` 신설)를
+실행하고 그 결과를 이 문서에 직접 기록하는 동안, 다른 세션(이 Claude 세션)도 비슷한
+시간대에 12-9(Claude Code 멀티 에이전트 기능)를 이 문서에 추가하고 있었다. 파일 브릿지가
+"마지막으로 읽은 이후 디스크 내용이 바뀌었다"를 감지해 충돌로 표시했고, 두 변경을 손으로
+병합해야 했다(13장 변경이력의 마지막 두 줄이 그 기록).
+
+**왜 발생했나**: `data/rebalance/` 안의 코드 파일들은 git 브랜치+커밋으로 관리되어 12-2
+("git 없이는 멀티 에이전트를 하지 않는다") 원칙이 정상 작동했다. 하지만 `trading.md`
+자체는 두 세션 모두 "파일을 직접 읽고 쓰는" 방식이었지 커밋 단위로 다룬 게 아니었다 —
+**문서도 코드처럼 취급하지 않으면 12-2의 보호를 못 받는다**는 걸 실제로 보여준 것.
+
+**교훈 — 12-7에 규칙으로 추가**:
+1. 코드 변경과 문서 갱신은 같은 커밋 사이클로 묶는다 — 실제로 11-4 3단계 커밋 기록에도
+   `RebalanceConfig` 코드 변경과 trading.md 갱신이 함께 들어갔어야 했다.
+2. 여러 에이전트가 동시에 이 문서를 고칠 가능성이 있으면 12-7대로 **장 단위로 담당을
+   분리**한다 — 이번 충돌도 서로 다른 장(11장 vs 12장)이었기 때문에 병합 자체는 어렵지
+   않았다. 같은 장(예: 둘 다 8장)을 동시에 고쳤다면 훨씬 풀기 어려웠을 것.
+3. 충돌이 나면 "누구 버전이 최신이냐"로 한쪽을 버리지 않고 **둘 다 반영**한다 — 이번에도
+   12-9를 지우지 않고 11-4 완료 기록을 그 위에 재적용하는 방식으로 처리했다. `force`로
+   한쪽만 취하는 방식은 쓰지 않았다.
+
+### 12-12. 실전 사례 2 — 8-A/8-B를 지금 바로 동시 실행하는 전체 워크스루
+
+> 11-4의 1~4단계(패키지화, `config.py`, `signals.py` 분리)가 전부 완료된 상태 — 12-5의
+> 선행 조건이 충족됐으므로, 이 절은 그 배분표를 실제로 실행하는 단계별 절차다. 실제
+> 파일 경로와 함수 시그니처(2026-09-04 기준 `data/rebalance/config.py`/`signals.py`/
+> `classify.py` 실제 코드)를 그대로 써서, 복사해서 바로 쓸 수 있게 했다.
+
+**0단계 — 사전 확인**
+
+```powershell
+cd "D:\Source Code\Portfolio Management"
+git status                     # 미커밋 변경 없는지
+git log --oneline -3           # config.py/signals.py 커밋이 master에 있는지 확인
+pytest tests/ -q                # 기존 테스트 전부 통과하는 기준선 확보
+```
+
+**1단계 — worktree 생성**
+
+```powershell
+git worktree add ../PM-agentA -b feat/rebalance-sector-cap
+git worktree add ../PM-agentB -b feat/rebalance-regime-overlay
+```
+
+**2단계 — Agent A에게 그대로 전달할 프롬프트**
+
+```
+[작업 지시서 — 8-A 섹터 집중도 제약]
+작업 폴더: D:\Source Code\PM-agentA (브랜치 feat/rebalance-sector-cap)
+목표: 리밸런싱 매수 후보가 특정 섹터에 쏠리지 않도록 섹터당 최대 종목수 제약을 추가한다.
+
+1. data/rebalance/sector.py 신규 생성:
+   - _fetch_sector_map(date: str, market: str) -> dict[str, str]
+     pykrx get_market_sector_classifications()를 감싸고, data/cache.py 패턴대로
+     일 단위로 캐시할 것.
+   - apply_sector_cap(buy_candidates: list, sector_map: dict, max_per_sector: int) -> list
+     buy_candidates는 순위(rank)순으로 이미 정렬되어 있다고 가정. 앞에서부터 담되,
+     이미 담긴 섹터별 종목 수가 max_per_sector에 도달하면 건너뛰고 다음 순위 종목으로
+     대체(greedy). sector_map에 없는 티커는 그대로 통과(섹터 미상 종목까지 막지 않음).
+
+2. data/rebalance/signals.py의 compute_weekly_rebalance_signals 안, 아래 줄
+     classification = _classify_buy_sell_hold(ranked, current_holdings, top_n_by_market, band_multiplier)
+   바로 다음에 이 한 줄만 추가:
+     classification["buy_candidates"] = apply_sector_cap(
+         classification["buy_candidates"], sector_map, RebalanceConfig().max_per_sector
+     )
+   이 함수의 다른 로직은 절대 건드리지 말 것.
+
+3. tests/rebalance/test_sector.py 신규 생성 — apply_sector_cap 단위 테스트
+   (특정 섹터가 상위권을 5개 이상 차지하는 가상 후보 리스트를 만들어 max_per_sector=2일
+   때 실제로 2개만 남고 다음 순위로 대체되는지 확인).
+
+허용 범위: data/rebalance/sector.py(신규), tests/rebalance/test_sector.py(신규),
+          data/rebalance/signals.py(2번 항목 한 줄만)
+금지 범위: data/rebalance/classify.py, ui/, data/rebalance/regime.py, data/rebalance/sizing.py
+완료 기준: pytest tests/ 전부 통과(기존 테스트 + 신규 테스트)
+완료 후 보고: 커밋 해시, 변경 파일 목록, pytest 결과 — trading.md는 직접 갱신하지 말 것
+             (문서 갱신은 병합 후 5단계에서 한 번에, 12-11의 교훈 적용)
+```
+
+**3단계 — Agent B에게 그대로 전달할 프롬프트**
+
+```
+[작업 지시서 — 8-B VKOSPI 레짐 오버레이]
+작업 폴더: D:\Source Code\PM-agentB (브랜치 feat/rebalance-regime-overlay)
+목표: 시장 변동성(VKOSPI)이 급등한 주간에는 신규 매수 후보 수를 줄인다.
+
+1. data/rebalance/regime.py 신규 생성:
+   - compute_market_regime(vkospi_series) -> dict
+     최근 60일 평균/표준편차 대비 현재 값의 z-score를 구해
+     {"regime": "normal"|"elevated"|"crisis", "buy_scale": 1.0|0.5|0.0} 반환.
+     z < RebalanceConfig().vkospi_elevated_z 이면 normal/1.0,
+     elevated_z <= z < crisis_z 이면 elevated/0.5, z >= crisis_z 이면 crisis/0.0.
+
+2. data/rebalance/signals.py의 compute_weekly_rebalance_signals 안,
+   (Agent A의 한 줄이 먼저 병합되어 있다면 그 다음에) 아래 세 줄만 추가:
+     regime = compute_market_regime(fetch_vkospi_history())
+     n_keep = int(len(classification["buy_candidates"]) * regime["buy_scale"])
+     classification["buy_candidates"] = classification["buy_candidates"][:n_keep]
+   sell_candidates/hold는 절대 건드리지 말 것 — 레짐과 무관하게 매도는 항상 허용되어야 함.
+
+3. tests/rebalance/test_regime.py 신규 생성 — compute_market_regime 단위 테스트
+   (VKOSPI가 평시/급등/폭등 수준일 때 각각 normal/elevated/crisis로 분류되는지 확인).
+
+허용 범위: data/rebalance/regime.py(신규), tests/rebalance/test_regime.py(신규),
+          data/rebalance/signals.py(2번 항목 세 줄만)
+금지 범위: data/rebalance/classify.py, ui/, data/rebalance/sector.py, data/rebalance/sizing.py
+완료 기준: pytest tests/ 전부 통과
+완료 후 보고: 커밋 해시, 변경 파일 목록, pytest 결과
+```
+
+**4단계 — 병합 (12-6 그대로, 실제 브랜치명 대입)**
+
+```powershell
+cd "D:\Source Code\Portfolio Management"
+git checkout master
+git merge feat/rebalance-sector-cap
+pytest tests/ -q
+git diff master...feat/rebalance-regime-overlay -- data/rebalance/signals.py
+# ↑ A/B가 signals.py에 추가한 줄들이 실제로 안 겹치는지 사람이 눈으로 확인 (12-5의 유일한 예외)
+git merge feat/rebalance-regime-overlay
+pytest tests/ -q
+git worktree remove ../PM-agentA
+git worktree remove ../PM-agentB
+```
+
+**5단계 — 문서 갱신 (병합이 끝난 뒤 한 번만)**
+
+- 8장 표의 A/B 행에 ✅ 표시, 9장 체크리스트의 해당 항목 체크
+- 13장 변경이력에 실제 커밋 해시와 함께 한 줄 추가
+
+이 워크스루는 8-C(포지션 사이징)에도 그대로 재사용 가능하다 — 차이는 8-C는 A/B 병합 후에
+시작해야 한다는 점뿐이다(8장 표 참고).
+
+### 12-13. 체크리스트
 
 **시작 전**: `git status` 확인 · 필요하면 worktree 분리(12-3) · 8장 표에서 파일이 겹치지
 않는 항목만 동시 배분 · 12-4 템플릿으로 지시서 작성
@@ -701,3 +844,4 @@ git merge feat/rebalance-regime-overlay    # A 반영된 master 기준으로 B
 | 2026-09-04 | 11-4 마이그레이션 1~2단계 실행(사용자 요청) — `data/rebalance.py`(22.7KB, 12개 함수)를 `data/rebalance/{factors,classify,signals,walkforward,backtest}.py` + `__init__.py`(재노출)로 패키지화, `tests/test_backtest.py`의 리밸런싱 테스트 2개 클래스를 `tests/rebalance/{test_factors,test_walkforward}.py`로 이동. 로직 변경 없음 — `data/__init__.py`/`data_fetcher.py`/`ui/auto_trading_tab.py`/`tests/`는 전부 `data_fetcher` facade를 거쳐서만 참조하고 있어 무수정으로 통과, `pytest tests/` 85건 전부 통과로 회귀 확인. 3~5단계(`config.py`/`signals.py`로 `compute_weekly_rebalance_signals` 이관/8-A~8-C 병렬 배분)는 아직 미착수 |
 | 2026-09-04 | 11-4 마이그레이션 3단계(8-H) 실행(사용자 요청: "나머지 구현" → 범위 확인 후 3단계만 진행) — `data/rebalance/config.py`에 `RebalanceConfig` dataclass 신설(8-2 스펙: `top_n_by_market`/`band_multiplier` 외 8-A/B/C용 필드 5개 선반영, 아직 미사용). `classify.py`의 `_DEFAULT_TOP_N_BY_MARKET`, `signals.py`/`backtest.py`의 `band_multiplier` 기본값을 `RebalanceConfig()` 참조로 교체하고, `ui/auto_trading_tab.py`의 `TOP_N_BY_MARKET`/`BAND_MULTIPLIER` 클래스 상수(8-2가 지적한 중복 정의)도 동일 인스턴스에서 파생하도록 교체. `data/rebalance/__init__.py`→`data/__init__.py`→`data_fetcher.py` 3단 facade에 `RebalanceConfig` 재노출 추가. `pytest tests/` 85건 통과로 회귀 확인. 8-I는 11-4 1단계 때 `compute_weekly_rebalance_signals`를 처음부터 `signals.py`에 배치해 이미 완료 상태였음을 확인. 4~5단계(8-A~8-C 등 병렬 배분)는 사용자가 범위를 3단계로 한정해 미착수 |
 | 2026-09-04 | 11-4 1~3단계 완료 기록과 12-9(Claude Code 멀티 에이전트 기능) 신설이 서로 다른 세션에서 동시에 편집되어 충돌 — 12-9는 유지하고 11-4 완료 기록(위 두 항목)을 그 위에 재적용해 병합(사용자 요청: "두 변경 병합"). 문서 동시 편집 시 12-2("git 없이는 멀티 에이전트를 하지 않는다")의 실제 사례로, 향후 12-9에 이 케이스를 교훈으로 보강할 가치가 있음 |
+| 2026-09-09 | 12-11 "실전 사례 1"로 위 문서 충돌 사건을 정식 케이스 스터디화(원인·교훈 정리, 12-7에 "코드 변경과 문서 갱신을 같은 커밋으로 묶는다" 규칙 추가), 12-12 "실전 사례 2" 신설 — 11-4 1~4단계가 모두 완료되어 12-5의 선행 조건이 충족된 지금 시점 기준으로, 8-A/8-B를 실제로 동시 실행하는 전체 절차(worktree 생성 → 각 에이전트에게 그대로 전달할 프롬프트 전문 → 병합 → 문서 갱신)를 실제 `data/rebalance/config.py`/`signals.py`/`classify.py` 코드에 맞춰 구체화(사용자 요청: "multi agent를 이용한 코딩의 구체적인 케이스 및 구현 방법을 만들어서 trading.md에 예시로 추가") |

@@ -166,13 +166,23 @@ def _get_listing_with_norm(market: str) -> pd.DataFrame:
 def _fetch_kr_listing_fdr_fallback(market, top_n):
     """Fallback KR market-listing source."""
     try:
-        df = fdr.StockListing(market)
-        if df is None or df.empty or 'Code' not in df.columns or 'Name' not in df.columns:
+        df = get_stock_listing(market)
+        code_col = 'Code' if 'Code' in df.columns else ('Symbol' if 'Symbol' in df.columns else None)
+        marcap_col = next((c for c in ('Marcap', 'MarCap', 'MarketCap') if c in df.columns), None)
+        if df is None or df.empty or not code_col or 'Name' not in df.columns or not marcap_col:
+            # Try KRX-DESC which contains Marcap for all KRX listings
+            df_desc = get_stock_listing('KRX-DESC')
+            if df_desc is not None and not df_desc.empty and 'Market' in df_desc.columns:
+                df = df_desc[df_desc['Market'].str.upper() == market.upper()]
+                code_col = 'Code' if 'Code' in df.columns else ('Symbol' if 'Symbol' in df.columns else None)
+                marcap_col = next((c for c in ('Marcap', 'MarCap', 'MarketCap') if c in df.columns), None)
+
+        if df is None or df.empty or not code_col or 'Name' not in df.columns:
             return []
-        marcap_col = 'Marcap' if 'Marcap' in df.columns else None
+
         rows = [
             {
-                'Code': str(row['Code']).zfill(6),
+                'Code': str(row[code_col]).zfill(6),
                 'Name': str(row['Name']),
                 'Marcap': safe_float(row[marcap_col]) if marcap_col else 0.0,
             }
@@ -248,6 +258,16 @@ def get_historical_data(ticker: str, start: str) -> pl.DataFrame:
 def _fetch_historical_uncached(ticker: str, start: str) -> pl.DataFrame:
     """Actual fetch — called only on cache miss."""
     try:
+        # Fast path for Korean indices via Naver (includes intraday live data)
+        if ticker in ("^KS11", "KS11", "KOSPI"):
+            df = _fast_kr_history("KOSPI", start)
+            if not df.is_empty():
+                return df
+        elif ticker in ("^KQ11", "KQ11", "KOSDAQ"):
+            df = _fast_kr_history("KOSDAQ", start)
+            if not df.is_empty():
+                return df
+
         if len(ticker) == 6 and "." not in ticker and any(c.isdigit() for c in ticker):
             df = _fast_kr_history(ticker, start)
             if not df.is_empty():
@@ -616,8 +636,13 @@ def fetch_index_mas(fdr_ticker, days=365):
     """Fetches closing prices for any FDR index ticker and computes 20 & 50-day MA."""
     try:
         start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-        df_pd = fdr.DataReader(fdr_ticker, start)
-        df = _to_polars(df_pd)
+        if fdr_ticker in ("^KS11", "KS11", "KOSPI"):
+            df = _fast_kr_history("KOSPI", start)
+        elif fdr_ticker in ("^KQ11", "KQ11", "KOSDAQ"):
+            df = _fast_kr_history("KOSDAQ", start)
+        else:
+            df_pd = fdr.DataReader(fdr_ticker, start)
+            df = _to_polars(df_pd)
         if df.is_empty():
             return None, f"No data for ticker '{fdr_ticker}'."
         df = df.select([
@@ -668,6 +693,20 @@ def fetch_stock_ma_multi(ticker, market, windows=(10, 20, 60), days=1825, target
                 df_pd = _get_vkospi_pdf()
                 if df_pd is not None:
                     df_pd = df_pd[(df_pd.index >= start) & (df_pd.index <= end)]
+            elif ticker in ("^KS11", "KS11", "KOSPI"):
+                df_kr = _fast_kr_history("KOSPI", start)
+                if not df_kr.is_empty():
+                    start_dt = datetime.strptime(start, "%Y-%m-%d").date()
+                    end_dt = datetime.strptime(end, "%Y-%m-%d").date()
+                    df_kr = df_kr.filter((pl.col("Date") >= start_dt) & (pl.col("Date") <= end_dt))
+                    return _compute_indicators(df_kr, windows), None
+            elif ticker in ("^KQ11", "KQ11", "KOSDAQ"):
+                df_kr = _fast_kr_history("KOSDAQ", start)
+                if not df_kr.is_empty():
+                    start_dt = datetime.strptime(start, "%Y-%m-%d").date()
+                    end_dt = datetime.strptime(end, "%Y-%m-%d").date()
+                    df_kr = df_kr.filter((pl.col("Date") >= start_dt) & (pl.col("Date") <= end_dt))
+                    return _compute_indicators(df_kr, windows), None
             else:
                 df_pd = fdr.DataReader(ticker, start, end)
         else:
@@ -685,6 +724,18 @@ def fetch_stock_ma_multi(ticker, market, windows=(10, 20, 60), days=1825, target
                 df_pd = _get_vkospi_pdf()
                 if df_pd is not None:
                     df_pd = df_pd[df_pd.index >= start]
+            elif ticker in ("^KS11", "KS11", "KOSPI"):
+                df_kr = _fast_kr_history("KOSPI", start)
+                if not df_kr.is_empty():
+                    return _compute_indicators(df_kr, windows), None
+            elif ticker in ("^KQ11", "KQ11", "KOSDAQ"):
+                df_kr = _fast_kr_history("KOSDAQ", start)
+                if not df_kr.is_empty():
+                    return _compute_indicators(df_kr, windows), None
+            elif len(ticker) == 6 and "." not in ticker and any(c.isdigit() for c in ticker):
+                df_kr = _fast_kr_history(ticker, start)
+                if not df_kr.is_empty():
+                    return _compute_indicators(df_kr, windows), None
             else:
                 df_pd = fdr.DataReader(ticker, start)
 
@@ -707,6 +758,9 @@ def fetch_indice_as_stock(label_ticker):
             df = _to_polars(_get_kr3y_df())
         elif label == "VKOSPI":
             df = _to_polars(_get_vkospi_pdf())
+        elif label in ("KOSPI", "KOSDAQ") or fdr_ticker in ("^KS11", "^KQ11"):
+            naver_code = "KOSPI" if label == "KOSPI" or fdr_ticker in ("^KS11", "KS11") else "KOSDAQ"
+            df = _fast_kr_history(naver_code, _START_DATE)
         else:
             df = get_historical_data(fdr_ticker, _START_DATE)
 
@@ -715,6 +769,17 @@ def fetch_indice_as_stock(label_ticker):
         close_series = df.get_column("Close").drop_nulls()
         val = close_series[-1] if len(close_series) > 0 else None
         current_price = float(val) if val is not None else 0.0
+
+        # For domestic indices, attempt to get exact real-time quote from polling API
+        if label in ("KOSPI", "KOSDAQ") or fdr_ticker in ("^KS11", "^KQ11"):
+            try:
+                from data.collectors.naver import fetch_naver_realtime_index_prices
+                rt_dict = fetch_naver_realtime_index_prices([label])
+                rt_val = rt_dict.get(fdr_ticker) or rt_dict.get(label)
+                if rt_val is not None and rt_val > 0:
+                    current_price = float(rt_val)
+            except Exception:
+                pass
 
         if is_bond:
             chg_mode = 'bp'

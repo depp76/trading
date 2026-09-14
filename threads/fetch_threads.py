@@ -181,18 +181,26 @@ class UniverseLightweightFetchThread(QThread):
         self.current_data = [dict(item) for item in current_data]
 
     def run(self):
-        from data_fetcher import fetch_naver_realtime_prices, fetch_us_realtime_prices, fetch_historical_changes
+        from data_fetcher import (
+            fetch_naver_realtime_prices,
+            fetch_naver_realtime_index_prices,
+            fetch_us_realtime_prices,
+            fetch_historical_changes,
+        )
 
         try:
             kr_tickers = []
             us_yf_tickers = []
+            kr_index_tickers = []
             for item in self.current_data:
                 ticker = item.get("ticker", "")
                 if not ticker:
                     continue
 
                 if item.get("is_index", False):
-                    if ticker.startswith("^") or ticker == "CL=F":
+                    if ticker in ("^KS11", "KS11", "KOSPI", "^KQ11", "KQ11", "KOSDAQ"):
+                        kr_index_tickers.append(ticker)
+                    elif ticker.startswith("^") or ticker == "CL=F":
                         us_yf_tickers.append(ticker)
                 elif item.get("market") in ("KOSPI", "KOSDAQ"):
                     kr_tickers.append(ticker)
@@ -203,6 +211,8 @@ class UniverseLightweightFetchThread(QThread):
             if kr_tickers:
                 self.status_message.emit(f"Fetching KR quotes... (Naver, {len(kr_tickers)} tickers)")
                 prices_dict.update(fetch_naver_realtime_prices(kr_tickers))
+            if kr_index_tickers:
+                prices_dict.update(fetch_naver_realtime_index_prices(kr_index_tickers))
             if us_yf_tickers:
                 self.status_message.emit("Waiting for Yahoo Finance response...")
                 prices_dict.update(fetch_us_realtime_prices(us_yf_tickers))
