@@ -34,10 +34,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DB_FILE       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "portfolio.db")
-_CUSTOM_JSON   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "custom_history.json")
-_OVERRIDES_JSON= os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_overrides.json")
-_BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
+_BASE_DIR      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DB_FILE       = os.path.join(_BASE_DIR, "portfolio.db")
+_CUSTOM_JSON   = os.path.join(_BASE_DIR, "custom_history.json")
+_OVERRIDES_JSON= os.path.join(_BASE_DIR, "trade_overrides.json")
 
 
 # ── Connection helper ──────────────────────────────────────────────────────────

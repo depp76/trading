@@ -12,8 +12,12 @@ making risky changes.
 
 ## Running
 
+All application source code lives under `src/` (mirroring the structure described below);
+run from the repository root so relative paths to `.env`, `portfolio.db`, and the cache/state
+JSON files (which stay at the repo root, not under `src/`) still resolve correctly.
+
 ```powershell
-.\.venv\Scripts\python.exe main.py
+.\.venv\Scripts\python.exe src\main.py
 ```
 
 There is no build step, linter config, or test suite in this repo. Verification is done ad hoc:
@@ -30,7 +34,7 @@ Because there's no VCS, before editing any of the three core files, copy the ori
 
 Three files hold essentially all application logic:
 
-- **`main.py`** (~5,900 lines) — PyQt6 UI: `MainWindow` (tabs), `StockTable`/`GroupedHeaderView`
+- **`src/main.py`** (~5,900 lines) — PyQt6 UI: `MainWindow` (tabs), `StockTable`/`GroupedHeaderView`
   (Universe grid with per-column filter popups), `TradingHistoryTab` (trade entry/edit dialogs,
   backed by `trade_db`), `TradingRecordTab` (assets-over-time table + matplotlib graphs), plus
   several `QThread` subclasses (`AllDataFetchThread`, `UniverseLightweightFetchThread`,
@@ -38,7 +42,7 @@ Three files hold essentially all application logic:
   into `data_fetcher.py` off the UI thread and emit signals back to update widgets. A
   60-second `QTimer` (`global_auto_timer`) drives auto-refresh of live prices/indices when the
   "Auto Update" checkbox is on.
-- **`data_fetcher.py`** (~2,150 lines) — all external data access: market listings and OHLCV via
+- **`src/data_fetcher.py`** (~2,150 lines) — all external data access: market listings and OHLCV via
   `pykrx`/`FinanceDataReader`/`yfinance`/`yahooquery`, real-time quotes via Naver and Yahoo
   (`yf_quote_batch` is the shared batching/crumb/retry helper — reuse it rather than adding a new
   direct `yfinance` call site), Korea Investment & Securities (한국투자증권, KIS) Open API for
@@ -48,7 +52,7 @@ Three files hold essentially all application logic:
   boundary because upstream libraries only speak pandas. Has module-level caches
   (`_HIST_CACHE` as an `OrderedDict` LRU, `_YF_BULK_CACHE`, `_KIS_TOKEN_CACHE`,
   `_KIS_KEYS_CACHE`) — reuse these rather than adding parallel caching.
-- **`trade_db.py`** — SQLite persistence (`portfolio.db`, WAL mode) for the trade log, replacing
+- **`src/trade_db.py`** — SQLite persistence (`portfolio.db`, WAL mode) for the trade log, replacing
   the older `custom_history.json` + `trade_overrides.json` pair (still read once, on first run,
   by `_migrate_legacy_json` for backward compatibility). Prefer `upsert_trades()` (batched,
   single transaction) over looping `upsert_trade()` when writing more than one record.
@@ -57,7 +61,7 @@ Three files hold essentially all application logic:
 
 - `.env` holds `KRX_AUTH_KEY` (KRX derivatives/VKOSPI API), loaded via `python-dotenv`.
 - KIS (한국투자증권) Open API keys are **not** in this repo: `_get_kis_keys()` in
-  `data/collectors/kis.py` reads them from `D:\Source Code\Trading MCP\kis_appkey.txt` /
+  `src/data/collectors/kis.py` reads them from `D:\Source Code\Trading MCP\kis_appkey.txt` /
   `kis_secretkey.txt` (real/실전투자 credentials) — an external sibling-project folder,
   renamed from `Kiwoom MCP` since it now holds keys for more than one brokerage API.
   The account number is read the same way, from `kis_account.txt` in the same folder
