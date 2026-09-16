@@ -1,6 +1,7 @@
 pykrx
 pandas
 polars
+pyarrow
 numpy
 matplotlib
 mplcursors
