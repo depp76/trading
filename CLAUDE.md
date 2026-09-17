@@ -123,8 +123,9 @@ not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
   for `MainWindow.closeEvent`.
 - KR-vs-US ticker routing uses `is_kr_code()`; the daily-history lookback start is
   `start_date()` (a function, not an import-time constant).
-- `trading.md` (repo root) holds the multi-agent development methodology and the manual-trading
-  baseline; each strategy keeps its own spec next to its code (`strategy/rebalance/rebalance.md`,
-  `strategy/trend_following/trend_following.md` plus the root `trend_following.md`).
+- Each strategy keeps its spec next to its code: `strategy/rebalance/rebalance.md` (which also
+  holds the multi-agent development methodology, ch. 12, and the manual-trading baseline,
+  ch. 10; formerly the root `trading.md`) and `strategy/trend_following/trend_following.md`
+  plus the full spec in the root `trend_following.md`.
 - `roadmap.md` is the running log of what was done and why (sections per phase, a priority
   matrix, and a dated change history). Add a row there for non-trivial changes.
