@@ -1,13 +1,8 @@
 """tests/test_indicators.py — fetch_historical_changes modes and the small
 data.cache helpers (is_kr_code, start_date), roadmap 6-3b.
 """
-import os
-import sys
 import unittest
 from datetime import date, datetime, timedelta
-
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _PROJ_ROOT)
 
 import polars as pl
 

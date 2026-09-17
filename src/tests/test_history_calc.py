@@ -1,13 +1,8 @@
 """tests/test_history_calc.py — Pure calculation helpers of TradingHistoryTab
 (_compute_pl_fields, _build_monthly_rows), roadmap 6-3b.
 """
-import os
-import sys
 import unittest
 import datetime as _dt
-
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _PROJ_ROOT)
 
 from PyQt6.QtWidgets import QApplication
 

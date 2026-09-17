@@ -1,14 +1,9 @@
 """
 tests/test_assets_calc.py — 환율 캐시, safe_float, 입력 유효성 검사 테스트
 """
-import os
-import sys
 import unittest
 import datetime as _dt
 from unittest.mock import patch
-
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _PROJ_ROOT)
 
 import data_fetcher
 

@@ -38,8 +38,9 @@ Run pytest from the repo root or from `src/` (`tests/conftest.py` puts `src/` on
 Tests patch the implementation modules (`data.cache`, `data.market`, `data.collectors.yahoo`),
 never names on the `data_fetcher` facade. GUI behaviour cannot be exercised headlessly here;
 for non-trivial changes to fetch/backtest logic write a throwaway script comparing old vs.
-new behaviour on random inputs (see `changelog_optimization.md` for the pattern), and see
-`test_plan.md` for the manual checks. Dev tooling is in `requirements-dev.txt`
+new behaviour on random inputs (`docs/history/changelog_optimization_2026-08-11.md` shows the
+pattern; `docs/history/test_plan_2026-08-29.md` is an old manual-check list kept for reference).
+Dev tooling is in `requirements-dev.txt`
 (`-r requirements.txt` + pytest + ruff); runtime pins are in `requirements.txt`.
 
 ## Architecture
@@ -82,13 +83,15 @@ new behaviour on random inputs (see `changelog_optimization.md` for the pattern)
   full spec in `trend_following.md`, code not yet written). Strategy code
   imports from `data.*`; callers import strategy symbols from `strategy.<name>` directly,
   never via `data_fetcher`.
-- **`src/data_fetcher.py`**: a pure re-export facade over `data/` (data access only, no
-  strategy symbols) so UI and thread code import from one place. Nothing in `data/`
-  imports it back; keep it that way.
+- **`src/data_fetcher.py`**: the single re-export facade over `data/` (data access only, no
+  strategy symbols) so UI and thread code import from one place; `data/__init__.py` itself
+  re-exports nothing. Nothing in `data/` imports the facade back; keep it that way.
 - **`src/trade_db.py`**: SQLite persistence (`portfolio.db`, WAL mode). Prefer
   `upsert_trades()` for batches. Do not generate `orig_key` values in callers:
   `upsert_trade()` without a key claims a collision-free one inside the INSERT and writes it
   back into the record.
+- **`tools/register_secret.py`**: standalone CLI for pushing secrets to Google Cloud Secret
+  Manager; unrelated to the app runtime. **`docs/history/`**: dated one-off documents.
 - **`src/gemini_helper.py`**: Gemini calls for the AI filter and diagnosis features
   (`GOOGLE_API_KEY` in `.env`; the prompts are intentionally Korean).
 

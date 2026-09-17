@@ -2,6 +2,7 @@
     "python.defaultInterpreterPath": ".venv/Scripts/python.exe",
     "python.analysis.typeCheckingMode": "basic",
     "python.analysis.extraPaths": [
+        "./src",
         "./.venv/Lib/site-packages"
     ]
 }

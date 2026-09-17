@@ -361,7 +361,7 @@ tests/
 **현황**: `portfolio.db`가 로컬 파일  
 **방향**:
 
-- Google Cloud Storage에 `portfolio.db` 주기적 업로드 (기존 `register_secret.py` 인프라 활용)
+- Google Cloud Storage에 `portfolio.db` 주기적 업로드 (기존 `tools/register_secret.py` 인프라 활용)
 - 또는 Cloud Firestore/Supabase로 마이그레이션
 - 다중 기기 접근, 자동 백업 목적
 
@@ -530,3 +530,4 @@ tests/
 | 2026-09-17 (4차) | 리밸런싱 전략 스펙을 `trading.md`에서 `src/strategy/rebalance/rebalance.md`로 분리(사용자 요청): 1~9장·11장·13장 이동, 10장(수동 매매 베이스라인)·12장(멀티 에이전트 개발 방법론)은 `trading.md`에 잔류, 양쪽 모두 절 번호 유지. 코드 주석·UI 문자열(`ui/auto_trading_tab.py`, `ui/dialogs.py` 등)과 CLAUDE.md/AGENTS.md/trend_following.md의 `trading.md N-x` 인용을 `rebalance.md N-x`로 갱신. 코드 로직 변경 없음. |
 | 2026-09-17 (5차) | `trading.md` 삭제(사용자 판단: 별도 파일 불필요). 남아 있던 10장(베이스라인)·12장(멀티 에이전트 개발 방법론)을 `src/strategy/rebalance/rebalance.md`에 합쳐 원문 1~13장 구성을 새 위치에서 그대로 유지. CLAUDE.md/AGENTS.md의 스펙 위치 안내 갱신. |
 | 2026-09-17 (6차) | 전략별 폴더+md 규칙 적용 마무리: `strategy/ma_cross.py` → `strategy/ma_cross/`(`__init__.py` 파사드 + `backtest.py`) + 코드 분석 기반 스펙 `ma_cross.md` 신규 작성, 루트 `trend_following.md`를 `src/strategy/trend_following/trend_following.md`로 이동·통합(폴더의 짧은 안내문 흡수). CLAUDE.md/AGENTS.md 갱신. 검증: pytest 119/119, ruff 0건. |
+| 2026-09-17 (7차) | 구조 검토 후속 정리: `tests/strategy/test_ma_cross.py` → `tests/strategy/ma_cross/test_backtest.py`(전략별 테스트 폴더 규칙), `data/__init__.py`의 재노출 목록을 `data_fetcher.py` 한 곳으로 통합(중복 제거), 테스트 9개 파일의 `_PROJ_ROOT` sys.path 보일러플레이트 삭제(`conftest.py`로 일원화), `test_plan.md`·`changelog_optimization.md` → `docs/history/`(날짜 접미사), `src/register_secret.py` → `tools/`, 빈 `paperclipai/` 삭제, `.agents/rules/optimize-code.md`를 CLAUDE.md와 동기화(archive 백업 규칙 제거, 경로 갱신), `.vscode/settings.json` extraPaths에 `./src` 추가. 검증: pytest 119/119, ruff 0건. |

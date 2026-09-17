@@ -1,22 +1,38 @@
 ---
 trigger: always_on
 glob:
-description: Coding and convention rules for Portfolio Management
+description: Coding and convention rules for Portfolio Management (kept in sync with CLAUDE.md)
 ---
 
 # Portfolio Management Coding Rules
 
-1. **English-Only for Code & UI**:
-   - All newly added or modified source code comments, docstrings, UI labels, menus, buttons, tooltips, dialogs, and logging messages MUST be written in **English**.
-   - Do NOT introduce new Korean strings or comments in code files (even for financial terms).
-   - Existing legacy Korean text already in the codebase (e.g. 예수금/평가손익) is left as-is unless explicitly requested to change.
+Authoritative reference: `CLAUDE.md` (identical content in `AGENTS.md`). This file is the
+short version for agents that read `.agents/rules/`.
 
-2. **Backup Convention**:
-   - Before making substantial edits to core code files, create a backup copy in `archive/backup_<yyyyMMdd_HHmmss>/`.
+1. **English-only for code & UI**: new or modified comments, docstrings, UI labels, menus,
+   tooltips, dialogs and log messages are written in English. Existing Korean strings stay
+   unless explicitly asked.
 
-3. **Font & Styling Consistency**:
-   - Font handling must use `create_font()` to ensure consistent "Malgun Gothic Semilight" across UI widgets.
-   - For bulk table population (`StockTable`, `TradingHistoryTab`, `TradingRecordTab`), wrap updates with `setUpdatesEnabled(False)` and `finally: setUpdatesEnabled(True)`.
+2. **Layout**: all code is under `src/`. `src/data/` is the pure data-access layer and never
+   imports `strategy`; every trading strategy is its own sub-package `src/strategy/<name>/`
+   with its spec saved as `<name>.md` in the same folder and tests in
+   `src/tests/strategy/<name>/`. UI/thread code imports data functions from `data_fetcher`
+   (the single re-export facade) and strategy symbols from `strategy.<name>` directly.
+   Runtime file paths come from `src/paths.py`.
 
-4. **Testing & Verification**:
-   - Always verify changes with `pytest tests/ -v` and smoke test imports before completion.
+3. **Threads**: network calls run in a `QThread` subclass under `src/threads/`, never in a
+   slot on the UI thread. Connect `finished` signals to bound methods, not closures. Replace a
+   running thread with `ui.common.retire_thread(self, "<attr>")`.
+
+4. **UI conventions**: fonts via `create_font()`; inline stylesheets splice `FONT_FAMILY_CSS`;
+   bulk table population wrapped in `setUpdatesEnabled(False)` / `finally:
+   setUpdatesEnabled(True)`.
+
+5. **Verification** (run before finishing):
+   - `.\.venv\Scripts\python.exe -m pytest src\tests -q`
+   - `.\.venv\Scripts\ruff.exe check src`
+   - import smoke test where relevant. GUI cannot be exercised headlessly.
+
+6. **Version control**: the repo is git-managed; no `archive/backup_*` copies before edits.
+   Record non-trivial changes in `roadmap.md` (change history) and update the strategy `.md`
+   in the same commit as the code it describes.

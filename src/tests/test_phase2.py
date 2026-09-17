@@ -1,12 +1,7 @@
 """tests/test_phase2.py — Unit tests for Phase 2 UI responsiveness and data performance optimizations."""
-import os
-import sys
 import unittest
 from unittest.mock import patch, MagicMock
 from datetime import datetime
-
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _PROJ_ROOT)
 
 import polars as pl
 import pandas as pd

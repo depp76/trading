@@ -3,13 +3,9 @@ tests/test_trade_db.py — SQLite CRUD, 인덱스, 배치 upsert 테스트
 실제 portfolio.db를 건드리지 않도록 임시 DB를 사용합니다.
 """
 import os
-import sys
 import sqlite3
 import tempfile
 import unittest
-
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _PROJ_ROOT)
 
 import trade_db
 

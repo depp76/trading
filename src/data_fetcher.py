@@ -6,13 +6,12 @@ one place. Strategy code is *not* re-exported here: import it from the
 `strategy` package directly (e.g. `from strategy.rebalance import ...`,
 `from strategy.ma_cross import run_backtest_strategy`), see rebalance.md 11-5.
 
-This module is a pure re-export: nothing in `data/` imports it back, and
+This module is the single re-export list (data/__init__.py holds none), and
 tests patch the real implementation modules (`data.cache`, `data.market`,
 `data.collectors.*`) rather than names on this facade (roadmap 6-2a).
 """
 
-from data import (
-    # Cache & Sessions
+from data.cache import (
     start_date,
     _TD_PERIODS,
     _CHANGE_KEYS,
@@ -37,13 +36,15 @@ from data import (
     _pdf_is_stale,
     safe_float,
     is_kr_code,
+)
 
-    # Indicators
+from data.indicators import (
     _to_polars,
     _compute_indicators,
     fetch_historical_changes,
+)
 
-    # Collectors — Naver
+from data.collectors.naver import (
     _fast_kr_history,
     fetch_naver_realtime_prices,
     fetch_naver_realtime_index_prices,
@@ -55,16 +56,18 @@ from data import (
     _fetch_index_investor_trend,
     _fetch_investor_trend_naver,
     fetch_quarterly_financials,
+)
 
-    # Collectors — Yahoo
+from data.collectors.yahoo import (
     _YF_BULK_CACHE,
     yf_quote_batch,
     fetch_us_realtime_prices,
     fetch_wti_futures_curve,
     fetch_us_stock_data_bulk,
     fetch_us_market_data,
+)
 
-    # Collectors — KIS (한국투자증권)
+from data.collectors.kis import (
     _KIS_TOKEN_CACHE,
     _KIS_KEYS_CACHE,
     _get_kis_keys,
@@ -76,8 +79,9 @@ from data import (
     fetch_investor_trend,
     fetch_kis_realtime_prices,
     is_krx_market_open,
+)
 
-    # Collectors — KRX
+from data.collectors.krx import (
     VKOSPI_INDEX_NAME,
     _get_krx_auth_key,
     fetch_krx_derivative_index_day,
@@ -87,8 +91,9 @@ from data import (
     fetch_vkospi_history,
     _get_vkospi_pdf,
     _get_jp10y_df,
+)
 
-    # Market Aggregation
+from data.market import (
     INDEX_TICKERS,
     _INDEX_DISPLAY_NAMES,
     _INDEX_ORDER,

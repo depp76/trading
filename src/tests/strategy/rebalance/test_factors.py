@@ -1,12 +1,7 @@
 """
 tests/strategy/rebalance/test_factors.py — strategy/rebalance/factors.py 검증 (rebalance.md 11-3)
 """
-import os
-import sys
 import unittest
-
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-sys.path.insert(0, _PROJ_ROOT)
 
 
 class TestRebalanceFactorExtraction(unittest.TestCase):

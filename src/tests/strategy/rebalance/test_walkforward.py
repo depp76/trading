@@ -1,13 +1,8 @@
 """
 tests/strategy/rebalance/test_walkforward.py — strategy/rebalance/walkforward.py 거래비용 검증 (rebalance.md 11-3)
 """
-import os
-import sys
 import unittest
 from datetime import date
-
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-sys.path.insert(0, _PROJ_ROOT)
 
 import polars as pl
 

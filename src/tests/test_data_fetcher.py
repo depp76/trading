@@ -1,13 +1,8 @@
 """
 tests/test_data_fetcher.py — LRU 캐시, yf_quote_batch (mock 기반) 테스트
 """
-import os
-import sys
 import unittest
 from unittest.mock import patch, MagicMock
-
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _PROJ_ROOT)
 
 import data_fetcher
 import data.cache as dcache
