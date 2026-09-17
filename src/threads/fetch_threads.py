@@ -541,7 +541,7 @@ class AutoBackupThread(QThread):
 
 
 # ---------------------------------------------------------------------------
-# Weekly rebalance walk-forward backtest thread (trading.md section 6)
+# Weekly rebalance walk-forward backtest thread (rebalance.md section 6)
 # ---------------------------------------------------------------------------
 class RebalanceBacktestThread(QThread):
     """Background thread: strategy.rebalance.run_rebalance_backtest(). Always run

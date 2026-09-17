@@ -1,5 +1,5 @@
 """
-tests/strategy/test_ma_cross.py — strategy/ma_cross.run_backtest_strategy 결과 일치 검증 (moved from tests/test_backtest.py, trading.md 11-5)
+tests/strategy/test_ma_cross.py — strategy/ma_cross.run_backtest_strategy 결과 일치 검증 (moved from tests/test_backtest.py, rebalance.md 11-5)
 """
 import os
 import sys

@@ -1,4 +1,4 @@
-"""strategy/rebalance/walkforward.py — Historical factor series and walk-forward portfolio simulation (trading.md 11-2)."""
+"""strategy/rebalance/walkforward.py — Historical factor series and walk-forward portfolio simulation (rebalance.md 11-2)."""
 import bisect
 from datetime import timedelta
 import polars as pl

@@ -1,8 +1,8 @@
 """strategy/rebalance/ — Weekly factor scoring, portfolio rebalancing signals, and walk-forward backtesting.
 
-Package split from the former flat data/rebalance.py (trading.md 11-2, migration
+Package split from the former flat data/rebalance.py (rebalance.md 11-2, migration
 step 11-4.1) and moved from data/rebalance/ to strategy/rebalance/ on 2026-09-17
-(trading.md 11-5) — pure reorganization, no logic changes. This __init__ is the
+(rebalance.md 11-5) — pure reorganization, no logic changes. This __init__ is the
 package facade: callers (ui/auto_trading_tab.py, threads/fetch_threads.py,
 tests/strategy/rebalance/) import from `strategy.rebalance`, not from
 data_fetcher, which no longer re-exports strategy symbols.

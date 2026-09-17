@@ -2,7 +2,7 @@
 
 Trading-strategy code (rebalance, ma_cross, trend_following) lives in the
 top-level `strategy` package and imports from here; this package never
-imports `strategy` (trading.md 11-5).
+imports `strategy` (rebalance.md 11-5).
 """
 
 from data.cache import (

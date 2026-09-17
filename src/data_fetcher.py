@@ -4,7 +4,7 @@ Re-exports the public market data fetchers, caching structures, and indicators
 from the modular `data/` package so UI/thread callers can keep importing from
 one place. Strategy code is *not* re-exported here: import it from the
 `strategy` package directly (e.g. `from strategy.rebalance import ...`,
-`from strategy.ma_cross import run_backtest_strategy`), see trading.md 11-5.
+`from strategy.ma_cross import run_backtest_strategy`), see rebalance.md 11-5.
 
 This module is a pure re-export: nothing in `data/` imports it back, and
 tests patch the real implementation modules (`data.cache`, `data.market`,

@@ -1,4 +1,4 @@
-"""strategy/rebalance/signals.py — compute_weekly_rebalance_signals orchestrator (trading.md 11-2/8-I).
+"""strategy/rebalance/signals.py — compute_weekly_rebalance_signals orchestrator (rebalance.md 11-2/8-I).
 
 Combines factors -> classify into the weekly signal computation used by both
 the live UI (ui/auto_trading_tab.py) and the walk-forward backtest. Sector-cap
@@ -21,7 +21,7 @@ def compute_weekly_rebalance_signals(
     """Factor-score and rank the Trading Universe for weekly rebalancing.
 
     top_n_by_market: per-market buy-candidate cap, e.g. {"KOSPI": 10,
-    "KOSDAQ": 10} (trading.md 3-5) — defaults to _DEFAULT_TOP_N_BY_MARKET.
+    "KOSDAQ": 10} (rebalance.md 3-5) — defaults to _DEFAULT_TOP_N_BY_MARKET.
     """
     top_n_by_market = top_n_by_market or _DEFAULT_TOP_N_BY_MARKET
     candidates = _extract_live_candidates(universe_data)

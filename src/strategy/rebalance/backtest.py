@@ -1,4 +1,4 @@
-"""strategy/rebalance/backtest.py — Walk-forward backtest orchestration and performance summary (trading.md 11-2)."""
+"""strategy/rebalance/backtest.py — Walk-forward backtest orchestration and performance summary (rebalance.md 11-2)."""
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
@@ -93,7 +93,7 @@ def run_rebalance_backtest(
     """Walk-forward backtest of compute_weekly_rebalance_signals's algorithm with fees and taxes.
 
     top_n_by_market / market_by_ticker mirror compute_weekly_rebalance_signals's
-    per-market buy cap (trading.md 3-5), e.g. {"KOSPI": 10, "KOSDAQ": 10} —
+    per-market buy cap (rebalance.md 3-5), e.g. {"KOSPI": 10, "KOSDAQ": 10} —
     market_by_ticker maps each ticker to its market so the walk-forward
     simulation can apply the same per-market cap historically.
     """

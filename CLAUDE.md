@@ -70,9 +70,9 @@ new behaviour on random inputs (see `changelog_optimization.md` for the pattern)
   is the one Yahoo quote entry point; `kis.py`; `krx.py`). Pure data access only: uses
   polars internally and converts to pandas only at library boundaries, reuses the
   module-level caches rather than adding parallel ones, and never imports `strategy`.
-- **`src/strategy/`**: all trading-strategy logic (trading.md 11-5). `rebalance/` (weekly
+- **`src/strategy/`**: all trading-strategy logic (`strategy/rebalance/rebalance.md` 11-5). `rebalance/` (weekly
   factor scoring, buy/sell/hold classification, walk-forward backtest; spec in
-  `trading.md`), `ma_cross.py` (single-stock MA20/MA60 golden-cross backtest),
+  `strategy/rebalance/rebalance.md`), `ma_cross.py` (single-stock MA20/MA60 golden-cross backtest),
   `trend_following/` (Donchian breakout; scaffold only, spec in `trend_following.md`).
   Strategy code imports from `data.*`; callers import strategy symbols from
   `strategy.<package>` directly, never via `data_fetcher`. New strategies get their own
@@ -123,5 +123,8 @@ not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
   for `MainWindow.closeEvent`.
 - KR-vs-US ticker routing uses `is_kr_code()`; the daily-history lookback start is
   `start_date()` (a function, not an import-time constant).
+- `trading.md` (repo root) holds the multi-agent development methodology and the manual-trading
+  baseline; each strategy keeps its own spec next to its code (`strategy/rebalance/rebalance.md`,
+  `strategy/trend_following/trend_following.md` plus the root `trend_following.md`).
 - `roadmap.md` is the running log of what was done and why (sections per phase, a priority
   matrix, and a dated change history). Add a row there for non-trivial changes.

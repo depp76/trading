@@ -1,8 +1,8 @@
-"""strategy/rebalance/classify.py — Buy/sell/hold classification from ranked candidates (trading.md 11-2).
+"""strategy/rebalance/classify.py — Buy/sell/hold classification from ranked candidates (rebalance.md 11-2).
 
 Pure ranking-based classification — knows nothing about sector or regime
 constraints (those land as post-processing hooks in strategy/rebalance/signals.py,
-trading.md 8-A/8-B), so future sector-cap/regime work never needs to touch
+rebalance.md 8-A/8-B), so future sector-cap/regime work never needs to touch
 this file.
 """
 from strategy.rebalance.config import RebalanceConfig

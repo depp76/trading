@@ -53,7 +53,7 @@ from ui.assets_tab import TradingRecordTab
 # --- Phase 5: split out to ui/universe_tab.py ---
 from ui.universe_tab import UniverseTab
 
-# --- trading.md 3-1: weekly rebalance signal tab ---
+# --- rebalance.md 3-1: weekly rebalance signal tab ---
 from ui.auto_trading_tab import AutoTradingTab
 
 
@@ -108,7 +108,7 @@ class MainWindow(QMainWindow):
         self.trading_record_tab = TradingRecordTab()
         self.tabs.addTab(self.trading_record_tab, "Total Assets")
 
-        # 5. Auto Trading Tab (trading.md 3-1 weekly rebalance signals) —
+        # 5. Auto Trading Tab (rebalance.md 3-1 weekly rebalance signals) —
         # reads self.universe_tab.all_data on demand (see ui/auto_trading_tab.py
         # docstring for why this is a direct reference rather than a signal).
         self.auto_trading_tab = AutoTradingTab(self.universe_tab)

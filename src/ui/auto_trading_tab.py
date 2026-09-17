@@ -1,15 +1,15 @@
-"""ui/auto_trading_tab.py — AutoTradingTab (trading.md section 3-1 implementation)
+"""ui/auto_trading_tab.py — AutoTradingTab (rebalance.md section 3-1 implementation)
 
 Weekly rebalance signal tab: factor-scores and ranks the Trading Universe
-(trading.md 3-1: "팩터 스코어링 + 순위 리밸런싱"), classifying stocks into buy/
+(rebalance.md 3-1: "팩터 스코어링 + 순위 리밸런싱"), classifying stocks into buy/
 sell/hold candidates against the account's currently open positions.
 
-Signal generation only — this tab never places orders (trading.md section 1
+Signal generation only — this tab never places orders (rebalance.md section 1
 explicitly separates signal generation from execution). Results are a
-starting point for backtesting/paper trading (trading.md section 6), not
+starting point for backtesting/paper trading (rebalance.md section 6), not
 investment advice; see the disclaimer label built into the tab.
 
-Also hosts the walk-forward backtest UI (trading.md section 6): pick a
+Also hosts the walk-forward backtest UI (rebalance.md section 6): pick a
 lookback of 1-5 years and run strategy.rebalance.run_rebalance_backtest() in a
 background thread (RebalanceBacktestThread), showing the result in
 BacktestResultDialog. The backtest reuses the exact same scoring/
@@ -45,26 +45,26 @@ from ui.common import create_font
 
 
 class AutoTradingTab(QWidget):
-    """Weekly rebalance signal tab (trading.md 3-1: factor scoring + rank rebalancing).
+    """Weekly rebalance signal tab (rebalance.md 3-1: factor scoring + rank rebalancing).
 
-    trading.md decisions this implementation follows:
+    rebalance.md decisions this implementation follows:
       - top_n_by_market = {"KOSPI": 10, "KOSDAQ": 10} target holdings
-        (trading.md 3-5 -- ranked per market so KOSDAQ's higher volatility
+        (rebalance.md 3-5 -- ranked per market so KOSDAQ's higher volatility
         doesn't crowd out KOSPI in a combined top-N)
       - band_multiplier = 1.5 -> a held stock is only a sell candidate once
         its rank within its own market falls below 15 (reduces weekly turnover)
-    Both values come from RebalanceConfig (trading.md 8-H / 11-4 step 3) --
+    Both values come from RebalanceConfig (rebalance.md 8-H / 11-4 step 3) --
     the single source of truth shared with strategy/rebalance's own defaults, so
     they're no longer duplicated as separate literals here.
     Factor weights are an equal-weighted v1 default (see
     strategy.rebalance.compute_weekly_rebalance_signals docstring) -- tune based on
-    backtest results per trading.md section 6, not fixed here.
+    backtest results per rebalance.md section 6, not fixed here.
     """
 
     _REBALANCE_CONFIG = RebalanceConfig()
     TOP_N_BY_MARKET = _REBALANCE_CONFIG.top_n_by_market
     BAND_MULTIPLIER = _REBALANCE_CONFIG.band_multiplier
-    INITIAL_CAPITAL = 100_000_000.0  # arbitrary notional for the backtest (trading.md section 6)
+    INITIAL_CAPITAL = 100_000_000.0  # arbitrary notional for the backtest (rebalance.md section 6)
 
     def __init__(self, universe_tab, parent=None):
         super().__init__(parent)
@@ -85,7 +85,7 @@ class AutoTradingTab(QWidget):
 
         top_n_str = ", ".join(f"{m} {n}" for m, n in self.TOP_N_BY_MARKET.items())
         subtitle = QLabel(
-            f"Factor scoring + rank rebalancing (trading.md 3-1/3-5) — target {top_n_str}, "
+            f"Factor scoring + rank rebalancing (rebalance.md 3-1/3-5) — target {top_n_str}, "
             f"sell band at per-market rank > {int(next(iter(self.TOP_N_BY_MARKET.values())) * self.BAND_MULTIPLIER)}"
         )
         subtitle.setFont(create_font(9, style_name="Semilight"))
@@ -110,7 +110,7 @@ class AutoTradingTab(QWidget):
         ctrl_row.addStretch()
         root.addLayout(ctrl_row)
 
-        # Walk-forward backtest controls (trading.md section 6)
+        # Walk-forward backtest controls (rebalance.md section 6)
         backtest_row = QHBoxLayout()
         lookback_lbl = QLabel("Backtest lookback:")
         lookback_lbl.setFont(create_font(10, style_name="Semilight"))
@@ -181,7 +181,7 @@ class AutoTradingTab(QWidget):
 
         disclaimer = QLabel(
             "⚠️ Research/backtesting signal generator, not investment advice. "
-            "Verify with backtesting and paper trading before using real capital (trading.md section 6)."
+            "Verify with backtesting and paper trading before using real capital (rebalance.md section 6)."
         )
         disclaimer.setFont(create_font(8, style_name="Semilight"))
         disclaimer.setStyleSheet("color:#888;")
@@ -273,7 +273,7 @@ class AutoTradingTab(QWidget):
         finally:
             tbl.setUpdatesEnabled(True)
 
-    # ---Backtest (trading.md section 6) ---
+    # ---Backtest (rebalance.md section 6) ---
     def _on_backtest_clicked(self):
         if self._backtest_thread is not None and self._backtest_thread.isRunning():
             return

@@ -1761,7 +1761,7 @@ class TotalAssetsGraphDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
-# Weekly rebalance backtest result dialog (trading.md section 6)
+# Weekly rebalance backtest result dialog (rebalance.md section 6)
 # ---------------------------------------------------------------------------
 class BacktestResultDialog(QDialog):
     """Shows one strategy.rebalance.run_rebalance_backtest() result: an equity
@@ -1773,7 +1773,7 @@ class BacktestResultDialog(QDialog):
     def __init__(self, result: dict, parent=None, ticker_name_map: dict = None):
         super().__init__(parent)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint | Qt.WindowType.WindowMinimizeButtonHint)
-        self.setWindowTitle("Weekly Rebalance Backtest \u2014 trading.md 3-1")
+        self.setWindowTitle("Weekly Rebalance Backtest \u2014 rebalance.md 3-1")
         self.resize(900, 700)
         self.showMaximized()
 
@@ -1915,7 +1915,7 @@ class BacktestResultDialog(QDialog):
         disclaimer = QLabel(
             "\u26a0\ufe0f Backtest excludes trailing-PER factor (no bulk historical source). "
             "Includes 0.015% brokerage commission + 0.18% sell tax. Research tool, not investment advice \u2014 "
-            "see trading.md section 6."
+            "see rebalance.md section 6."
         )
         disclaimer.setStyleSheet("color:#888; font-size:9pt;")
         disclaimer.setWordWrap(True)

@@ -2,11 +2,11 @@
 
 > 전체 설계/의사결정 이력은 저장소 루트의 `trend_following.md`를 참고할 것 — 이 문서는
 > 이 서브패키지 코드를 읽는 사람을 위한 짧은 안내만 담는다 (`strategy/rebalance/`가
-> `trading.md`를 스펙으로 참조하는 것과 같은 관계).
+> `rebalance.md`를 스펙으로 참조하는 것과 같은 관계).
 >
 > 위치는 `data/trend_following/`이 아니라 `src/strategy/trend_following/`이다 — 전략 로직은
 > `data/`(순수 데이터 접근 계층)와 분리해 `strategy/` 밑에 모으기로 결정함
-> (2026-09-17, `trading.md` 11-5). `data/rebalance/`도 같은 날 `strategy/rebalance/`로 이동 완료.
+> (2026-09-17, `rebalance.md` 11-5). `data/rebalance/`도 같은 날 `strategy/rebalance/`로 이동 완료.
 
 ## 상태
 

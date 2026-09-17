@@ -1,4 +1,4 @@
-"""strategy/rebalance/factors.py — Raw factor extraction and z-score ranking (trading.md 11-2)."""
+"""strategy/rebalance/factors.py — Raw factor extraction and z-score ranking (rebalance.md 11-2)."""
 import numpy as np
 
 # factor_name -> (extractor(universe_item) -> float | None, higher_is_better)
