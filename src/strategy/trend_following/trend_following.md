@@ -75,6 +75,22 @@
 - 수수료/슬리피지는 `TrendFollowingConfig.fee_rate`/`slippage_rate`(편도, 거래대금 비율)로
   준비만 해두고 기본값 0이다 — 반영 여부는 6장의 미결정 항목.
 
+**v2 오버레이 (2026-09-17 구현, 모두 기본값 0 = 꺼짐이라 기본 설정은 v1과 동일)**
+- **레짐 필터** `regime_ma_n`: 종가가 `SMA(regime_ma_n)` 위일 때만 신규 진입. 청산에는 영향 없음.
+  워밍업 구간(SMA 미계산)은 진입 불가.
+- **ATR 손절** `stop_atr_mult`, `atr_n`, `stop_mode`: ATR은 true range(High−Low, |High−전일종가|,
+  |Low−전일종가| 중 최댓값)의 `atr_n`일 단순이동평균. 손절선은 `anchor − stop_atr_mult × ATR`이고
+  `trailing`(샹들리에)은 anchor = 진입 후 최고 종가로 매일 갱신(위로만 이동), `fixed`는 anchor =
+  진입 종가로 고정. **t일에 적용되는 손절선은 t−1일 종가 시점에 확정**되며(`stop` 컬럼) 종가가
+  그 아래로 마감하면 청산(`exit_reason="stop"`; 채널 이탈이 같은 날 겹치면 `"channel"`).
+- **변동성 타깃 사이징** `vol_target_pct`, `vol_n`, `max_weight`: 진입일에 직전 `vol_n`일 일간수익률
+  표준편차 × √252로 실현변동성을 구하고 `weight = min(max_weight, vol_target / vol)`을 트레이드
+  기간 내내 고정. 변동성 추정치가 아직 없으면(워밍업) `min(1, max_weight)`. 사이징이 꺼져 있어도
+  `max_weight`는 상한으로 작동한다. 백테스트는 `weight.shift(1) × 일간수익률`로 수익을, 비중 변화량 ×
+  편도 비용으로 거래비용을 계산한다.
+- 산출 추가: 트레이드별 `weight`, `price_return_pct`(진입→청산 종가 가격수익률), `exit_reason`;
+  요약에 `avg_weight`, `n_channel_exits`, `n_stop_exits`, `v2`(적용된 파라미터).
+
 ---
 
 ## 4. 소스 코드 구성안
@@ -106,12 +122,18 @@ tests/strategy/trend_following/
   `__init__.py` 파사드, 테스트 18개(`tests/strategy/trend_following/test_signals.py`·
   `test_backtest.py`, no-lookahead 검증 포함). 데이터는 `data.history.get_historical_data()`를
   그대로 사용한다.
+- **v2 오버레이 (2026-09-17)** — 같은 세 파일 안에 구현(3장 v2 항목). `signals.py`가 `atr`,
+  `regime_ma`, `regime_ok`, `weight`, `stop`, `exit_reason` 컬럼을 추가하고, `backtest.py`는
+  `weight` 기반으로 수익·비용을 계산한다. 테스트 `test_v2.py` 15개(기본값의 v1 동일성, 레짐 차단,
+  trailing/fixed 손절과 사유, 사이징 비중·고정·워밍업 폴백, 비용 비례, v2 전체 no-lookahead).
 - **UI 연결 (2026-09-17)** — 메인 윈도우 6번째 탭 "Trend Following"(`ui/trend_following_tab.py`,
   `TrendFollowingTab`): 티커 입력(Trading Universe 종목 콤보에서 선택 가능), 시작일, `entry_n`/
   `exit_n`, 편도 수수료·슬리피지(%)를 받아 `threads.fetch_threads.TrendFollowingBacktestThread`로
   `run_backtest_for_ticker()`를 백그라운드 실행하고, 5장 지표 요약 행(리스크 게이트 PASS/FAIL 색상)과
-  트레이드 표를 표시한다. "Chart" 버튼은 `ui/dialogs/trend_following_chart.py`
-  (`TrendFollowingChartDialog`)로 종가+채널+진입/청산 마커, 전략 vs 매수&보유 에쿼티 곡선을 띄운다.
+  트레이드 표(청산 사유·비중·가격수익률 포함)를 표시한다. 세 번째 입력 행이 v2 오버레이(레짐 MA,
+  손절 ATR 배수·모드, 변동성 타깃, 최대 비중)이며 기본값은 모두 off다. "Chart" 버튼은
+  `ui/dialogs/trend_following_chart.py`(`TrendFollowingChartDialog`)로 종가+채널+레짐 MA+손절선+
+  진입/청산 마커, 전략 vs 매수&보유 에쿼티 곡선을 띄운다.
   주문 실행 기능은 없다(연구용). 헤드리스 테스트 `tests/test_trend_following_tab.py` 7개.
 - `run_backtest(df, config)` 반환값: `summary`(5장 지표 + `passes_risk_gate`), `trades`
   (진입/청산일, 보유일, 트레이드 수익률 — 미청산 트레이드는 `exit_date=None`), `equity_curve`,
@@ -170,7 +192,38 @@ tests/strategy/trend_following/
     `run_backtest`로 재현 가능)라 결론을 바꾸지 않는다.
   - 다음 탐색 방향(v2 후보): 손절/ATR 기반 청산, 변동성 타깃 포지션 사이징, 시장 레짐
     필터(예: 200일선 위에서만 진입), 여러 종목 분산 — MDD를 낮추지 않으면 게이트 통과가
-    어렵다.
+    어렵다. → 아래 v2 결과.
+
+- **v2 오버레이 예비 결과 (2026-09-17)** — 같은 6종목·2021-01-01~, Donchian 20/10 고정, 무비용.
+  6종목 평균:
+
+  | 변형 | 평균 CAGR % | 평균 Sharpe | 평균 MDD % | 최대 MDD % | 게이트 통과 |
+  |------|------------|------------|-----------|-----------|-----------|
+  | v1 (20/10) | +14.7 | 0.70 | 27.2 | 51.4 | 0/6 |
+  | 레짐 MA200 | +13.6 | 0.64 | 28.5 | 52.7 | 0/6 |
+  | 손절 3×ATR14 (trailing) | +14.2 | 0.72 | 26.6 | 47.6 | 0/6 |
+  | 손절 2×ATR14 (trailing) | +12.8 | 0.71 | 23.7 | 40.5 | 0/6 |
+  | 변동성 타깃 20% | +9.5 | 0.73 | 18.3 | 28.8 | 0/6 |
+  | 변동성 타깃 15% | +7.4 | 0.72 | 14.2 | 22.3 | 0/6 |
+  | 레짐200 + 손절3 + 타깃20% | +7.8 | 0.73 | 16.0 | 25.1 | 0/6 |
+  | 레짐200 + 손절3 + 타깃15% | +6.1 | 0.73 | 12.5 | 19.4 | 0/6 |
+
+  종목별 상세(전체 8변형 × 6종목 표)는 `run_backtest`로 재현 가능하며, 대표값만 적으면 삼성전자
+  레짐200+손절3+타깃15%는 CAGR +10.5%, Sharpe 1.18, MDD 9.0%(v1: +23.4%, 0.92, 26.8%),
+  SK하이닉스 같은 조합은 +10.3%, 1.11, 10.9%(v1: +42.4%, 1.19, 29.7%)다.
+
+  관찰:
+  - **여전히 게이트 통과 조합은 없다.** v2는 MDD를 크게 낮추지만(평균 27→12.5%, 최대 51→19%)
+    Sharpe는 0.7 안팎에서 거의 움직이지 않는다 — 세 오버레이 모두 수익과 위험을 같은 비율로
+    줄이는 성격이라 위험조정수익은 개선되지 않는다.
+  - 변동성 타깃 사이징이 MDD 감소의 대부분을 만든다(단독으로 27→14%). 손절은 MDD를 소폭 낮추고
+    (3×: −0.6%p, 2×: −3.5%p) 트레이드 수를 늘리며, 레짐 MA200 단독은 오히려 평균이 나빠진다
+    (진입 지연으로 수익 구간을 놓치고 MDD는 그대로).
+  - MDD ≤ 15%는 타깃 15% 이하 사이징으로 개별 종목에서도 대부분 달성된다(삼성전자 9.0%,
+    SK하이닉스 10.9%, AAPL 9.4%). 병목은 Sharpe ≥ 1.5다.
+  - 따라서 다음 단계는 단일 종목 규칙 추가가 아니라 **여러 종목 분산 포트폴리오**(상관이 낮은
+    종목군에 동시 적용해 변동성을 낮추는 방향)와 IS/OOS 검증이다. 단일 종목 롱온리로는 이 게이트를
+    맞추기 어렵다는 것이 v1·v2 결과의 공통 결론이다.
 - 산출 지표: 총수익률, CAGR, 연변동성, Sharpe, MDD, 트레이드 수, 승률, 평균 트레이드
   수익률, 시장노출비중.
 - Risk gate 통과 여부: Sharpe ≥ 1.5, MDD ≤ 15% (1장 참고).
@@ -191,7 +244,10 @@ tests/strategy/trend_following/
       게이트 미통과, v2 방향 도출)
 - [ ] 수수료/슬리피지 반영 여부 결정 — `fee_rate`/`slippage_rate` 파라미터는 구현됨(기본 0),
       5장 결과상 결론에 영향 없음
-- [ ] 리버모어 피라미딩(분할 추가 매수) 반영 여부 — v2 후보
+- [x] v2 오버레이 구현 — ATR 손절(trailing/fixed), 변동성 타깃 사이징, 레짐 MA 필터 (2026-09-17,
+      3장·5장 참고). 게이트는 여전히 미통과(Sharpe 병목).
+- [ ] 여러 종목 분산 포트폴리오 백테스트 (v3 후보 — 5장 v2 관찰 참고)
+- [ ] 리버모어 피라미딩(분할 추가 매수) 반영 여부 — 보류
 - [ ] In-sample / Out-of-sample 분리 검증 방식 결정
 - [ ] paperclipai 재활용 여부 — 알고리즘 개발 프로세스가 안정화된 이후 재검토 (당분간 미사용)
 - [x] 소스 위치를 `data/trend_following/`이 아닌 `src/strategy/trend_following/`로 확정
@@ -216,3 +272,6 @@ tests/strategy/trend_following/
   레짐 필터) 기록.
 - 2026-09-17: UI 연결 — `ui/trend_following_tab.py`(탭), `ui/dialogs/trend_following_chart.py`(차트),
   `threads/fetch_threads.py`의 `TrendFollowingBacktestThread`; 4장·6장 갱신.
+- 2026-09-17: v2 오버레이(레짐 MA 필터, ATR 손절, 변동성 타깃 사이징) 구현 및 UI 입력 행 추가,
+  실데이터 8변형 비교를 5장에 기록. 결론: MDD는 12.5%까지 내려가나 Sharpe 0.7대로 게이트 미통과 →
+  다음은 다종목 분산.

@@ -95,8 +95,9 @@ Dev tooling is in `requirements-dev.txt`
   messages cite the md section numbers, and the md is updated in the same commit as the
   code. Current members: `rebalance/` (weekly factor scoring, classification, walk-forward
   backtest; `rebalance.md`), `ma_cross/` (single-stock MA20/MA60 golden-cross backtest;
-  `ma_cross.md`), and `trend_following/` (Donchian channel breakout: `config.py`,
-  `signals.py` with the no-lookahead `donchian_signal`, `backtest.py` with
+  `ma_cross.md`), and `trend_following/` (Donchian channel breakout with optional v2
+  overlays — regime MA filter, ATR stop, volatility-target sizing, all off by default:
+  `config.py`, `signals.py` with the no-lookahead `donchian_signal`, `backtest.py` with
   `run_backtest` / `run_backtest_for_ticker`; spec and preliminary real-data results in
   `trend_following.md`; UI in `ui/trend_following_tab.py`). Strategy code
   imports from `data.*`; callers import strategy symbols from `strategy.<name>` directly,

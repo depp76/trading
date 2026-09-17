@@ -138,6 +138,53 @@ class TrendFollowingTab(QWidget):
         row2.addStretch()
         root.addLayout(row2)
 
+        # Row 3: v2 overlays (trend_following.md 3 "v2"); 0 = off, so defaults reproduce v1
+        row3 = QHBoxLayout()
+        row3.addWidget(self._lbl("v2 \u2014 Regime MA:"))
+        self._regime_spin = QSpinBox()
+        self._regime_spin.setRange(0, 500)
+        self._regime_spin.setSpecialValueText("off")
+        self._regime_spin.setValue(0)
+        self._regime_spin.setToolTip("Enter only while Close is above this simple moving average (0 = off)")
+        row3.addWidget(self._regime_spin)
+
+        row3.addWidget(self._lbl("Stop ATR\u00d7:"))
+        self._stop_spin = QDoubleSpinBox()
+        self._stop_spin.setRange(0.0, 10.0)
+        self._stop_spin.setDecimals(1)
+        self._stop_spin.setSingleStep(0.5)
+        self._stop_spin.setSpecialValueText("off")
+        self._stop_spin.setValue(0.0)
+        self._stop_spin.setToolTip("Exit when Close falls this many ATRs below the anchor (0 = off)")
+        row3.addWidget(self._stop_spin)
+
+        self._stop_mode_combo = QComboBox()
+        self._stop_mode_combo.addItems(["trailing", "fixed"])
+        self._stop_mode_combo.setToolTip("trailing: anchor = highest close since entry; fixed: anchor = entry close")
+        row3.addWidget(self._stop_mode_combo)
+
+        row3.addWidget(self._lbl("Vol target:"))
+        self._vol_spin = QDoubleSpinBox()
+        self._vol_spin.setRange(0.0, 100.0)
+        self._vol_spin.setDecimals(1)
+        self._vol_spin.setSingleStep(1.0)
+        self._vol_spin.setSuffix(" %")
+        self._vol_spin.setSpecialValueText("off")
+        self._vol_spin.setValue(0.0)
+        self._vol_spin.setToolTip("Size each trade to this annualised volatility (0 = off, full weight)")
+        row3.addWidget(self._vol_spin)
+
+        row3.addWidget(self._lbl("Max weight:"))
+        self._maxw_spin = QDoubleSpinBox()
+        self._maxw_spin.setRange(0.1, 3.0)
+        self._maxw_spin.setDecimals(1)
+        self._maxw_spin.setSingleStep(0.1)
+        self._maxw_spin.setValue(1.0)
+        self._maxw_spin.setToolTip("Cap on the position weight (1.0 = no leverage)")
+        row3.addWidget(self._maxw_spin)
+        row3.addStretch()
+        root.addLayout(row3)
+
         # Summary metrics (one row, one column per metric)
         self._summary_tbl = QTableWidget(1, len(_METRICS) + 1)
         self._summary_tbl.setHorizontalHeaderLabels([label for _, label, _ in _METRICS] + ["Risk gate"])
@@ -153,8 +200,9 @@ class TrendFollowingTab(QWidget):
         trades_lbl = QLabel("Trades")
         trades_lbl.setFont(create_font(11, QFont.Weight.Bold))
         root.addWidget(trades_lbl)
-        self._trades_tbl = QTableWidget(0, 5)
-        self._trades_tbl.setHorizontalHeaderLabels(["#", "Entry", "Exit", "Days", "Return %"])
+        self._trades_tbl = QTableWidget(0, 8)
+        self._trades_tbl.setHorizontalHeaderLabels(
+            ["#", "Entry", "Exit", "Reason", "Days", "Weight", "Price %", "Return %"])
         self._trades_tbl.setFont(create_font(9, style_name="Semilight"))
         self._trades_tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._trades_tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -221,6 +269,11 @@ class TrendFollowingTab(QWidget):
             exit_n=int(self._exit_spin.value()),
             fee_rate=float(self._fee_spin.value()) / 100.0,
             slippage_rate=float(self._slip_spin.value()) / 100.0,
+            regime_ma_n=int(self._regime_spin.value()),
+            stop_atr_mult=float(self._stop_spin.value()),
+            stop_mode=self._stop_mode_combo.currentText(),
+            vol_target_pct=float(self._vol_spin.value()),
+            max_weight=float(self._maxw_spin.value()),
         )
 
     def _read_inputs(self):
@@ -263,9 +316,19 @@ class TrendFollowingTab(QWidget):
         self._render(result)
         self._chart_btn.setEnabled(True)
         s = result["summary"]
+        v2 = s.get("v2") or {}
+        overlays = []
+        if v2.get("regime_ma_n"):
+            overlays.append(f"regime MA{v2['regime_ma_n']}")
+        if v2.get("stop_atr_mult"):
+            overlays.append(f"{v2['stop_mode']} stop {v2['stop_atr_mult']:g}×ATR{v2['atr_n']}")
+        if v2.get("vol_target_pct"):
+            overlays.append(f"vol target {v2['vol_target_pct']:g}% (max {v2['max_weight']:g})")
+        exits = (f" | exits: {s.get('n_channel_exits', 0)} channel / {s.get('n_stop_exits', 0)} stop"
+                 if v2.get("stop_atr_mult") else "")
         self._status_lbl.setText(
             f"{self._last_ticker}: {s['start_date']} → {s['end_date']} ({s['n_days']} days), "
-            f"Donchian {s['entry_n']}/{s['exit_n']}"
+            f"Donchian {s['entry_n']}/{s['exit_n']}" + (" + " + ", ".join(overlays) if overlays else " (v1)") + exits
         )
 
     def _on_chart_clicked(self):
@@ -303,18 +366,26 @@ class TrendFollowingTab(QWidget):
             right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             for r, t in enumerate(trades):
                 ret = t.get("return_pct", 0.0)
+                px = t.get("price_return_pct", 0.0)
+                reason = t.get("exit_reason") or ("open" if not t.get("exit_date") else "")
                 cells = [
                     (str(r + 1), Qt.AlignmentFlag.AlignCenter),
                     (t.get("entry_date", ""), Qt.AlignmentFlag.AlignCenter),
                     (t.get("exit_date") or "open", Qt.AlignmentFlag.AlignCenter),
+                    (reason, Qt.AlignmentFlag.AlignCenter),
                     (str(t.get("days_held", 0)), right),
+                    (f"{t.get('weight', 1.0):.2f}", right),
+                    (f"{px:+.2f}%", right),
                     (f"{ret:+.2f}%", right),
                 ]
                 for c, (text, align) in enumerate(cells):
                     it = QTableWidgetItem(text)
                     it.setTextAlignment(align)
-                    if c == 4:
-                        it.setForeground(QColor("#c0392b" if ret > 0 else "#2980b9" if ret < 0 else "#555"))
+                    if c in (6, 7):
+                        v = px if c == 6 else ret
+                        it.setForeground(QColor("#c0392b" if v > 0 else "#2980b9" if v < 0 else "#555"))
+                    if c == 3 and reason == "stop":
+                        it.setForeground(QColor("#d35400"))
                     tt.setItem(r, c, it)
         finally:
             tt.setUpdatesEnabled(True)
