@@ -1,23 +1,19 @@
 """data_fetcher.py — Facade module for the data package.
 
-Re-exports all market data fetchers, caching structures, indicators, backtesting
-functions, and rebalancing algorithms from the modular `data/` package for complete
-backward compatibility with existing callers and tests.
+Re-exports the public market data fetchers, caching structures, and indicators
+from the modular `data/` package so UI/thread callers can keep importing from
+one place. Strategy code is *not* re-exported here: import it from the
+`strategy` package directly (e.g. `from strategy.rebalance import ...`,
+`from strategy.ma_cross import run_backtest_strategy`), see trading.md 11-5.
+
+This module is a pure re-export: nothing in `data/` imports it back, and
+tests patch the real implementation modules (`data.cache`, `data.market`,
+`data.collectors.*`) rather than names on this facade (roadmap 6-2a).
 """
-
-import logging
-import FinanceDataReader as fdr
-import yfinance as yf
-import requests
-import pandas as pd
-import polars as pl
-import numpy as np
-
-logger = logging.getLogger(__name__)
 
 from data import (
     # Cache & Sessions
-    _START_DATE,
+    start_date,
     _TD_PERIODS,
     _CHANGE_KEYS,
     _FDR_ONLY_TICKERS,
@@ -29,8 +25,7 @@ from data import (
     _HIST_CACHE,
     _HIST_CACHE_LOCK,
     _HIST_CACHE_MAX,
-    _HIST_CACHE_HITS,
-    _HIST_CACHE_MISSES,
+    _HIST_CACHE_STATS,
     _HIST_CACHE_LOG_INTERVAL,
     _YF_SESSION,
     _NAVER_SESSION,
@@ -41,6 +36,7 @@ from data import (
     _hist_df_is_stale,
     _pdf_is_stale,
     safe_float,
+    is_kr_code,
 
     # Indicators
     _to_polars,
@@ -113,24 +109,4 @@ from data import (
     fetch_stock_ma_multi,
     fetch_indice_as_stock,
     fetch_major_indices_as_stocks,
-
-    # Backtest
-    run_backtest_strategy,
-    run_backtest_for_stock,
-    run_bulk_backtest_chunk,
-
-    # Rebalance
-    RebalanceConfig,
-    _REBALANCE_FACTORS,
-    _REBALANCE_MIN_FACTORS,
-    _extract_live_candidates,
-    _score_and_rank,
-    _classify_buy_sell_hold,
-    compute_weekly_rebalance_signals,
-    _rebalance_friday_dates,
-    _compute_historical_factor_series,
-    _factor_snapshot_as_of,
-    _run_walkforward_simulation,
-    _summarize_backtest,
-    run_rebalance_backtest,
 )

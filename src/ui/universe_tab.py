@@ -22,10 +22,7 @@ Cross-tab communication (mirrors the TradingHistoryTab pattern from Phase 4):
     History tab's realtime price update (mirrors the original call to
     trading_history_tab._start_realtime_price_update()).
 """
-import json
 import logging
-import os
-import traceback
 from collections import Counter
 from datetime import datetime
 
@@ -36,7 +33,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 
-import gemini_helper
+from paths import UNIVERSE_CACHE_FILE, CUSTOM_SETTINGS_FILE
 from threads.fetch_threads import (
     SingleStockFetchThread,
     AllDataFetchThread,
@@ -55,6 +52,7 @@ from ui.common import (
     _MARKET_ORDER,
     atomic_save_json,
     safe_load_json,
+    retire_thread,
 )
 
 
@@ -79,7 +77,7 @@ class UniverseTab(QWidget):
         self.load_custom_settings()
 
         # Try to load cached universe data to make startup instant, but always refresh to latest afterwards.
-        cached = safe_load_json("universe_cache.json", default=None)
+        cached = safe_load_json(UNIVERSE_CACHE_FILE, default=None)
         if cached:
             self.all_data = cached
             self.table.load_data(self.all_data, self.custom_settings.get("highlights", {}))
@@ -177,7 +175,7 @@ class UniverseTab(QWidget):
 
     def load_custom_settings(self):
         self.custom_settings = {"added": [], "deleted": [], "highlights": {}}
-        data = safe_load_json("custom_settings.json", default={})
+        data = safe_load_json(CUSTOM_SETTINGS_FILE, default={})
         if data:
             self.custom_settings.update(data)
             # Migration: old array "highlighted" -> dict "highlights"
@@ -190,7 +188,7 @@ class UniverseTab(QWidget):
 
     def save_custom_settings(self):
         try:
-            atomic_save_json("custom_settings.json", self.custom_settings)
+            atomic_save_json(CUSTOM_SETTINGS_FILE, self.custom_settings)
         except Exception:
             logger.warning("Failed to save custom_settings.json", exc_info=True)
 
@@ -283,18 +281,7 @@ class UniverseTab(QWidget):
         self.add_ticker_btn.setEnabled(False)
         self.status_text_changed.emit(f"Fetching '{ticker}' from {market}...")
 
-        if getattr(self, '_single_fetch_thread', None) is not None:
-            try:
-                if self._single_fetch_thread.isRunning():
-                    try: self._single_fetch_thread.finished.disconnect()
-                    except Exception: pass
-                    if not hasattr(self, '_zombie_threads'): self._zombie_threads = []
-                    self._zombie_threads = [t for t in self._zombie_threads if t.isRunning()]
-                    self._zombie_threads.append(self._single_fetch_thread)
-            except RuntimeError:
-                pass
-            self._single_fetch_thread = None
-
+        retire_thread(self, '_single_fetch_thread')
         self._single_fetch_thread = SingleStockFetchThread(market, ticker)
         self._single_fetch_thread.finished.connect(lambda r, e: self.on_single_stock_loaded(r, e, False))
         self._single_fetch_thread.start()
@@ -356,8 +343,6 @@ class UniverseTab(QWidget):
 
     def _show_ai_filter_dialog(self):
         """Open a dialog to input a natural-language filter query, call Gemini, and apply conditions."""
-        from PyQt6.QtWidgets import QApplication, QTextEdit
-
         dlg = QDialog(self)
         dlg.setWindowTitle("🤖 AI Natural Language Filter")
         dlg.resize(500, 220)
@@ -550,18 +535,7 @@ class UniverseTab(QWidget):
         self.market_status = {m: "Waiting" for m in ("Indices", "KOSPI", "KOSDAQ")} #, "NASDAQ 100", "S&P500")}
         self.update_status_display()
 
-        if getattr(self, 'fetch_thread', None) is not None:
-            try:
-                if self.fetch_thread.isRunning():
-                    try: self.fetch_thread.disconnect()
-                    except Exception: pass
-                    if not hasattr(self, '_zombie_threads'): self._zombie_threads = []
-                    self._zombie_threads = [t for t in self._zombie_threads if t.isRunning()]
-                    self._zombie_threads.append(self.fetch_thread)
-            except RuntimeError:
-                pass
-            self.fetch_thread = None
-
+        retire_thread(self, 'fetch_thread')
         self.fetch_thread = AllDataFetchThread()
         self.fetch_thread.market_loaded.connect(self.on_market_loaded)
         self.fetch_thread.market_progress.connect(self.on_market_progress)
@@ -676,7 +650,7 @@ class UniverseTab(QWidget):
 
             # Cache the newly fetched data
             try:
-                atomic_save_json("universe_cache.json", self.all_data)
+                atomic_save_json(UNIVERSE_CACHE_FILE, self.all_data)
             except Exception as e:
                 logger.warning("Error caching universe data: %s", e, exc_info=True)
 
@@ -713,4 +687,5 @@ class UniverseTab(QWidget):
         sft = getattr(self, '_single_fetch_thread', None)
         if sft is not None:
             threads.append(sft)
+        threads.extend(getattr(self, '_zombie_threads', []))
         return threads

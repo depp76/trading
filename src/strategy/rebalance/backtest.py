@@ -1,13 +1,13 @@
-"""data/rebalance/backtest.py — Walk-forward backtest orchestration and performance summary (trading.md 11-2)."""
+"""strategy/rebalance/backtest.py — Walk-forward backtest orchestration and performance summary (trading.md 11-2)."""
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import polars as pl
 
 from data.market import get_historical_data
-from data.rebalance.config import RebalanceConfig
-from data.rebalance.classify import _DEFAULT_TOP_N_BY_MARKET
-from data.rebalance.walkforward import (
+from strategy.rebalance.config import RebalanceConfig
+from strategy.rebalance.classify import _DEFAULT_TOP_N_BY_MARKET
+from strategy.rebalance.walkforward import (
     _compute_historical_factor_series,
     _rebalance_friday_dates,
     _run_walkforward_simulation,

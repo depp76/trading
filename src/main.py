@@ -1,53 +1,45 @@
 import sys
-import json
 import os
-import datetime as _dt
 from dotenv import load_dotenv
-from datetime import datetime
 import trade_db
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLineEdit,
     QLabel, QTabWidget,
     QCheckBox,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont, QShortcut, QKeySequence
 
+from paths import ENV_FILE, APP_LOG_FILE
 from ui.common import (
     create_font,
-    _fmt_num_edit,
-    _set_field_error,
-    _validate_date_str,
-    _validate_positive_number,
-    _mk_field_validator,
     _ACCENT_COLOR,
     _ACCENT_HOVER_COLOR,
-    _HIST_KEYS,
-    _MARKET_ORDER,
-    _FIELD_ERROR_STYLE,
-    atomic_save_json,
-    safe_load_json,
+    FONT_FAMILY_CSS,
 )
 
-load_dotenv()
+load_dotenv(ENV_FILE)
 
 import logging
 logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
 
 # ── Structured logging setup ──────────────────────────────────────────────────
+# Root logger at INFO: WARNING+ goes to both app.log and the console, and INFO
+# (e.g. _HIST_CACHE hit/miss stats, auto-backup completion) goes to app.log only.
+# Leaving the root at DEBUG would make every third-party library's debug records
+# get built and then thrown away by the handlers (roadmap 6-1a).
 _log_formatter = logging.Formatter(
     "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-_file_handler = logging.FileHandler("app.log", encoding="utf-8")
-_file_handler.setLevel(logging.WARNING)
+_file_handler = logging.FileHandler(APP_LOG_FILE, encoding="utf-8")
+_file_handler.setLevel(logging.INFO)
 _file_handler.setFormatter(_log_formatter)
 _stream_handler = logging.StreamHandler()
 _stream_handler.setLevel(logging.WARNING)
 _stream_handler.setFormatter(_log_formatter)
-logging.basicConfig(level=logging.DEBUG, handlers=[_file_handler, _stream_handler])
-logger = logging.getLogger(__name__)  # 'main' — module-level logger for main.py
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _stream_handler])
+logger = logging.getLogger(__name__)  # module-level logger for main.py
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -252,26 +244,26 @@ if __name__ == "__main__":
             background-color: white;
             alternate-background-color: #f9f9f9;
             gridline-color: #d0d0d0;
-            font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
+            {FONT_FAMILY_CSS}
         }}
         QHeaderView::section {{
             background-color: #e0e0e0;
             padding: 4px;
             border: 1px solid #d0d0d0;
             font-weight: bold;
-            font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
+            {FONT_FAMILY_CSS}
         }}
         QLineEdit {{
             padding: 5px;
             border: 1px solid #c0c0c0;
             border-radius: 4px;
-            font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
+            {FONT_FAMILY_CSS}
         }}
         QComboBox {{
             padding: 5px;
             border: 1px solid #c0c0c0;
             border-radius: 4px;
-            font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
+            {FONT_FAMILY_CSS}
         }}
         QPushButton {{
             padding: 8px 16px;
@@ -280,7 +272,7 @@ if __name__ == "__main__":
             border: none;
             border-radius: 4px;
             font-weight: bold;
-            font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
+            {FONT_FAMILY_CSS}
         }}
         QPushButton:hover {{ background-color: {_ACCENT_HOVER_COLOR}; }}
         QPushButton:disabled {{ background-color: #cccccc; }}
@@ -296,7 +288,7 @@ if __name__ == "__main__":
             border: 1px solid #d0d0d0;
             padding: 10px 30px;
             font-weight: bold;
-            font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
+            {FONT_FAMILY_CSS}
         }}
         QTabBar::tab:selected {{
             background: white;

@@ -1,11 +1,10 @@
 """data/indicators.py — Technical indicator calculations using Polars & NumPy."""
 from datetime import datetime, timedelta
 import polars as pl
-import pandas as pd
 import numpy as np
 import logging
 
-from data.cache import _START_DATE, _CHANGE_KEYS, _TD_PERIODS
+from data.cache import start_date, _CHANGE_KEYS, _TD_PERIODS
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +89,7 @@ def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
     try:
         if df_pd is None:
             from data.market import get_historical_data
-            df = get_historical_data(ticker, _START_DATE)
+            df = get_historical_data(ticker, start_date())
         else:
             df = _to_polars(df_pd)
         if df.is_empty():
@@ -162,7 +161,7 @@ def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
             if ma20_5d_ago > 0:
                 changes["ma20_roc_1w"] = (ma20_today / ma20_5d_ago - 1) * 100
 
-    except Exception as e:
+    except Exception:
         logger.error("fetch_historical_changes failed for ticker=%s", ticker, exc_info=True)
 
     return changes

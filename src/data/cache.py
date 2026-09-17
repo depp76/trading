@@ -1,20 +1,31 @@
 """data/cache.py — In-memory caching, sessions, and timing helpers."""
-import datetime as _dt
-from datetime import datetime, timedelta, date as _date
+from datetime import datetime, timedelta
 from collections import OrderedDict
 import threading
 import logging
 import urllib3
 import requests
 from requests.adapters import HTTPAdapter
-import polars as pl
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Pre-compute start_date at module level — 410 days ≈ 285 trading days,
-# safely covers 200D + YTD lookback.
-_START_DATE = (datetime.now() - timedelta(days=410)).strftime("%Y-%m-%d")
+def start_date() -> str:
+    """Lookback start (YYYY-MM-DD) for the daily-history fetches: 410 calendar
+    days back (about 285 trading days) safely covers the 200D MA + YTD windows.
+    Computed per call rather than once at import so a session left running
+    across midnight keeps a correct window (roadmap 6-2f)."""
+    return (datetime.now() - timedelta(days=410)).strftime("%Y-%m-%d")
+
+
+def is_kr_code(ticker) -> bool:
+    """True for a 6-character KRX stock/ETF/ETN code (digits, occasionally with
+    a letter for preferred/ETN issues), as opposed to a US symbol or an index
+    alias. Shared by the fetch routing in data/market.py and the KR/US split in
+    ui/history_tab.py (roadmap 6-2e)."""
+    t = str(ticker or "")
+    return len(t) == 6 and "." not in t and any(c.isdigit() for c in t)
+
+
 _TD_PERIODS = {"3d": 3, "5d": 5, "10d": 10, "20d": 20, "60d": 60, "120d": 120}
 _CHANGE_KEYS = tuple(_TD_PERIODS.keys())
 
@@ -43,13 +54,15 @@ _MISC_CACHE_LOCK = threading.Lock()
 # Shared history cache — only non-empty DataFrames are stored,
 # so transient fetch failures (e.g. during parallel startup) are retried.
 # Capped at _HIST_CACHE_MAX entries; least-recently-used entries are evicted first.
-_HIST_CACHE: "OrderedDict[tuple, pl.DataFrame]" = OrderedDict()
+_HIST_CACHE: OrderedDict = OrderedDict()  # (ticker, start) -> polars DataFrame
 _HIST_CACHE_LOCK = threading.Lock()
 _HIST_CACHE_MAX = 1000  # Maximum number of tickers cached in memory
 
 # ── Cache efficiency monitoring (see get_historical_data / _log_hist_cache_stats) ──
-_HIST_CACHE_HITS = 0
-_HIST_CACHE_MISSES = 0
+# Counters live in one mutable dict rather than two module-level ints so that
+# every importer (data.market, the data_fetcher facade, tests) shares the same
+# object instead of a stale copy of an int (roadmap 6-2a).
+_HIST_CACHE_STATS: dict = {"hits": 0, "misses": 0}
 _HIST_CACHE_LOG_INTERVAL = 100  # log the hit/miss ratio every N lookups
 
 
@@ -99,34 +112,28 @@ def _get_yf_crumb(force_refresh: bool = False):
         return _YF_CRUMB
 
 
+def _record_hist_cache_lookup(hit: bool) -> None:
+    """Count one _HIST_CACHE lookup and emit the periodic stats line."""
+    _HIST_CACHE_STATS["hits" if hit else "misses"] += 1
+    _log_hist_cache_stats()
+
+
 def _log_hist_cache_stats() -> None:
     """Log _HIST_CACHE's cumulative hit/miss ratio at INFO level every
     _HIST_CACHE_LOG_INTERVAL lookups, so cache effectiveness is visible in app.log
     without adding per-call noise."""
-    try:
-        import data_fetcher as _df_mod
-        hits = getattr(_df_mod, "_HIST_CACHE_HITS", _HIST_CACHE_HITS)
-        misses = getattr(_df_mod, "_HIST_CACHE_MISSES", _HIST_CACHE_MISSES)
-        interval = getattr(_df_mod, "_HIST_CACHE_LOG_INTERVAL", _HIST_CACHE_LOG_INTERVAL)
-        log_obj = getattr(_df_mod, "logger", logger)
-        max_size = getattr(_df_mod, "_HIST_CACHE_MAX", _HIST_CACHE_MAX)
-    except Exception:
-        hits = _HIST_CACHE_HITS
-        misses = _HIST_CACHE_MISSES
-        interval = _HIST_CACHE_LOG_INTERVAL
-        log_obj = logger
-        max_size = _HIST_CACHE_MAX
-
+    hits = _HIST_CACHE_STATS["hits"]
+    misses = _HIST_CACHE_STATS["misses"]
     total = hits + misses
-    if total and total % interval == 0:
+    if total and total % _HIST_CACHE_LOG_INTERVAL == 0:
         hit_rate = hits / total * 100
-        log_obj.info(
+        logger.info(
             "_HIST_CACHE stats: %d hits / %d misses (%.1f%% hit rate), size=%d/%d",
-            hits, misses, hit_rate, len(_HIST_CACHE), max_size,
+            hits, misses, hit_rate, len(_HIST_CACHE), _HIST_CACHE_MAX,
         )
 
 
-def _hist_df_is_stale(df: "pl.DataFrame") -> bool:
+def _hist_df_is_stale(df) -> bool:
     """True if a cached polars daily-history df (with a "Date" column) predates
     today and today could plausibly have new data (i.e. today is a weekday).
     Used so session-lifetime caches don't keep serving yesterday's snapshot

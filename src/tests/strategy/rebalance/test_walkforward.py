@@ -1,12 +1,12 @@
 """
-tests/rebalance/test_walkforward.py — data/rebalance/walkforward.py 거래비용 검증 (trading.md 11-3)
+tests/strategy/rebalance/test_walkforward.py — strategy/rebalance/walkforward.py 거래비용 검증 (trading.md 11-3)
 """
 import os
 import sys
 import unittest
 from datetime import date
 
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, _PROJ_ROOT)
 
 import polars as pl
@@ -29,8 +29,7 @@ class TestRebalanceTransactionCosts(unittest.TestCase):
         })
 
     def test_fee_and_tax_deducted_in_simulation(self):
-        from data_fetcher import _run_walkforward_simulation, _summarize_backtest
-        from datetime import date
+        from strategy.rebalance import _run_walkforward_simulation, _summarize_backtest
 
         dates = [date(2025, 1, 3), date(2025, 1, 10), date(2025, 1, 17)]
         # Ticker A starts strong (scores high), then weakens

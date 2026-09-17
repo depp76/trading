@@ -11,7 +11,7 @@ import pandas as pd
 import polars as pl
 import logging
 
-from data.cache import _KR3Y_CACHE, _MISC_CACHE_LOCK, _NAVER_SESSION, _pdf_is_stale, safe_float
+from data.cache import _KR3Y_CACHE, _MISC_CACHE_LOCK, _NAVER_SESSION, _pdf_is_stale
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +194,20 @@ def fetch_naver_per_batch(codes: list, max_workers: int = 30) -> tuple:
     return tper_map, fper_map
 
 
+def _parse_marcap_krw(text: str) -> int:
+    """Naver market-cap text -> KRW int. Naver formats it in 억 (100M KRW) units,
+    optionally with a 조 (1T KRW) prefix: "12조3,456" or "3,456"."""
+    if '조' in text:
+        parts = text.split('조')
+        jo = int(re.sub(r'[^\d]', '', parts[0]) or 0)
+        eok = int(re.sub(r'[^\d]', '', parts[1]) or 0) if len(parts) > 1 else 0
+        total_eok = jo * 10000 + eok
+    else:
+        cleaned = re.sub(r'[^\d]', '', text)
+        total_eok = int(cleaned) if cleaned else 0
+    return total_eok * 100_000_000
+
+
 def _fetch_naver_info(code: str) -> tuple:
     """Fallback: fetch market cap and real name from Naver Finance item integration API or page."""
     # First attempt: mobile integration API (clean JSON, reliable)
@@ -206,16 +220,7 @@ def _fetch_naver_info(code: str) -> tuple:
             marcap = 0
             for item in data.get("totalInfos", []):
                 if item.get("code") == "marketValue" or item.get("key") == "시총":
-                    val = item.get("value", "")
-                    if "조" in val:
-                        parts = val.split("조")
-                        jo = int(re.sub(r'[^\d]', '', parts[0]) or 0)
-                        eok = int(re.sub(r'[^\d]', '', parts[1]) or 0) if len(parts) > 1 else 0
-                        total_eok = jo * 10000 + eok
-                    else:
-                        cleaned = re.sub(r'[^\d]', '', val)
-                        total_eok = int(cleaned) if cleaned else 0
-                    marcap = total_eok * 100_000_000
+                    marcap = _parse_marcap_krw(item.get("value", ""))
                     break
             if name or marcap > 0:
                 return name, marcap
@@ -246,15 +251,7 @@ def _fetch_naver_info(code: str) -> tuple:
         marcap = 0
         if m:
             txt = m.group(2).replace(',', '').replace('\n', '').replace('\t', '').strip()
-            if '조' in txt:  # '조' = Korean unit for 1 trillion (10^12)
-                parts = txt.split('조')
-                jo = int(re.sub(r'[^\d]', '', parts[0]) or 0)
-                eok = int(re.sub(r'[^\d]', '', parts[1]) or 0) if len(parts) > 1 else 0
-                total_eok = jo * 10000 + eok
-            else:
-                cleaned = re.sub(r'[^\d]', '', txt)
-                total_eok = int(cleaned) if cleaned else 0
-            marcap = total_eok * 100_000_000
+            marcap = _parse_marcap_krw(txt)
         return name, marcap
     except Exception:
         logger.debug("Naver info fetch failed for code=%s", code, exc_info=True)
@@ -336,7 +333,7 @@ def _get_kr3y_df():
                         .set_index('Date'))
             _KR3Y_CACHE["df"] = hist
             return hist
-        except Exception as e:
+        except Exception:
             logger.error("KR3Y fetch failed", exc_info=True)
             return cached
 
@@ -348,7 +345,7 @@ def _fetch_index_investor_trend(market: str, days: int = 60) -> list:
         res = _NAVER_SESSION.get(url_price, timeout=5)
         res.raise_for_status()
         price_data = res.json()
-    except Exception as e:
+    except Exception:
         logger.error("Error fetching %s investor trend dates", market, exc_info=True)
         return []
 
@@ -438,7 +435,7 @@ def _fetch_investor_trend_naver(ticker: str, days: int = 60) -> list:
                         })
                     except ValueError:
                         pass
-        except Exception as e:
+        except Exception:
             logger.warning("[_fetch_investor_trend_naver] Error for ticker=%s page=%d", ticker, page, exc_info=True)
         return page_rows
 
@@ -568,6 +565,6 @@ def fetch_quarterly_financials(ticker: str, market: str):
                 })
 
             return rows
-    except Exception as e:
+    except Exception:
         logger.error("Quarterly financials fetch failed for ticker=%s", ticker, exc_info=True)
         return []

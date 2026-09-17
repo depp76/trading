@@ -5,8 +5,6 @@ Contains:
   TradingRecordTab
 """
 import logging
-import os
-import json
 import datetime as _dt
 from datetime import datetime
 
@@ -18,6 +16,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
 
+from paths import TRADING_RECORD_FILE
 from data_fetcher import get_usd_krw_rate_for_date, get_index_close_for_date
 from ui.widgets import GroupedHeaderView
 from ui.dialogs import TotalAssetsGraphDialog
@@ -25,13 +24,13 @@ from ui.dialogs import TotalAssetsGraphDialog
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, atomic_save_json, safe_load_json
+from ui.common import create_font, atomic_save_json, safe_load_json, FONT_FAMILY_CSS
 
 
 class TradingRecordTab(QWidget):
     """Tab for recording periodic total-asset snapshots with weekly/cumulative return calculations."""
 
-    _JSON_FILE = "trading_record.json"
+    _JSON_FILE = TRADING_RECORD_FILE
     _COLS_SUB = [
         "Date", "KOSPI", "", "", "Total Assets", "", "", "", "",
         "USD/KRW", "Total Assets($)", "", "", "", ""
@@ -57,7 +56,7 @@ class TradingRecordTab(QWidget):
         self._date_combo.setFont(create_font(10, style_name="Semilight"))
         self._date_combo.setFixedWidth(150)
         self._date_combo.setStyleSheet(
-            "QComboBox { border:1px solid #ccc; border-radius:4px; padding:4px 6px; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 10pt; }"
+            "QComboBox { border:1px solid #ccc; border-radius:4px; padding:4px 6px; " + FONT_FAMILY_CSS + " font-size: 10pt; }"
         )
         for label, _ in self._friday_dates():
             self._date_combo.addItem(label)
@@ -71,7 +70,7 @@ class TradingRecordTab(QWidget):
         self._asset_edit.setFixedWidth(120)
         self._asset_edit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._asset_edit.setStyleSheet(
-            "QLineEdit { border:1px solid #ccc; border-radius:4px; padding:4px 6px; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 10pt; }"
+            "QLineEdit { border:1px solid #ccc; border-radius:4px; padding:4px 6px; " + FONT_FAMILY_CSS + " font-size: 10pt; }"
         )
         self._asset_edit.textEdited.connect(self._fmt_asset_input)
 
@@ -79,7 +78,7 @@ class TradingRecordTab(QWidget):
         add_btn.setFont(create_font(10, QFont.Weight.Bold))
         add_btn.setFixedHeight(32)
         add_btn.setStyleSheet(
-            "QPushButton { background:#0078d4; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; }"
+            "QPushButton { background:#0078d4; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
             "QPushButton:hover { background:#005a9e; }"
         )
         add_btn.clicked.connect(self._add_record)
@@ -88,7 +87,7 @@ class TradingRecordTab(QWidget):
         del_btn.setFont(create_font(10, QFont.Weight.Bold))
         del_btn.setFixedHeight(32)
         del_btn.setStyleSheet(
-            "QPushButton { background:#c0392b; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; }"
+            "QPushButton { background:#c0392b; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
             "QPushButton:hover { background:#a93226; }"
         )
         del_btn.clicked.connect(self._delete_selected)
@@ -97,7 +96,7 @@ class TradingRecordTab(QWidget):
         today_btn.setFont(create_font(10, QFont.Weight.Bold))
         today_btn.setFixedHeight(32)
         today_btn.setStyleSheet(
-            "QPushButton { background:#107c10; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; }"
+            "QPushButton { background:#107c10; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
             "QPushButton:hover { background:#0b5e0b; }"
         )
         def _select_latest():
@@ -149,7 +148,7 @@ class TradingRecordTab(QWidget):
         graph_btn.setFont(create_font(10, QFont.Weight.Bold))
         graph_btn.setFixedHeight(32)
         graph_btn.setStyleSheet(
-            "QPushButton { background:#8e44ad; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; }"
+            "QPushButton { background:#8e44ad; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
             "QPushButton:hover { background:#732d91; }"
         )
         graph_btn.clicked.connect(self._show_graph)
@@ -188,7 +187,7 @@ class TradingRecordTab(QWidget):
             self._table.horizontalHeader().setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Fixed)
             self._table.setColumnWidth(col_idx, width)
         self._table.setStyleSheet(
-            "QTableWidget { gridline-color: #d0d0d0; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 9pt; }"
+            "QTableWidget { gridline-color: #d0d0d0; " + FONT_FAMILY_CSS + " font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
         )
         self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)

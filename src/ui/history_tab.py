@@ -6,10 +6,9 @@ Contains:
 """
 import logging
 import datetime as _dt
-from datetime import datetime
 
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QTableWidget, QTableWidgetItem, QLineEdit, QPushButton,
     QLabel, QHeaderView, QComboBox, QMessageBox, QDialog, QFrame,
     QInputDialog,
@@ -18,10 +17,14 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 
 import trade_db
-import gemini_helper
-from data_fetcher import fetch_account_deposit
+from data_fetcher import is_kr_code
 
-from threads.fetch_threads import PositionPriceFetchThread, GeminiDiagnosisThread
+from threads.fetch_threads import (
+    PositionPriceFetchThread,
+    GeminiDiagnosisThread,
+    AccountDepositThread,
+    SingleStockFetchThread,
+)
 from threads.realtime import RealtimePriceThread
 from ui.widgets import GroupedHeaderView
 from ui.dialogs import (
@@ -34,7 +37,7 @@ from ui.dialogs import (
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, _fmt_num_edit
+from ui.common import create_font, _fmt_num_edit, FONT_FAMILY_CSS, retire_thread
 
 
 class TradingHistoryTab(QWidget):
@@ -85,8 +88,10 @@ class TradingHistoryTab(QWidget):
         self._price_thread: QThread | None = None
         self._ai_diagnosis_thread = None
         self._ai_diagnosis_loading_dlg = None
+        self._deposit_thread = None
+        self._ticker_resolve_threads: list = []
         self._row_data: list = []   # (kind, rec) per visible table row
-        self._settings = QSettings("MyCompany", "PortfolioManager")
+        self._settings = QSettings("PortfolioManagement", "PortfolioManagement")
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
         self._settings_save_timer.setInterval(400)
@@ -94,14 +99,33 @@ class TradingHistoryTab(QWidget):
         self._build_ui()
         self._load_settings()
 
-        # Real-time price update timer (1 min)
-        self._rt_price_timer = QTimer(self)
-        self._rt_price_timer.setInterval(60000)
-        self._rt_price_timer.timeout.connect(self._start_realtime_price_update)
+        # Real-time price refresh is driven solely by MainWindow's global 60s
+        # auto-update timer (UniverseTab.auto_lightweight_tick ->
+        # _start_realtime_price_update), so the "Auto Update" checkbox really
+        # does stop KIS/Yahoo polling. This tab used to run its own unconditional
+        # QTimer on top of that (roadmap 6-1b).
         self._rt_price_thread = None
-        self._rt_price_timer.start()
+
+    _SETTINGS_KEYS = ("principal", "deposit", "withdrawal")
+    # QSettings scope the app shipped with before roadmap 6-2f; read once so the
+    # user does not lose the saved principal/deposit/withdrawal on upgrade.
+    _LEGACY_SETTINGS_SCOPE = ("MyCompany", "PortfolioManager")
+
+    def _migrate_legacy_settings(self):
+        if any(self._settings.value(f"trading_history/{k}", "") for k in self._SETTINGS_KEYS):
+            return
+        legacy = QSettings(*self._LEGACY_SETTINGS_SCOPE)
+        migrated = False
+        for k in self._SETTINGS_KEYS:
+            v = legacy.value(f"trading_history/{k}", "")
+            if v:
+                self._settings.setValue(f"trading_history/{k}", v)
+                migrated = True
+        if migrated:
+            logger.info("Migrated Trading History settings from legacy QSettings scope")
 
     def _load_settings(self):
+        self._migrate_legacy_settings()
         principal   = self._settings.value("trading_history/principal", "")
         deposit     = self._settings.value("trading_history/deposit", "")
         withdrawal  = self._settings.value("trading_history/withdrawal", "")
@@ -180,7 +204,7 @@ class TradingHistoryTab(QWidget):
                 border-radius: 6px;
                 background-color: #ffffff;
                 gridline-color: #e4e4e4;
-                font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
+                """ + FONT_FAMILY_CSS + """
                 font-size: 12px;
                 font-weight: bold;
                 color: #1a1a2e;
@@ -190,7 +214,7 @@ class TradingHistoryTab(QWidget):
                 border: none;
                 border-right: 1px solid #d0d0d0;
                 border-bottom: 1px solid #d0d0d0;
-                font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';
+                """ + FONT_FAMILY_CSS + """
                 font-weight: bold;
                 font-size: 12px;
                 color: #444;
@@ -346,7 +370,7 @@ class TradingHistoryTab(QWidget):
         search_pl_btn.clicked.connect(self._on_search_stock_pl)
         # search_pl_btn - controls_row (below)
 
-        fetch_dep_btn = QPushButton("🔄 Fetch")
+        fetch_dep_btn = self._fetch_dep_btn = QPushButton("🔄 Fetch")
         fetch_dep_btn.setFixedHeight(BTN_H)
         fetch_dep_btn.setFixedWidth(FLD_W)
         fetch_dep_btn.setStyleSheet(btn_style_blue)
@@ -482,7 +506,7 @@ class TradingHistoryTab(QWidget):
         grouped_hdr.setMinimumSectionSize(40)
         tbl.setHorizontalHeader(grouped_hdr)
         tbl.setStyleSheet(
-            "QTableWidget { gridline-color: #d0d0d0; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 9pt; }"
+            "QTableWidget { gridline-color: #d0d0d0; " + FONT_FAMILY_CSS + " font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
         )
 
@@ -548,20 +572,8 @@ class TradingHistoryTab(QWidget):
         self._apply_filter()
         self._start_price_fetch()
 
-    # kept as alias for backwards compat (Reload button when no Excel loaded)
-    def load_from_json_only(self):
-        self.load_from_db()
-
     def _reload_current(self):
         self.load_from_db()
-
-    def _append_custom_trades(self):
-        """No-op stub - kept for call-site compatibility."
-        Data is now always loaded from portfolio.db (the authoritative source)
-        inside load_from_db.
-        """
-        pass
-
 
     def _save_custom_trade(self, record) -> bool:
         """Persist a manually-added trade to the SQLite database."""
@@ -609,15 +621,6 @@ class TradingHistoryTab(QWidget):
                 rec.get("company"), rec.get("buy_date"), exc_info=True,
             )
 
-    def _apply_overrides(self):
-        """No-op stub kept for call-site compatibility."
-        Overrides are now stored directly in portfolio.db and applied at load time
-        via _append_custom_trades() / load_from_db().
-        The trade_overrides.json file is no longer read.
-        """
-        pass
-
-
     def _save_overrides(self):
         """Persist all currently edited/overridden records back to the DB."""
         try:
@@ -650,7 +653,7 @@ class TradingHistoryTab(QWidget):
             if not ticker:
                 continue
             market = r.get("market", "")
-            if market in ("KOSPI", "KOSDAQ") or (len(ticker) == 6 and ticker.isdigit()):
+            if market in ("KOSPI", "KOSDAQ") or is_kr_code(ticker):
                 kr_tickers.add(ticker)
             else:
                 us_tickers.add(ticker)
@@ -662,7 +665,7 @@ class TradingHistoryTab(QWidget):
                 if not ticker:
                     continue
                 market = r.get("market", "")
-                if market in ("KOSPI", "KOSDAQ") or (len(ticker) == 6 and ticker.isdigit()):
+                if market in ("KOSPI", "KOSDAQ") or is_kr_code(ticker):
                     kr_tickers.add(ticker)
                 else:
                     us_tickers.add(ticker)
@@ -688,6 +691,10 @@ class TradingHistoryTab(QWidget):
         rt = getattr(self, '_rt_price_thread', None)
         if rt is not None:
             threads.append(rt)
+        dt = getattr(self, '_deposit_thread', None)
+        if dt is not None:
+            threads.append(dt)
+        threads.extend(getattr(self, '_ticker_resolve_threads', []))
         for t in getattr(self, '_zombie_threads', []):
             threads.append(t)
         return threads
@@ -733,17 +740,7 @@ class TradingHistoryTab(QWidget):
             return
 
         # Retire previous thread safely without garbage collecting while running
-        if getattr(self, '_price_thread', None) is not None:
-            try:
-                if self._price_thread.isRunning():
-                    try: self._price_thread.prices_ready.disconnect()
-                    except Exception: pass
-                    if not hasattr(self, '_zombie_threads'): self._zombie_threads = []
-                    self._zombie_threads = [t for t in self._zombie_threads if t.isRunning()]
-                    self._zombie_threads.append(self._price_thread)
-            except RuntimeError:
-                pass  # C++ object already deleted - ignore
-            self._price_thread = None
+        retire_thread(self, '_price_thread')
 
         names      = []
         tickers    = []
@@ -786,8 +783,9 @@ class TradingHistoryTab(QWidget):
             buy_amts.append(r["buy_amount"])
             is_open.append(True)
 
-        thread = PositionPriceFetchThread(names, tickers, markets, buy_prices, qtys, buy_amts, is_open)
-        thread._skip_fetch = skip_fetch
+        thread = PositionPriceFetchThread(
+            names, tickers, markets, buy_prices, qtys, buy_amts, is_open, skip_fetch,
+        )
         thread.prices_ready.connect(self._on_prices_ready)
         thread.status_message.connect(self.status_message.emit)
         self._price_thread = thread
@@ -894,23 +892,33 @@ class TradingHistoryTab(QWidget):
             return 0.0
 
     def _fetch_account_deposit(self):
-        try:
-            val = fetch_account_deposit()
-            self._deposit_edit.setText(f"{int(val):,}")
-            self._on_deposit_changed()
-            # Inline status display (instead of QMessageBox) - immediate edit possible
-            if hasattr(self, "_deposit_status_lbl"):
-                self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#107c10; font-weight:bold;")
-                self._deposit_status_lbl.setText(f"💰 {int(val):,} KRW (Est.)")
-                QTimer.singleShot(4000, lambda: self._deposit_status_lbl.setText("") if hasattr(self, "_deposit_status_lbl") else None)
-            self._deposit_edit.selectAll()
-            self._deposit_edit.setFocus()
-        except Exception as e:
-            if hasattr(self, "_deposit_status_lbl"):
-                self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#d32f2f; font-weight:bold;")
-                self._deposit_status_lbl.setText(f"❌ Failed to fetch")
-                QTimer.singleShot(5000, lambda: self._deposit_status_lbl.setText("") if hasattr(self, "_deposit_status_lbl") else None)
-            QMessageBox.critical(self, "Error", f"Failed to fetch data:\n{e}")
+        """Fetch button: run the KIS balance inquiry off the UI thread (roadmap 6-1c)."""
+        if self._deposit_thread is not None and self._deposit_thread.isRunning():
+            return
+        self._fetch_dep_btn.setEnabled(False)
+        self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#0078d4; font-weight:bold;")
+        self._deposit_status_lbl.setText("⏳ Fetching deposit...")
+        self.status_message.emit("Fetching account deposit from KIS...")
+        self._deposit_thread = AccountDepositThread()
+        self._deposit_thread.finished.connect(self._on_account_deposit_fetched)
+        self._deposit_thread.start()
+
+    def _on_account_deposit_fetched(self, val: float, err: str):
+        self._fetch_dep_btn.setEnabled(True)
+        if err:
+            self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#d32f2f; font-weight:bold;")
+            self._deposit_status_lbl.setText("❌ Failed to fetch")
+            QTimer.singleShot(5000, lambda: self._deposit_status_lbl.setText(""))
+            QMessageBox.critical(self, "Error", f"Failed to fetch data:\n{err}")
+            return
+        self._deposit_edit.setText(f"{int(val):,}")
+        self._on_deposit_changed()
+        # Inline status display (instead of QMessageBox) - immediate edit possible
+        self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#107c10; font-weight:bold;")
+        self._deposit_status_lbl.setText(f"💰 {int(val):,} KRW (Est.)")
+        QTimer.singleShot(4000, lambda: self._deposit_status_lbl.setText(""))
+        self._deposit_edit.selectAll()
+        self._deposit_edit.setFocus()
 
     # ---Summary ---
     def _refresh_summary(self):
@@ -1215,9 +1223,7 @@ class TradingHistoryTab(QWidget):
             return
 
         # ---Sort by total P/L descending (default) ---
-        rows_by_pl   = sorted(pl_map.items(), key=lambda x: x[1], reverse=True)
-        rows_by_date = sorted(pl_map.items(), key=lambda x: buy_date_map.get(x[0], ""))
-        rows = rows_by_pl
+        rows = sorted(pl_map.items(), key=lambda x: x[1], reverse=True)
 
         # ---Build dialog ---
         dlg = QDialog(self)
@@ -1268,7 +1274,6 @@ class TradingHistoryTab(QWidget):
                 eval_v  = eval_map.get(comp, 0.0)
                 pct     = (pl / cost * 100) if cost > 0 else 0.0
                 pl_col  = col_red if pl > 0 else (col_blue if pl < 0 else col_gray)
-                bd_str  = buy_date_map.get(comp, "")
 
                 # Col 0: Company name
                 comp_it = QTableWidgetItem(comp)
@@ -1291,25 +1296,13 @@ class TradingHistoryTab(QWidget):
         v.addWidget(tbl, 1)
 
         # ---Bottom summary panel ---
-        grand_buy  = sum(buy_map.values())
-        grand_eval = sum(eval_map.values())
-        grand_pl   = sum(pl_map.values())
-        grand_pct  = (grand_pl / grand_buy * 100) if grand_buy > 0 else 0.0
-
         pos_pl = sum(v2 for v2 in pl_map.values() if v2 > 0)
         neg_pl = sum(v2 for v2 in pl_map.values() if v2 < 0)
-        pos_buy = sum(buy_map[k] for k, v2 in pl_map.items() if v2 > 0)
-        neg_buy = sum(buy_map[k] for k, v2 in pl_map.items() if v2 < 0)
-        pos_pct = (pos_pl / pos_buy * 100) if pos_buy > 0 else 0.0
-        neg_pct = (neg_pl / neg_buy * 100) if neg_buy > 0 else 0.0
 
         def _html_val(val, positive=True):
             color = "#c0392b" if positive else "#2980b9"
             sign  = "+" if positive else ""
             return f"<b style='color:{color}'>{sign}{val:,.0f} KRW</b>"
-
-        grand_color = "#c0392b" if grand_pl >= 0 else "#2980b9"
-        grand_sign  = "+" if grand_pl >= 0 else ""
 
         # (+)/(-) subtotals in a horizontal row
         subtotal_html = (
@@ -1447,55 +1440,59 @@ class TradingHistoryTab(QWidget):
         open_rows   = [("open", r) for r in self._open_data]
 
         sort_by_date = getattr(self, "_sort_by_date", False)
-        show_monthly = sort_by_date
 
         if sort_by_date:
-            # All rows sorted by buy_date ascending (closed + open together)
+            # All rows sorted by buy_date ascending (closed + open together),
+            # with a summary row appended after each calendar month.
             all_rows = closed_rows + open_rows
             all_rows.sort(key=lambda x: x[1]["buy_date"])
-            
-            if show_monthly:
-                rows = []
-                from collections import defaultdict
-                month_groups = defaultdict(list)
-                for kind, rec in all_rows:
-                    b_date = rec.get("buy_date", "")
-                    month = str(b_date)[:7] if b_date else "Unknown"
-                    month_groups[month].append((kind, rec))
-                
-                for month, m_rows in month_groups.items():
-                    total_buy = 0.0
-                    total_pl = 0.0
-                    
-                    for k, r in m_rows:
-                        rows.append((k, r))
-                        
-                        b_amt = r.get("buy_amount")
-                        if b_amt: total_buy += float(b_amt)
-                        
-                        pl = r.get("pl", 0.0)
-                        curr_pl = r.get("curr_pl", 0.0)
-                        total_pl += (float(pl) if pl else 0.0) + (float(curr_pl) if curr_pl else 0.0)
-                        
-                    summary_rec = {
-                        "company": f"Monthly Summary [{month}]",
-                        "buy_date": month,
-                        "buy_amount": total_buy,
-                        "sell_date": "",
-                        "sell_amount": 0,
-                        "pl": total_pl,
-                        "pl_pct": 0.0,
-                        "sell_price": 0, "buy_price": 0, "qty": 0, "sell_qty": 0, "days_held": 0, "curr_days": 0
-                    }
-                    rows.append(("monthly", summary_rec))
-            else:
-                rows = all_rows
+            rows = self._build_monthly_rows(all_rows)
         else:
             # Default: closed (oldest first) then open (oldest first)
             closed_rows.sort(key=lambda x: x[1]["buy_date"])
             open_rows.sort(key=lambda x: x[1]["buy_date"])
             rows = closed_rows + open_rows
         self._fill_table(rows)
+
+    @staticmethod
+    def _build_monthly_rows(all_rows: list) -> list:
+        """Insert a ("monthly", summary_rec) row after each buy-month group.
+
+        all_rows: [(kind, rec), ...] already sorted by buy_date ascending.
+        The summary carries the month total buy amount and the realized (pl)
+        + unrealized (curr_pl) P/L of that month's positions. Pure function so
+        it can be unit-tested without a widget (roadmap 6-3b).
+        """
+        rows = []
+        month_groups: dict = {}
+        for kind, rec in all_rows:
+            b_date = rec.get("buy_date", "")
+            month = str(b_date)[:7] if b_date else "Unknown"
+            month_groups.setdefault(month, []).append((kind, rec))
+
+        for month, m_rows in month_groups.items():
+            total_buy = 0.0
+            total_pl = 0.0
+            for k, r in m_rows:
+                rows.append((k, r))
+                b_amt = r.get("buy_amount")
+                if b_amt:
+                    total_buy += float(b_amt)
+                pl = r.get("pl", 0.0)
+                curr_pl = r.get("curr_pl", 0.0)
+                total_pl += (float(pl) if pl else 0.0) + (float(curr_pl) if curr_pl else 0.0)
+
+            rows.append(("monthly", {
+                "company": f"Monthly Summary [{month}]",
+                "buy_date": month,
+                "buy_amount": total_buy,
+                "sell_date": "",
+                "sell_amount": 0,
+                "pl": total_pl,
+                "pl_pct": 0.0,
+                "sell_price": 0, "buy_price": 0, "qty": 0, "sell_qty": 0, "days_held": 0, "curr_days": 0,
+            }))
+        return rows
 
     # ---Table item helpers ---
     @staticmethod
@@ -1575,7 +1572,6 @@ class TradingHistoryTab(QWidget):
         # Pre-build colour-constant items to avoid repeated QColor() in inner loop
         col_red  = QColor("#c0392b")
         col_blue = QColor("#2980b9")
-        col_gray = QColor("#999999")
         bg_summary = QColor("#fff5e6")
 
         self._row_data = []
@@ -1761,19 +1757,25 @@ class TradingHistoryTab(QWidget):
             if ok and new_str.strip():
                 new_ticker = new_str.strip()
                 rec["ticker"] = new_ticker
-                
-                market = rec.get("market", "")
-                from data_fetcher import fetch_single_stock
-                result, error = fetch_single_stock(market, new_ticker)
-                if result and result.get("name"):
-                    rec["company"] = result["name"]
-                
                 rec["is_overridden"] = True
                 self._save_overrides()
-                
+
                 self._start_price_fetch()
                 self._refresh_summary()
                 self._apply_filter()
+
+                # Resolve the company name for the new ticker in the background
+                # (used to be a synchronous fetch_single_stock call on the UI
+                # thread, roadmap 6-1c). The record is updated again when it lands.
+                self._ticker_resolve_threads = [
+                    t for t in self._ticker_resolve_threads if t.isRunning()
+                ]
+                thread = SingleStockFetchThread(rec.get("market", ""), new_ticker)
+                thread.finished.connect(
+                    lambda result, error, r=rec: self._on_ticker_name_resolved(r, result, error)
+                )
+                self._ticker_resolve_threads.append(thread)
+                thread.start()
             return
 
         if col in {3, 4, 5, 6}:
@@ -1817,6 +1819,16 @@ class TradingHistoryTab(QWidget):
                 self._save_overrides()
             return
 
+    def _on_ticker_name_resolved(self, rec: dict, result, error: str):
+        """SingleStockFetchThread callback for the ticker-cell edit above."""
+        if not result or not result.get("name") or rec.get("company") == result["name"]:
+            return
+        rec["company"] = result["name"]
+        rec["is_overridden"] = True
+        self._save_overrides()
+        self._refresh_summary()
+        self._apply_filter()
+
     def _show_add_trade_dialog(self):
         """Open TradeEntryDialog to add manual trade record."""
         dlg = TradeEntryDialog(self)
@@ -1848,18 +1860,10 @@ class TradingHistoryTab(QWidget):
                 days_held = 0
                 curr_days = 0
                 
-            existing_keys = {
-                r.get("orig_key") for r in self._open_data + self._closed_data if r.get("orig_key")
-            }
-            base_key = f"{res.get('company', '')}_{res['buy_date']}_{qty}"
-            key = base_key
-            suffix = 2
-            while key in existing_keys or trade_db.get_trade(key) is not None:
-                key = f"{base_key}_{suffix}"
-                suffix += 1
-
+            # No orig_key here on purpose: trade_db.upsert_trade() generates a
+            # collision-free key inside the INSERT itself (roadmap 6-1e), and
+            # _save_custom_trade() writes the returned key back into `record`.
             record = {
-                "orig_key":    key,
                 "company":     res.get("company", ""),
                 "market":      res.get("market", ""),
                 "ticker":      res.get("ticker", ""),

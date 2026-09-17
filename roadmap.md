@@ -1,8 +1,8 @@
 # Portfolio Management — 발전 로드맵
 
-> 기준일: 2026-08-29 (최초 작성 2026-08-21, 실제 코드 상태 재조사 후 갱신)  
-> 현재 상태: PyQt6 단일 사용자 데스크톱 앱 (한국/미국 주식 포트폴리오 추적)  
-> 핵심 파일: `main.py` (~401 줄), `data_fetcher.py` (~2,615 줄), `trade_db.py`, `gemini_helper.py`, `ui/`, `threads/`
+> 기준일: 2026-09-17 (최초 작성 2026-08-21, 실제 코드 상태 재조사 후 갱신)  
+> 현재 상태: PyQt6 단일 사용자 데스크톱 앱 (한국/미국 주식 포트폴리오 추적) — git 관리(46 커밋), pytest 119/119 통과, ruff(F) 0건  
+> 핵심 파일: `src/main.py` (313줄), `src/data_fetcher.py` (파사드) → `src/data/` 패키지 (cache·indicators·market·collectors, 순수 데이터 계층), `src/strategy/` (rebalance·ma_cross·trend_following, 전략 계층 — 2026-09-17 분리), `src/ui/` (약 6,300줄), `src/threads/`, `src/trade_db.py`, `src/gemini_helper.py`
 
 ---
 
@@ -13,6 +13,7 @@
 3. [중기 개선 (1~3개월)](#3-중기-개선-13개월)
 4. [장기 개선 (3개월+)](#4-장기-개선-3개월)
 5. [우선순위 매트릭스](#5-우선순위-매트릭스)
+6. [코드 분석 기반 개선 항목 (2026-09-17)](#6-코드-분석-기반-개선-항목-2026-09-17)
 
 ---
 
@@ -25,6 +26,7 @@
 | **Trading Universe** | KOSPI / KOSDAQ / NASDAQ 100 / S&P 500 종목 워치리스트, 실시간 시세, MA 지표, 필터 팝업 |
 | **Trading History** | 거래 기록 수동 입력, SQLite 영속화 (`portfolio.db`), 오버라이드 지원 |
 | **Total Assets** | 날짜별 자산 합계 테이블 + matplotlib 그래프, 환율·KOSPI 연동 |
+| **Auto Trading** | 주간 팩터 스코어링 리밸런싱 신호(매수/매도/보유 후보) + 워크포워드 백테스트 (거래비용 반영) |
 
 ### 기술 스택
 
@@ -79,6 +81,10 @@
 
 **검증**: 카운팅·로깅 트리거 로직을 별도 스크립트로 복제해 5회 주기마다 정확히 1회 로깅되고
 누적 히트/미스 수가 일치하는지 확인.
+
+**⚠️ 2026-09-17 재조사**: 카운팅은 동작하지만 로그는 실제로 기록되지 않음 — `main.py`의 파일/콘솔
+핸들러 레벨이 WARNING이라 INFO 출력이 전부 버려짐(`app.log` 0바이트). 6-1a에서 수정 완료
+(파일 핸들러 INFO, root INFO).
 
 ---
 
@@ -396,7 +402,8 @@ tests/
 
 ## 5. 우선순위 매트릭스
 
-> `상태` 컬럼은 2026-08-29 재조사 결과 반영. 완료 항목은 우선순위 재산정 대상에서 제외.
+> `상태` 컬럼은 2026-09-17 재조사 결과 반영. 완료 항목은 우선순위 재산정 대상에서 제외.
+> 6-x 행은 섹션 6(코드 분석 기반 개선 항목) 참고.
 
 | # | 항목 | 영향 | 난이도 | 우선순위 | 상태 |
 |---|------|------|--------|----------|------|
@@ -417,6 +424,82 @@ tests/
 | 4-4 | 백테스트 UI | 중 | 높음 | ⭐ 낮음 | 미착수 |
 | 4-1 | 웹 전환 | 높음 | 매우 높음 | ⭐ 낮음 | 미착수 |
 | 4-2 | 클라우드 동기화 | 중 | 높음 | ⭐ 낮음 | 미착수 |
+| 6-1 | 동작 버그 5건 (로깅·타이머 이중화·UI 프리즈·경로·키 생성) | 높음 | 낮음 | — | ✅ 완료 |
+| 6-3a | CLAUDE.md / AGENTS.md 현행화 | 높음 | 낮음 | — | ✅ 완료 |
+| 6-2a | 파사드 역참조 해소 | 중 | 중간 | — | ✅ 완료 |
+| 6-2b~f | 죽은 코드·미사용 import·중복·의존성 정리 | 중 | 낮음 | — | ✅ 완료 (US 시장 경로는 유지) |
+| 6-3b | 테스트 공백 보강 | 중 | 낮음 | — | ✅ 완료 |
+
+---
+
+## 6. 코드 분석 기반 개선 항목 (2026-09-17)
+
+> 2026-09-17 `src/` 전체(13,429줄, 36개 파일) 정독 + `pytest` 101/101 확인 + AST 기반 미사용
+> import 스캔 결과. 모듈화(3-1)·테스트(3-2)·로깅(2-1) 인프라는 건강하며, 아래는 그 위에서
+> 발견된 실제 동작 문제와 기술 부채. 파일 경로는 모두 `src/` 기준.
+>
+> **상태 (2026-09-17 당일 처리)**: 6-1a~e, 6-2a~f, 6-3a~b 전부 구현 완료 — 상세는 6-5 참고.
+> 유일한 예외는 6-2b의 US 시장 경로(재활성화 계획이 확정되지 않아 코드 유지).
+
+### 6-1. 실제 동작에 영향 — 우선 수정
+
+| # | 항목 | 위치 | 문제 | 조치 |
+|---|------|------|------|------|
+| 6-1a | 캐시 통계 로그 미기록 (2-2 회귀) | `main.py:43-49`, `data/cache.py::_log_hist_cache_stats` | 파일/콘솔 핸들러가 WARNING인데 통계는 INFO로 출력 → `app.log`에 한 번도 기록된 적 없음. 반대로 root 로거는 DEBUG라 yfinance·urllib3 등 서드파티 디버그 레코드가 전부 생성된 뒤 폐기됨 | 파일 핸들러 INFO, root 로거 INFO로 조정 |
+| 6-1b | Trading History 실시간 갱신 타이머 이중화 | `ui/history_tab.py:98-102` + `main.py`의 `auto_lightweight_tick` 연결 | 탭 자체 60초 타이머가 무조건 시작되고, MainWindow 글로벌 타이머도 `auto_lightweight_tick` 시그널로 같은 `_start_realtime_price_update`를 호출. "Auto Update" 체크를 꺼도 KIS WebSocket/REST 폴링이 계속됨 (`isRunning` 가드로 중복 실행만 막힘) | 탭 자체 타이머 제거, 글로벌 타이머 경로로 일원화 |
+| 6-1c | UI 스레드 동기 네트워크 호출 | `ui/history_tab.py::_fetch_account_deposit`, `_on_cell_double_clicked` (col 2, `fetch_single_stock`) | KIS REST 예수금 조회와 티커 편집 시 종목 조회가 메인 스레드에서 실행되어 응답 지연 시 창이 멈춤 (2026-09-13 3차 Gemini 이관과 같은 유형의 잔여분) | QThread로 이관 |
+| 6-1d | 상태 파일 경로가 cwd 상대 | `universe_cache.json`, `custom_settings.json`, `trading_record.json`, `kis_token_cache.json`, `vkospi_cache.json`, `app.log`, `archive/` | `trade_db.py`만 `_BASE_DIR` 절대경로. 다른 폴더에서 실행하면 DB만 맞고 나머지는 빈 파일로 새로 생성됨 (2026-08-29 6차 회귀와 같은 계열). CLAUDE.md의 "루트에서 실행" 제약의 원인 | `src/paths.py`에 `BASE_DIR`과 파일 경로 상수 집약 |
+| 6-1e | 거래 추가 시 orig_key 생성 중복 | `ui/history_tab.py::_show_add_trade_dialog` | `get_trade()`를 반복 호출하는 자체 루프로 키를 만든 뒤 upsert → 2026-09-13 2차에서 만든 충돌 방지 경로(`trade_db._insert_with_generated_key`)를 우회 | `orig_key` 없이 `upsert_trade` 호출, 반환된 키 사용 |
+
+### 6-2. 구조 / 기술 부채
+
+| # | 항목 | 상세 | 조치 |
+|---|------|------|------|
+| 6-2a | 하위 패키지 → 파사드 역참조 | `data/market.py`·`data/cache.py`가 `import data_fetcher`(상위 파사드)를 하고 `getattr(_df_mod, ...)` 우회가 21곳, `_bump_hist_cache_counter`로 카운터를 두 모듈에 수동 동기화. 원인: `tests/test_data_fetcher.py`가 `data_fetcher.X`를 patch하기 때문 | 테스트 patch 대상을 `data.market`/`data.cache`로 변경 → 우회 코드 전부와 파사드의 `fdr/yf/requests/pd/pl/np` top-level import 제거 |
+| 6-2b | 죽은 코드 | `ui/history_tab.py`의 no-op 스텁 3개(`load_from_json_only`, `_append_custom_trades`, `_apply_overrides`, 호출자 0건). US 시장 경로(`fetch_us_market_data`/`fetch_us_stock_data_bulk`/`run_bulk_backtest_chunk`, 약 300줄)는 `AllDataFetchThread`·`UniverseTab` 콤보에서 주석 처리되어 도달 불가 | 스텁 삭제. US 경로는 재활성화 계획 확정 후 삭제 또는 설정 플래그로 명시 |
+| 6-2c | 미사용 import | `main.py` 14개(json, datetime, `ui.common` 헬퍼 대부분), `data/market.py` 8개(BeautifulSoup, 캐시 카운터 등), `ui/universe_tab.py` 6개, `data/cache.py` 4개, 그 외 8개 파일 | 일괄 정리 후 `ruff`를 requirements-dev에 추가 |
+| 6-2d | 의존성 목록 불일치 | `pykrx`는 코드에서 미사용(3-5에서 제외됐으나 목록에 잔존). 실제 사용하는 `beautifulsoup4`·`lxml`은 누락(간접 설치에 의존). 버전 미고정 | requirements.txt 정리 + 버전 핀 |
+| 6-2e | 중복 패턴 | 폰트 패밀리 CSS 문자열 17회, 좀비 스레드 정리 코드 3곳(10회), KR 6자리 코드 판별 휴리스틱 5곳, 네이버 시총 '조/억' 파싱 2회(`_fetch_naver_info` 내), `fetch_stock_ma_multi`의 target_year 유/무 분기 복붙 | `ui/common` 폰트 상수, `_retire_thread()`, `is_kr_code()`, `_parse_marcap_krw()` 헬퍼로 추출 |
+| 6-2f | 소소한 항목 | `QSettings("MyCompany", "PortfolioManager")` placeholder가 레지스트리에 그대로 기록. `PositionPriceFetchThread`가 `skip_fetch` 생성자 인자를 받는데 호출부는 `thread._skip_fetch = ...`로 사후 주입. `_START_DATE`가 import 시 고정되어 장기 실행 시 lookback 기준일이 밀림. `get_stock_listing` singleflight 캐시가 무기한. `kis_token_cache.json`에 bearer 토큰 평문 저장(gitignore는 됨) | 개별 수정 |
+
+### 6-3. 문서 / 테스트
+
+| # | 항목 | 상세 | 조치 |
+|---|------|------|------|
+| 6-3a | CLAUDE.md / AGENTS.md 현행성 | "git 아님", `main.py` ~5,900줄, `data_fetcher.py` ~2,150줄, "테스트 없음"으로 기술되어 있으나 실제는 git 46 커밋, `main.py` 313줄, `data/` 패키지 분리, pytest 101개. `archive/backup_*` 수동 백업 규칙도 git 도입 후 재검토 필요. 이 문서를 전제로 움직이는 AI 에이전트가 잘못된 판단을 하게 되므로 우선순위 높음 | 두 문서를 동기 갱신 (AGENTS.md는 CLAUDE.md의 1줄 차이 사본) |
+| 6-3b | 테스트 공백 | `_compute_pl_fields`(부분 매도 안분), `_apply_filter`의 월별 요약 행, `fetch_historical_changes`의 `bp`/`abs` 모드가 미검증. 모두 Qt 없이 순수 함수로 테스트 가능 | 테스트 추가 |
+
+### 6-4. 권장 착수 순서
+
+1. ✅ 6-3a CLAUDE.md / AGENTS.md 갱신 (코드 변경 결과를 반영하기 위해 실제로는 마지막에 작성)
+2. ✅ 6-1a 로깅 레벨 수정
+3. ✅ 6-1b 타이머 이중화 제거
+4. ✅ 6-1d 경로 통일 (`src/paths.py`)
+5. ✅ 6-1c / 6-1e `history_tab` 잔여 동기 호출·키 생성 정리
+6. ✅ 6-2a 파사드 역참조 해소 (테스트 동반 수정)
+7. ✅ 6-2b~f 죽은 코드·중복·의존성 정리, 6-3b 테스트 보강
+
+### 6-5. 진행 결과 (2026-09-17)
+
+| # | 조치 내용 |
+|---|-----------|
+| 6-1a | `main.py`: 파일 핸들러 WARNING→INFO, root DEBUG→INFO (콘솔은 WARNING 유지). 캐시 통계·자동 백업 완료 로그가 `app.log`에 실제로 기록됨 |
+| 6-1b | `ui/history_tab.py`의 자체 60초 `_rt_price_timer` 제거. 실시간 갱신은 MainWindow 글로벌 타이머 → `auto_lightweight_tick` 경로 하나로만 동작 |
+| 6-1c | `threads/fetch_threads.py`에 `AccountDepositThread` 신설, Fetch 버튼이 이를 사용(버튼 비활성화 + 상태 라벨 표시). 티커 셀 편집 시 종목명 조회는 `SingleStockFetchThread`로 이관, 결과 도착 시 `_on_ticker_name_resolved`에서 갱신 |
+| 6-1d | `src/paths.py` 신설(`BASE_DIR` + 11개 경로 상수). `main.py`(app.log·.env), `trade_db.py`, `collectors/kis.py`·`krx.py`, `threads/fetch_threads.py`(AutoBackupThread), `ui/universe_tab.py`·`assets_tab.py`가 모두 이를 사용 — cwd 무관 |
+| 6-1e | `_show_add_trade_dialog`의 `get_trade()` 폴링 키 생성 루프 삭제. `orig_key` 없이 `upsert_trade`에 맡기고 반환 키를 레코드에 기록 |
+| 6-2a | `data/cache.py`: 카운터 2개 int → `_HIST_CACHE_STATS` dict + `_record_hist_cache_lookup()`; `_log_hist_cache_stats`의 `data_fetcher` 역참조 제거. `data/market.py`: `_bump_hist_cache_counter`와 `getattr(_df_mod, ...)` 우회 전부 삭제, `get_usd_krw_rate`도 모듈 로컬 `fdr` 직접 사용. 파사드의 `fdr/yf/requests/pd/pl/np` top-level import 제거. `tests/test_data_fetcher.py`·`test_assets_calc.py`는 `data.market`/`data.cache`/`data.collectors.yahoo`를 patch하도록 변경(+파사드가 동일 stats 객체를 노출하는지 검증하는 테스트 1개 추가) |
+| 6-2b | `history_tab`의 no-op 스텁 3개 삭제. US 시장 경로는 유지(계획 미확정) — CLAUDE.md에 "UI에서 주석 처리됨"으로 명시 |
+| 6-2c | 미사용 import·변수 정리(`main.py` 14개 등, ruff F401/F841 37건 → 0건). `ruff.toml`(F 규칙, 재export 모듈은 F401 제외)·`requirements-dev.txt`(pytest, ruff) 신설 |
+| 6-2d | `requirements.txt`: 검증된 버전으로 전부 핀, `pykrx` 제거, `beautifulsoup4`·`lxml` 추가, `pytest`는 dev로 이동 |
+| 6-2e | `ui/common.FONT_FAMILY_CSS`(17곳 → 상수 1개), `ui/common.retire_thread()`(좀비 스레드 정리 3곳 통합), `data/cache.is_kr_code()`(5곳), `naver._parse_marcap_krw()`(2곳), `fetch_stock_ma_multi`를 `_load_ohlcv_window()` + `_naver_code_for()`로 재구성(target_year 유/무 분기 복붙 제거). 동작 변화 1건: target_year 지정 시 KR 종목코드도 Naver 우선(기존은 FDR) — FDR의 KR 소스 역시 Naver라 데이터는 동일하고, Naver 실패 시 FDR로 폴백 |
+| 6-2f | `QSettings` 스코프 `MyCompany/PortfolioManager` → `PortfolioManagement/PortfolioManagement`(기존 값 1회 자동 이전). `PositionPriceFetchThread`의 `skip_fetch`를 생성자 인자로 전달. `_START_DATE` 상수 → `start_date()` 함수(17곳). `_singleflight_cache`(종목 리스팅)에 일 단위 만료 추가. KIS 토큰 평문 캐시는 CLAUDE.md에 문서화만 |
+| 6-3a | CLAUDE.md / AGENTS.md 전면 재작성(git 관리, `src/` 구조, `paths.py`, 스레드 규칙, 검증 명령, 새 헬퍼 관례) |
+| 6-3b | `tests/test_history_calc.py`(`_compute_pl_fields` 5건, `_build_monthly_rows` 3건 — 월별 요약 로직을 `_apply_filter`에서 순수 staticmethod로 추출)·`tests/test_indicators.py`(`fetch_historical_changes` pct/bp/abs 6건, `is_kr_code`/`start_date`/`_parse_marcap_krw` 3건) 신설 |
+
+**검증**: `python -m compileall src` 통과, `ruff check src` 0건, `pytest src/tests` **119/119** 통과(신규 18개 포함),
+`QT_QPA_PLATFORM=offscreen`으로 `import main` + 새 헬퍼 호출 스모크 통과. GUI 수동 확인은 `test_plan.md` 절차로
+별도 필요(특히 Fetch 버튼 비동기화, 티커 편집 후 종목명 갱신, Auto Update 해제 시 폴링 중단).
 
 ---
 
@@ -441,4 +524,6 @@ tests/
 | 2026-09-13 | 국내주식 관련 기능(예수금 조회, 종목 시세/일봉, 투자자 매매동향, 실시간 시세)을 키움증권 REST API에서 한국투자증권(KIS) REST/WebSocket API로 전면 교체, `data/collectors/kiwoom.py` 삭제 및 `data/collectors/kis.py` 신설(298번째 줄 재조사 결론이 KIS에도 동일 적용 — 대량 조회 불가, 보유 종목 소수 실시간 갱신에만 사용). 예수금 Fetch 버튼의 비밀번호/OTP 입력창 제거(KIS 잔고조회는 비밀번호 불필요). 실시간 시세는 미국주식(Yahoo) 제외, 국내주식만 전환. `requirements.txt`에 `websocket-client` 추가, 키 파일은 기존 Kiwoom 키와 같은 외부 폴더(`D:\Source Code\Kiwoom MCP`)에 `kis_appkey.txt`/`kis_secretkey.txt`로 위치. 백업: `archive/backup_20260913_173206/`. 검증: pytest 85/85 통과, 실제 KIS 응답 필드명은 사용자가 키 파일을 배치한 뒤 스모크 테스트로 최종 확인 예정. |
 | 2026-09-13 (2차) | Phase 1 데이터 안정성 강화 및 무결성 개선: (1) `trade_db.py` 및 `ui/history_tab.py`에서 동일 종목/날짜/수량 분할 매수 시 기존 레코드가 덮어씌워지던 버그를 고유 접미사 자동 부여(`orig_key` 충돌 방지)로 해결하고 단위테스트 추가 (`test_orig_key_collision_avoidance_on_new_insert`, `test_batch_upsert_collision_avoidance`), (2) `ui/history_tab.py`의 `_save_custom_trade` 실패 시 무음 처리되던 문제를 `QMessageBox.critical` 알림 및 메모리 롤백 처리로 데이터 유실 방지, (3) `requirements.txt`에 누락된 핵심 라이브러리(`polars`, `matplotlib`, `numpy`) 추가 및 미사용 패키지(`google-cloud-aiplatform`) 정리, (4) `trade_db.py`, `ui/history_tab.py`, `ui/universe_tab.py` 내 레거시 `print` 및 `traceback.format_exc()`를 `logger` 표준 호출로 전면 전환. 백업: `archive/backup_20260913_182003/`. 검증: pytest 87/87 통과 (100%), 스모크 테스트 통과. |
 | 2026-09-13 (3차) | Phase 2 UI 반응성 및 성능 최적화: (1) `UniverseTab` 및 `TradingHistoryTab`의 Gemini AI 호출(자연어 필터 파싱, 포트폴리오 진단)을 메인 스레드 동기 호출에서 전용 비동기 백그라운드 스레드(`GeminiFilterThread`, `GeminiDiagnosisThread`)로 전면 이관하여 UI 프리징 완전 해결, (2) `AutoTradingTab`의 대규모 순위/후보 테이블 렌더링 시 `setUpdatesEnabled(False/True)` 배치 업데이트 패턴 적용으로 불필요한 재페인팅 억제, (3) `data/market.py`의 `KR3YT` 40페이지 순차 HTML 스크래핑을 병렬 캐시 기반인 `_get_kr3y_df()`로 일원화하여 불필요한 네트워크 지연 제거, (4) `data/collectors/kis.py`에 국내 정규장 거래시간 가드(`is_krx_market_open()`)를 추가하여 장 마감(야간/주말) 시 6초 웹소켓 대기를 건너뛰고 병렬 REST fallback으로 즉각 처리, (5) `tests/test_phase2.py` 신설. 백업: `archive/backup_20260913_183032/`. 검증: pytest 101/101 통과 (100%), 스모크 테스트 통과. |
-
+| 2026-09-17 | 전체 소스 코드 분석(`src/` 13,429줄 정독, pytest 101/101, AST 미사용 import 스캔) 결과를 섹션 6으로 신설: 동작 버그 5건(2-2 캐시 통계 로그가 핸들러 레벨 때문에 실제로는 미기록, Trading History 실시간 타이머 이중화로 Auto Update 해제 무효, UI 스레드 동기 네트워크 호출 2곳, 상태 파일 cwd 상대경로, 거래 추가 시 orig_key 생성 중복), 기술 부채 6건(`data/`→`data_fetcher` 파사드 역참조 21곳, 죽은 코드, 미사용 import, 의존성 불일치, 중복 패턴, 소소한 항목), 문서/테스트 2건(CLAUDE.md·AGENTS.md 현행성, 테스트 공백). 헤더 기준일·핵심 파일 수치를 현행(`src/` 구조, 313줄 main.py) 기준으로 갱신, 현황 요약에 Auto Trading 탭 추가, 2-2에 회귀 주석, 우선순위 매트릭스에 6-x 행 5개 추가. 코드 변경 없음. |
+| 2026-09-17 (2차) | 섹션 6 전 항목 구현(6-4 순서). 동작 버그 5건 수정(로깅 레벨, History 탭 타이머 이중화 제거, 예수금 조회·티커 편집 종목명 조회 스레드화, `src/paths.py` 경로 통일, 거래 추가 키 생성 중복 제거), `data/`→`data_fetcher` 역참조 21곳 제거 및 테스트 patch 대상 교체, 스텁 3개·미사용 import/변수 37건 정리, `ruff.toml`·`requirements-dev.txt` 신설, requirements 핀, 공용 헬퍼 5종 추출(`FONT_FAMILY_CSS`, `retire_thread`, `is_kr_code`, `start_date()`, `_parse_marcap_krw`), `fetch_stock_ma_multi` 분기 통합, QSettings 스코프 정정(자동 이전), 리스팅 캐시 일 단위 만료, 테스트 18개 추가. CLAUDE.md/AGENTS.md 전면 재작성. 검증: compileall, ruff 0건, pytest 119/119, offscreen import 스모크. 상세는 6-5. |
+| 2026-09-17 (3차) | `trading.md` 11-5 실행: 전략 코드를 `src/data/`에서 `src/strategy/`로 분리. 사용자가 이동한 `strategy/rebalance/`의 절대 import 갱신, `data/backtest.py` → `strategy/ma_cross.py`, `strategy/__init__.py`·`strategy/trend_following/__init__.py`(스캐폴드) 신설, `data/__init__.py`·`data_fetcher.py`에서 전략 재노출 제거(데이터 계층이 전략 계층을 import하지 않음), 호출자 2곳이 `strategy.rebalance` 직접 import, 테스트를 `tests/strategy/`로 이동하고 `tests/conftest.py`로 sys.path 설정 일원화. CLAUDE.md/AGENTS.md/trading.md/trend_following.md 경로 갱신. 검증: pytest 119/119 (루트·src 양쪽에서), ruff 0건. |

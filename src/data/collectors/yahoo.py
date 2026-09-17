@@ -7,7 +7,6 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import pandas as pd
-import polars as pl
 from yahooquery import Ticker as YQTicker
 import logging
 
@@ -15,7 +14,7 @@ from data.cache import (
     _YF_SESSION,
     _NAVER_SESSION,
     _get_yf_crumb,
-    _START_DATE,
+    start_date,
     safe_float,
 )
 from data.indicators import _to_polars, fetch_historical_changes
@@ -209,7 +208,7 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
             with _yf_semaphore:
                 bulk_df = yf.download(
                     yf_symbols,
-                    start=_START_DATE,
+                    start=start_date(),
                     progress=False,
                     timeout=15,
                     auto_adjust=True,
@@ -224,7 +223,7 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
                                 single_df = bulk_df.xs(sym, level=1, axis=1).dropna(how='all')
                                 if not single_df.empty:
                                     pl_df = _to_polars(single_df)
-                                    key = f"{orig_sym}_{_START_DATE}"
+                                    key = f"{orig_sym}_{start_date()}"
                                     _YF_BULK_CACHE[key] = pl_df
                                     _yf_bulk_keys_added.add(key)
                         else:
@@ -232,7 +231,7 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
                                 single_df = bulk_df.dropna(how='all')
                                 if not single_df.empty:
                                     pl_df = _to_polars(single_df)
-                                    key = f"{orig_sym}_{_START_DATE}"
+                                    key = f"{orig_sym}_{start_date()}"
                                     _YF_BULK_CACHE[key] = pl_df
                                     _yf_bulk_keys_added.add(key)
                     except Exception:
@@ -304,7 +303,7 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
             nonlocal done_count
             yf_symbol = symbol.replace(".", "-")
             try:
-                df_history = get_historical_data(symbol, _START_DATE)
+                df_history = get_historical_data(symbol, start_date())
                 usd_price = 0.0
                 if not df_history.is_empty() and "Close" in df_history.columns:
                     close_valid = df_history.get_column('Close').drop_nulls()
@@ -339,7 +338,7 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
                     "trailing_per": trailing_per_dict.get(yf_symbol),
                     "forward_per": forward_per_dict.get(yf_symbol),
                 }
-            except Exception as e:
+            except Exception:
                 logger.error("US stock data fetch failed for symbol=%s", symbol, exc_info=True)
                 return None
             finally:
@@ -411,6 +410,6 @@ def fetch_us_market_data(market="NASDAQ 100", top_n=200, progress_callback=None)
         ]
         fx_rate = get_usd_krw_rate()
         return fetch_us_stock_data_bulk(symbols_with_names, market, fx_rate, progress_callback)
-    except Exception as e:
+    except Exception:
         logger.error("fetch_us_market_data failed for market=%s", market, exc_info=True)
         return []

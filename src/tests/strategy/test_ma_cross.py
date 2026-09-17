@@ -1,16 +1,16 @@
 """
-tests/test_backtest.py — run_backtest_strategy 결과 일치 검증
+tests/strategy/test_ma_cross.py — strategy/ma_cross.run_backtest_strategy 결과 일치 검증 (moved from tests/test_backtest.py, trading.md 11-5)
 """
 import os
 import sys
 import unittest
 from datetime import date
 
-_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, _PROJ_ROOT)
 
 import polars as pl
-from data_fetcher import run_backtest_strategy
+from strategy.ma_cross import run_backtest_strategy
 
 
 def _make_ohlcv(n, close_val=100.0):

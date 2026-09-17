@@ -1,9 +1,8 @@
-"""data/backtest.py — Single-stock technical strategy backtesting."""
+"""strategy/ma_cross.py — Single-stock MA20/MA60 golden-cross + RSI strategy backtest (moved from data/backtest.py, trading.md 11-5)."""
 import gc
 from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
-import polars as pl
 from yahooquery import Ticker as YQTicker
 import logging
 
@@ -111,7 +110,7 @@ def run_backtest_for_stock(ticker, market, days=1095, target_year=None, df=None)
         return {"ticker": ticker, "trades": [], "error": err or "No data"}
 
     res = run_backtest_strategy(df, buy_sell_points=True, target_year=target_year)
-    b_dates, b_prices, s_dates, s_prices, bt_buy_dates = res[3], res[4], res[5], res[6], res[7]
+    _b_dates, b_prices, s_dates, s_prices, bt_buy_dates = res[3], res[4], res[5], res[6], res[7]
 
     trade_list = []
     for i in range(len(s_dates)):

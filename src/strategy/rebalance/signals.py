@@ -1,4 +1,4 @@
-"""data/rebalance/signals.py — compute_weekly_rebalance_signals orchestrator (trading.md 11-2/8-I).
+"""strategy/rebalance/signals.py — compute_weekly_rebalance_signals orchestrator (trading.md 11-2/8-I).
 
 Combines factors -> classify into the weekly signal computation used by both
 the live UI (ui/auto_trading_tab.py) and the walk-forward backtest. Sector-cap
@@ -7,9 +7,9 @@ classify.py, once implemented.
 """
 from datetime import datetime
 
-from data.rebalance.config import RebalanceConfig
-from data.rebalance.factors import _extract_live_candidates, _score_and_rank
-from data.rebalance.classify import _classify_buy_sell_hold, _DEFAULT_TOP_N_BY_MARKET
+from strategy.rebalance.config import RebalanceConfig
+from strategy.rebalance.factors import _extract_live_candidates, _score_and_rank
+from strategy.rebalance.classify import _classify_buy_sell_hold, _DEFAULT_TOP_N_BY_MARKET
 
 
 def compute_weekly_rebalance_signals(

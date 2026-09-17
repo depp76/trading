@@ -1,0 +1,13 @@
+# Lint config (roadmap 6-2c). Only the pyflakes rule set for now: unused
+# imports/variables, undefined names, etc. Run: .\.venv\Scripts\ruff.exe check src
+src = ["src"]
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["F"]
+# F401 in the two re-export modules is intentional: they exist to re-export.
+[lint.per-file-ignores]
+"src/data_fetcher.py" = ["F401"]
+"src/data/__init__.py" = ["F401"]
+"src/strategy/rebalance/__init__.py" = ["F401"]

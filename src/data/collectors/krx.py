@@ -10,8 +10,9 @@ import pandas as pd
 import polars as pl
 import logging
 
+from paths import VKOSPI_CACHE_FILE
 from data.cache import (
-    _START_DATE,
+    start_date,
     _JP10Y_CACHE,
     _MISC_CACHE_LOCK,
     _pdf_is_stale,
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 VKOSPI_INDEX_NAME = "코스피 200 변동성지수"
 _KRX_DERIV_IDX_URL = "https://openapi.krx.co.kr/OPN/DER/01/0101/der_0101_tab1.jsp"
 _KRX_KEY_CACHE: dict = {}
-_KRX_VKOSPI_CACHE_PATH = "vkospi_cache.json"
+_KRX_VKOSPI_CACHE_PATH = VKOSPI_CACHE_FILE
 _VKOSPI_CACHE_LOCK = threading.Lock()
 _VKOSPI_FAIL_COOLDOWN_SEC = 1800
 _VKOSPI_LAST_FAIL_TS: dict = {"ts": 0.0}
@@ -184,7 +185,7 @@ def _get_vkospi_pdf() -> pd.DataFrame:
     cached = _VKOSPI_PDF_CACHE["df"]
     if cached is not None and not _pdf_is_stale(cached):
         return cached
-    df = fetch_vkospi_history(_START_DATE)
+    df = fetch_vkospi_history(start_date())
     if df.is_empty():
         return cached
     pdf = df.to_pandas()

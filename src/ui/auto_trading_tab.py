@@ -10,12 +10,12 @@ starting point for backtesting/paper trading (trading.md section 6), not
 investment advice; see the disclaimer label built into the tab.
 
 Also hosts the walk-forward backtest UI (trading.md section 6): pick a
-lookback of 1-5 years and run data_fetcher.run_rebalance_backtest() in a
+lookback of 1-5 years and run strategy.rebalance.run_rebalance_backtest() in a
 background thread (RebalanceBacktestThread), showing the result in
 BacktestResultDialog. The backtest reuses the exact same scoring/
 classification functions as the live signal computation above
-(data_fetcher._score_and_rank / _classify_buy_sell_hold), so tuning the
-algorithm in data_fetcher.py changes both consistently.
+(strategy.rebalance._score_and_rank / _classify_buy_sell_hold), so tuning the
+algorithm in strategy/rebalance/ changes both consistently.
 
 Unlike the other tabs, this one reads UniverseTab.all_data directly (passed
 in at construction) rather than subscribing to a signal: the read only
@@ -34,7 +34,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
 import trade_db
-from data_fetcher import compute_weekly_rebalance_signals, RebalanceConfig
+from strategy.rebalance import compute_weekly_rebalance_signals, RebalanceConfig
 from threads.fetch_threads import RebalanceBacktestThread
 from ui.dialogs import BacktestResultDialog
 
@@ -54,10 +54,10 @@ class AutoTradingTab(QWidget):
       - band_multiplier = 1.5 -> a held stock is only a sell candidate once
         its rank within its own market falls below 15 (reduces weekly turnover)
     Both values come from RebalanceConfig (trading.md 8-H / 11-4 step 3) --
-    the single source of truth shared with data/rebalance's own defaults, so
+    the single source of truth shared with strategy/rebalance's own defaults, so
     they're no longer duplicated as separate literals here.
     Factor weights are an equal-weighted v1 default (see
-    data_fetcher.compute_weekly_rebalance_signals docstring) -- tune based on
+    strategy.rebalance.compute_weekly_rebalance_signals docstring) -- tune based on
     backtest results per trading.md section 6, not fixed here.
     """
 

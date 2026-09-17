@@ -11,7 +11,7 @@ import datetime as _dt
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QPushButton, QLineEdit, QLabel, QComboBox, QScrollBar,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QApplication, QSplitter, QWidget, QStyledItemDelegate, QTabWidget,
@@ -329,9 +329,6 @@ class StockMaDialog(QDialog):
             ma10 = _get_last_valid("MA10")
             ma20 = _get_last_valid("MA20")
             ma50 = _get_last_valid("MA50")
-            diff10_str = diff_fmt(current_price, ma10)
-            diff20_str = diff_fmt(current_price, ma20)
-            diff50_str = diff_fmt(current_price, ma50)
 
             # US style colors
             col_up = '#2ecc71'    # green
@@ -459,7 +456,6 @@ class StockMaDialog(QDialog):
             fig.autofmt_xdate(rotation=25)
 
             # ── MA Divergence subplot (ax3) — Div(50) + Div(20) combined ───
-            ax3_div    = None
             _arr_div   = None
             _arr_ma50  = None
             _arr_div20 = None
@@ -511,7 +507,6 @@ class StockMaDialog(QDialog):
                 ax3.set_ylabel("Div(%)", fontsize=8)
                 ax3.grid(True, linestyle=':', alpha=0.4)
                 ax3.tick_params(axis='y', labelsize=7)
-                ax3_div = ax3
 
             # Pre-cache arrays for O(1) hover access (avoids Polars row() per event)
             _arr_open  = df.get_column("Open").to_numpy()
@@ -1769,7 +1764,7 @@ class TotalAssetsGraphDialog(QDialog):
 # Weekly rebalance backtest result dialog (trading.md section 6)
 # ---------------------------------------------------------------------------
 class BacktestResultDialog(QDialog):
-    """Shows one data_fetcher.run_rebalance_backtest() result: an equity
+    """Shows one strategy.rebalance.run_rebalance_backtest() result: an equity
     curve (strategy vs benchmark) plus summary stats. Purely a display of an
     already-computed result dict -- no computation happens in this class,
     so changes to the backtest engine (data_fetcher.py) never require
@@ -1828,17 +1823,13 @@ class BacktestResultDialog(QDialog):
             eq_dates = [datetime.strptime(pt["date"], "%Y-%m-%d") for pt in equity]
             eq_x = mdates.date2num(eq_dates)
             eq_y = [pt["value"] for pt in equity]
-            line_eq, = ax.plot(eq_x, eq_y, color="#c0392b", linewidth=2, label="Strategy")
-        else:
-            line_eq = None
+            ax.plot(eq_x, eq_y, color="#c0392b", linewidth=2, label="Strategy")
 
         if bench:
             bn_dates = [datetime.strptime(pt["date"], "%Y-%m-%d") for pt in bench]
             bn_x = mdates.date2num(bn_dates)
             bn_y = [pt["value"] for pt in bench]
-            line_bn, = ax.plot(bn_x, bn_y, color="#8e44ad", linewidth=2, linestyle="--", label="Benchmark (KOSPI)")
-        else:
-            line_bn = None
+            ax.plot(bn_x, bn_y, color="#8e44ad", linewidth=2, linestyle="--", label="Benchmark (KOSPI)")
 
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%y.%m"))
         fig.autofmt_xdate(rotation=25)

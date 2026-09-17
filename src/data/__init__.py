@@ -1,7 +1,12 @@
-"""data — Modular market data, indicator computation, backtesting, and portfolio rebalancing package."""
+"""data — Pure data-access layer: market data, caches, and indicator computation.
+
+Trading-strategy code (rebalance, ma_cross, trend_following) lives in the
+top-level `strategy` package and imports from here; this package never
+imports `strategy` (trading.md 11-5).
+"""
 
 from data.cache import (
-    _START_DATE,
+    start_date,
     _TD_PERIODS,
     _CHANGE_KEYS,
     _FDR_ONLY_TICKERS,
@@ -13,8 +18,7 @@ from data.cache import (
     _HIST_CACHE,
     _HIST_CACHE_LOCK,
     _HIST_CACHE_MAX,
-    _HIST_CACHE_HITS,
-    _HIST_CACHE_MISSES,
+    _HIST_CACHE_STATS,
     _HIST_CACHE_LOG_INTERVAL,
     _YF_SESSION,
     _NAVER_SESSION,
@@ -25,6 +29,7 @@ from data.cache import (
     _hist_df_is_stale,
     _pdf_is_stale,
     safe_float,
+    is_kr_code,
 )
 
 from data.indicators import (
@@ -105,24 +110,3 @@ from data.market import (
     fetch_major_indices_as_stocks,
 )
 
-from data.backtest import (
-    run_backtest_strategy,
-    run_backtest_for_stock,
-    run_bulk_backtest_chunk,
-)
-
-from data.rebalance import (
-    RebalanceConfig,
-    _REBALANCE_FACTORS,
-    _REBALANCE_MIN_FACTORS,
-    _extract_live_candidates,
-    _score_and_rank,
-    _classify_buy_sell_hold,
-    compute_weekly_rebalance_signals,
-    _rebalance_friday_dates,
-    _compute_historical_factor_series,
-    _factor_snapshot_as_of,
-    _run_walkforward_simulation,
-    _summarize_backtest,
-    run_rebalance_backtest,
-)

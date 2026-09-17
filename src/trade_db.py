@@ -30,14 +30,16 @@ import json
 import os
 import logging
 import datetime as _dt
-from pathlib import Path
+
+from paths import DB_FILE, LEGACY_CUSTOM_HISTORY_JSON, LEGACY_TRADE_OVERRIDES_JSON
 
 logger = logging.getLogger(__name__)
 
-_BASE_DIR      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DB_FILE       = os.path.join(_BASE_DIR, "portfolio.db")
-_CUSTOM_JSON   = os.path.join(_BASE_DIR, "custom_history.json")
-_OVERRIDES_JSON= os.path.join(_BASE_DIR, "trade_overrides.json")
+# Module-level aliases kept as plain names so tests (TempDBMixin) can swap them
+# for temp files without touching paths.py.
+_DB_FILE        = DB_FILE
+_CUSTOM_JSON    = LEGACY_CUSTOM_HISTORY_JSON
+_OVERRIDES_JSON = LEGACY_TRADE_OVERRIDES_JSON
 
 
 # ── Connection helper ──────────────────────────────────────────────────────────

@@ -2,7 +2,6 @@
 import re
 import threading
 from collections import OrderedDict
-from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
@@ -10,22 +9,17 @@ import polars as pl
 import FinanceDataReader as fdr
 import logging
 
+import data.cache as _dc
 from data.cache import (
-    _START_DATE,
+    start_date,
     _FDR_ONLY_TICKERS,
-    _HIST_CACHE,
-    _HIST_CACHE_MAX,
-    _HIST_CACHE_HITS,
-    _HIST_CACHE_MISSES,
-    _HIST_CACHE_LOG_INTERVAL,
-    _HIST_CACHE_LOCK,
     _USD_KRW_CACHE,
     _MISC_CACHE_LOCK,
     _YF_SESSION,
-    _NAVER_SESSION,
     _hist_df_is_stale,
-    _log_hist_cache_stats,
+    _record_hist_cache_lookup,
     safe_float,
+    is_kr_code,
 )
 from data.indicators import (
     _to_polars,
@@ -99,28 +93,40 @@ def _singleflight_cache(maxsize):
     access -- it does not prevent two threads from both missing on the same
     key and both calling the wrapped function.
 
+    Entries expire at the day boundary: listings (constituents, market caps)
+    change daily, and before this the cache lived for the whole process
+    lifetime (roadmap 6-2f).
+
     Only meant for single-argument functions keyed on that argument, which
     is all get_stock_listing/_get_listing_with_norm need."""
     def decorator(fn):
-        cache: "OrderedDict[str, pd.DataFrame]" = OrderedDict()
+        cache: "OrderedDict[str, tuple]" = OrderedDict()  # key -> (date, result)
         cache_lock = threading.Lock()
         key_locks: dict = {}
 
+        def _lookup(key, today):
+            hit = cache.get(key)
+            if hit is not None and hit[0] == today:
+                cache.move_to_end(key)
+                return hit[1]
+            return None
+
         def wrapper(key):
+            today = datetime.now().date()
             with cache_lock:
-                if key in cache:
-                    cache.move_to_end(key)
-                    return cache[key]
+                cached = _lookup(key, today)
+                if cached is not None:
+                    return cached
                 key_lock = key_locks.setdefault(key, threading.Lock())
 
             with key_lock:
                 with cache_lock:
-                    if key in cache:
-                        cache.move_to_end(key)
-                        return cache[key]
+                    cached = _lookup(key, today)
+                    if cached is not None:
+                        return cached
                 result = fn(key)
                 with cache_lock:
-                    cache[key] = result
+                    cache[key] = (today, result)
                     cache.move_to_end(key)
                     if len(cache) > maxsize:
                         cache.popitem(last=False)
@@ -145,12 +151,12 @@ def get_stock_listing(market: str) -> pd.DataFrame:
             from FinanceDataReader.krx.listing import KrxStockListing
             market_arg = f'{market}-DESC' if market in ('KOSPI', 'KOSDAQ') else 'KRX-DESC'
             return KrxStockListing(market_arg).read()
-        except Exception as e:
+        except Exception:
             logger.warning("KrxStockListing failed for market=%s, falling back to fdr.StockListing", market, exc_info=True)
 
     try:
         return fdr.StockListing(market)
-    except Exception as e:
+    except Exception:
         logger.error("fdr.StockListing('%s') failed", market, exc_info=True)
         return pd.DataFrame(columns=['Symbol', 'Code', 'Name', 'Market'])
 
@@ -195,24 +201,6 @@ def _fetch_kr_listing_fdr_fallback(market, top_n):
         return []
 
 
-def _bump_hist_cache_counter(_df_mod, _dc, counter_name: str) -> None:
-    """Increments a _HIST_CACHE_HITS/_HIST_CACHE_MISSES counter and mirrors it
-    into the data_fetcher facade module.
-
-    Plain module-level ints don't share state across re-exports (rebinding
-    one copy doesn't touch another), and tests/test_data_fetcher.py patches
-    and reads these counters via `data_fetcher.<name>` for backward
-    compatibility with pre-modularization callers -- so both copies have to
-    be kept in sync by hand here rather than just writing to `_dc`.
-    """
-    value = getattr(_df_mod, counter_name, getattr(_dc, counter_name)) + 1
-    setattr(_dc, counter_name, value)
-    if hasattr(_df_mod, counter_name):
-        setattr(_df_mod, counter_name, value)
-    log_stats_fn = getattr(_df_mod, "_log_hist_cache_stats", _log_hist_cache_stats)
-    log_stats_fn()
-
-
 def get_historical_data(ticker: str, start: str) -> pl.DataFrame:
     """Historical data with a smart cache that skips empty DataFrames.
 
@@ -221,28 +209,27 @@ def get_historical_data(ticker: str, start: str) -> pl.DataFrame:
     reads/writes to it are serialized under _HIST_CACHE_LOCK. The network
     fetch itself happens outside the lock so concurrent misses still run
     in parallel — only the dict bookkeeping is made atomic.
-    """
-    import data.cache as _dc
-    import data_fetcher as _df_mod
 
+    The cache dict/lock/max are read through the `data.cache` module object
+    (`_dc`) rather than imported names so tests can rebind e.g.
+    `data.cache._HIST_CACHE_MAX` and have it take effect here.
+    """
     cache_key = (ticker, start)
-    stale_check = getattr(_df_mod, "_hist_df_is_stale", _hist_df_is_stale)
 
     with _dc._HIST_CACHE_LOCK:
         cached = _dc._HIST_CACHE.get(cache_key)
         if cached is not None:
             _dc._HIST_CACHE.move_to_end(cache_key)
 
-    if cached is not None and not stale_check(cached):
-        _bump_hist_cache_counter(_df_mod, _dc, "_HIST_CACHE_HITS")
+    if cached is not None and not _hist_df_is_stale(cached):
+        _record_hist_cache_lookup(hit=True)
         return cached
 
-    _bump_hist_cache_counter(_df_mod, _dc, "_HIST_CACHE_MISSES")
+    _record_hist_cache_lookup(hit=False)
 
-    fetch_fn = getattr(_df_mod, "_fetch_historical_uncached", _fetch_historical_uncached)
-    df = fetch_fn(ticker, start)
+    df = _fetch_historical_uncached(ticker, start)
     if not df.is_empty():
-        max_size = getattr(_df_mod, "_HIST_CACHE_MAX", _dc._HIST_CACHE_MAX)
+        max_size = _dc._HIST_CACHE_MAX
         with _dc._HIST_CACHE_LOCK:
             if cache_key not in _dc._HIST_CACHE and len(_dc._HIST_CACHE) >= max_size:
                 try:
@@ -268,7 +255,7 @@ def _fetch_historical_uncached(ticker: str, start: str) -> pl.DataFrame:
             if not df.is_empty():
                 return df
 
-        if len(ticker) == 6 and "." not in ticker and any(c.isdigit() for c in ticker):
+        if is_kr_code(ticker):
             df = _fast_kr_history(ticker, start)
             if not df.is_empty():
                 return df
@@ -440,7 +427,7 @@ def fetch_kr_market_data(market="KOSPI", top_n=200, progress_callback=None):
             })
 
         return results
-    except Exception as e:
+    except Exception:
         logger.error("fetch_kr_market_data failed for market=%s", market, exc_info=True)
         return []
 
@@ -486,10 +473,10 @@ def fetch_single_stock(market, ticker):
                     name = str(target.get('Name', ticker))
                     marcap = safe_float(target.get('Marcap', 0))
                     return _build_kr_stock_res(code, name, market, marcap), None
-            except Exception as exc:
+            except Exception:
                 logger.warning("KRX search error for ticker='%s'", ticker, exc_info=True)
 
-            if len(ticker) == 6 and "." not in ticker and any(c.isdigit() for c in ticker):
+            if is_kr_code(ticker):
                 return _build_kr_stock_res(ticker, "", market, 0), None
 
             df_listing = get_stock_listing(market)
@@ -512,7 +499,7 @@ def fetch_single_stock(market, ticker):
             df_p = pl.DataFrame()
             usd_price = 0.0
             try:
-                df_pd = fdr.DataReader(ticker, _START_DATE)
+                df_pd = fdr.DataReader(ticker, start_date())
                 df_p = _to_polars(df_pd)
                 if not df_p.is_empty():
                     close_s = df_p.get_column("Close").drop_nulls()
@@ -581,15 +568,12 @@ def fetch_single_stock(market, ticker):
 
 def get_usd_krw_rate():
     """Returns USD/KRW FX rate."""
-    import data_fetcher as _df_mod
-    fdr_mod = getattr(_df_mod, "fdr", fdr)
-    usd_cache = getattr(_df_mod, "_USD_KRW_CACHE", _USD_KRW_CACHE)
-    stale_check = getattr(_df_mod, "_hist_df_is_stale", _hist_df_is_stale)
+    usd_cache = _USD_KRW_CACHE
     with _MISC_CACHE_LOCK:
-        if usd_cache["rate"] is not None and not stale_check(usd_cache["df"]):
+        if usd_cache["rate"] is not None and not _hist_df_is_stale(usd_cache["df"]):
             return usd_cache["rate"]
         try:
-            df = _to_polars(fdr_mod.DataReader('USD/KRW'))
+            df = _to_polars(fdr.DataReader('USD/KRW'))
             if not df.is_empty():
                 usd_cache["df"] = df
                 close_s = df.get_column("Close").drop_nulls()
@@ -605,7 +589,7 @@ def get_usd_krw_rate():
 
 def get_index_close_for_date(ticker: str, date_str: str) -> float:
     """Returns the closing price for an index/ticker for a specific date (YYYY-MM-DD)."""
-    df = get_historical_data(ticker, _START_DATE)
+    df = get_historical_data(ticker, start_date())
     if df is not None and not df.is_empty():
         try:
             target = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -675,71 +659,69 @@ def fetch_all_indices_mas(days=365):
     return results
 
 
+_PANDAS_SERIES_LOADERS = {
+    "JP10YT": _get_jp10y_df,
+    "KR3YT": _get_kr3y_df,
+    "VKOSPI": _get_vkospi_pdf,
+}
+
+
+def _naver_code_for(ticker: str):
+    """Naver siseJson symbol for a ticker, or None if Naver is not its source."""
+    if ticker in ("^KS11", "KS11", "KOSPI"):
+        return "KOSPI"
+    if ticker in ("^KQ11", "KQ11", "KOSDAQ"):
+        return "KOSDAQ"
+    if is_kr_code(ticker):
+        return ticker
+    return None
+
+
+def _load_ohlcv_window(ticker: str, start: str, end: str = None) -> pl.DataFrame:
+    """Daily OHLCV for [start, end] (end=None -> today) as polars, picking the
+    source by ticker type: the day-cached pandas series for bonds/VKOSPI, Naver
+    for KR indices and KRX codes, FinanceDataReader for everything else (and as
+    the fallback when Naver returns nothing)."""
+    loader = _PANDAS_SERIES_LOADERS.get(ticker)
+    if loader is not None:
+        df_pd = loader()
+        if df_pd is None:
+            return pl.DataFrame()
+        df_pd = df_pd[df_pd.index >= start]
+        if end:
+            df_pd = df_pd[df_pd.index <= end]
+        return _to_polars(df_pd)
+
+    naver_code = _naver_code_for(ticker)
+    if naver_code is not None:
+        df_kr = _fast_kr_history(naver_code, start)
+        if not df_kr.is_empty():
+            if end:
+                end_dt = datetime.strptime(end, "%Y-%m-%d").date()
+                df_kr = df_kr.filter(pl.col("Date") <= end_dt)
+            return df_kr
+
+    df_pd = fdr.DataReader(ticker, start, end) if end else fdr.DataReader(ticker, start)
+    return _to_polars(df_pd)
+
+
 def fetch_stock_ma_multi(ticker, market, windows=(10, 20, 60), days=1825, target_year=None):
-    """Fetches OHLCV for a single stock and computes MA/RSI using Polars."""
+    """Fetches OHLCV for a single stock and computes MA/RSI using Polars.
+
+    target_year=None: trailing `days` calendar days (at least 3x the widest
+    window). target_year=YYYY: Sep 1 of the prior year through Dec 31 of that
+    year, so the indicators have warm-up history before January.
+    """
     try:
         if target_year is not None:
             start = f"{target_year - 1}-09-01"
-            end   = f"{target_year}-12-31"
-            if ticker == "JP10YT":
-                df_pd = _get_jp10y_df()
-                if df_pd is not None:
-                    df_pd = df_pd[(df_pd.index >= start) & (df_pd.index <= end)]
-            elif ticker == "KR3YT":
-                df_pd = _get_kr3y_df()
-                if df_pd is not None:
-                    df_pd = df_pd[(df_pd.index >= start) & (df_pd.index <= end)]
-            elif ticker == "VKOSPI":
-                df_pd = _get_vkospi_pdf()
-                if df_pd is not None:
-                    df_pd = df_pd[(df_pd.index >= start) & (df_pd.index <= end)]
-            elif ticker in ("^KS11", "KS11", "KOSPI"):
-                df_kr = _fast_kr_history("KOSPI", start)
-                if not df_kr.is_empty():
-                    start_dt = datetime.strptime(start, "%Y-%m-%d").date()
-                    end_dt = datetime.strptime(end, "%Y-%m-%d").date()
-                    df_kr = df_kr.filter((pl.col("Date") >= start_dt) & (pl.col("Date") <= end_dt))
-                    return _compute_indicators(df_kr, windows), None
-            elif ticker in ("^KQ11", "KQ11", "KOSDAQ"):
-                df_kr = _fast_kr_history("KOSDAQ", start)
-                if not df_kr.is_empty():
-                    start_dt = datetime.strptime(start, "%Y-%m-%d").date()
-                    end_dt = datetime.strptime(end, "%Y-%m-%d").date()
-                    df_kr = df_kr.filter((pl.col("Date") >= start_dt) & (pl.col("Date") <= end_dt))
-                    return _compute_indicators(df_kr, windows), None
-            else:
-                df_pd = fdr.DataReader(ticker, start, end)
+            end = f"{target_year}-12-31"
         else:
             max_window = max(windows)
             start = (datetime.now() - timedelta(days=max(days, max_window * 3))).strftime("%Y-%m-%d")
-            if ticker == "JP10YT":
-                df_pd = _get_jp10y_df()
-                if df_pd is not None:
-                    df_pd = df_pd[df_pd.index >= start]
-            elif ticker == "KR3YT":
-                df_pd = _get_kr3y_df()
-                if df_pd is not None:
-                    df_pd = df_pd[df_pd.index >= start]
-            elif ticker == "VKOSPI":
-                df_pd = _get_vkospi_pdf()
-                if df_pd is not None:
-                    df_pd = df_pd[df_pd.index >= start]
-            elif ticker in ("^KS11", "KS11", "KOSPI"):
-                df_kr = _fast_kr_history("KOSPI", start)
-                if not df_kr.is_empty():
-                    return _compute_indicators(df_kr, windows), None
-            elif ticker in ("^KQ11", "KQ11", "KOSDAQ"):
-                df_kr = _fast_kr_history("KOSDAQ", start)
-                if not df_kr.is_empty():
-                    return _compute_indicators(df_kr, windows), None
-            elif len(ticker) == 6 and "." not in ticker and any(c.isdigit() for c in ticker):
-                df_kr = _fast_kr_history(ticker, start)
-                if not df_kr.is_empty():
-                    return _compute_indicators(df_kr, windows), None
-            else:
-                df_pd = fdr.DataReader(ticker, start)
+            end = None
 
-        df = _to_polars(df_pd)
+        df = _load_ohlcv_window(ticker, start, end)
         if df.is_empty():
             return None, f"No data for '{ticker}'."
         return _compute_indicators(df, windows), None
@@ -760,9 +742,9 @@ def fetch_indice_as_stock(label_ticker):
             df = _to_polars(_get_vkospi_pdf())
         elif label in ("KOSPI", "KOSDAQ") or fdr_ticker in ("^KS11", "^KQ11"):
             naver_code = "KOSPI" if label == "KOSPI" or fdr_ticker in ("^KS11", "KS11") else "KOSDAQ"
-            df = _fast_kr_history(naver_code, _START_DATE)
+            df = _fast_kr_history(naver_code, start_date())
         else:
-            df = get_historical_data(fdr_ticker, _START_DATE)
+            df = get_historical_data(fdr_ticker, start_date())
 
         if df.is_empty():
             return None
@@ -806,7 +788,7 @@ def fetch_indice_as_stock(label_ticker):
             "change_mode": chg_mode,
             "index_order": order,
         }
-    except Exception as e:
+    except Exception:
         logger.error("Index fetch failed for label=%s", label, exc_info=True)
         return None
 

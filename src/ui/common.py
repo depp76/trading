@@ -47,6 +47,11 @@ _HIST_KEYS = ["3d", "5d", "10d", "20d", "60d", "120d"]
 _MARKET_ORDER = {"KOSPI": 0, "KOSDAQ": 1, "NASDAQ 100": 2, "S&P500": 3}
 _FIELD_ERROR_STYLE = "border: 1px solid #e74c3c; background-color: #fdecea;"
 
+# Shared font-family declaration for inline stylesheets (roadmap 6-2e); the
+# same three-family fallback list create_font() uses. Splice it into a
+# stylesheet string: "QLabel { " + FONT_FAMILY_CSS + " font-size: 9pt; }"
+FONT_FAMILY_CSS = "font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';"
+
 
 # ---------------------------------------------------------------------------
 # Input formatters & validators
@@ -137,6 +142,37 @@ def _mk_field_validator(edit: QLineEdit, check_fn: Callable[[str], bool], error_
         _set_field_error(edit, "" if ok else error_msg)
         return ok
     return _run
+
+
+# ---------------------------------------------------------------------------
+# QThread lifecycle helper
+# ---------------------------------------------------------------------------
+def retire_thread(owner, attr_name: str) -> None:
+    """Abandon the QThread stored at ``owner.<attr_name>`` so a replacement can
+    be started, without letting a still-running one be garbage-collected.
+
+    If the thread is still running, every signal it might still emit is
+    disconnected (so a late result cannot touch widgets the caller has moved
+    on from) and the thread object is parked in ``owner._zombie_threads``,
+    which collect_threads_to_stop() drains at shutdown. The attribute is then
+    cleared. Replaces three hand-copied versions of this dance in the
+    Universe and Trading History tabs (roadmap 6-2e).
+    """
+    thread = getattr(owner, attr_name, None)
+    if thread is None:
+        return
+    try:
+        if thread.isRunning():
+            try:
+                thread.disconnect()
+            except Exception:
+                pass
+            zombies = [t for t in getattr(owner, "_zombie_threads", []) if t.isRunning()]
+            zombies.append(thread)
+            owner._zombie_threads = zombies
+    except RuntimeError:
+        pass  # underlying C++ object already deleted
+    setattr(owner, attr_name, None)
 
 
 # ---------------------------------------------------------------------------

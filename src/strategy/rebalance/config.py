@@ -1,8 +1,8 @@
-"""data/rebalance/config.py — RebalanceConfig, single source of truth for strategy
+"""strategy/rebalance/config.py — RebalanceConfig, single source of truth for strategy
 parameters (trading.md 8-H / 11-4 migration step 3).
 
 Before this file, top_n_by_market/band_multiplier were duplicated in two
-places (data/rebalance's function defaults and ui/auto_trading_tab.py's
+places (strategy/rebalance's function defaults and ui/auto_trading_tab.py's
 AutoTradingTab class constants, trading.md 8-2). Collecting them in one
 dataclass removes that duplication and gives 8-A/8-B/8-C (sector cap, VKOSPI
 regime overlay, position sizing) a single place to add their parameters —

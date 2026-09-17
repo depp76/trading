@@ -1,12 +1,12 @@
-"""data/rebalance/walkforward.py — Historical factor series and walk-forward portfolio simulation (trading.md 11-2)."""
+"""strategy/rebalance/walkforward.py — Historical factor series and walk-forward portfolio simulation (trading.md 11-2)."""
 import bisect
 from datetime import timedelta
 import polars as pl
 
 from data.indicators import _compute_indicators
 from data.market import get_historical_data
-from data.rebalance.factors import _REBALANCE_MIN_FACTORS, _score_and_rank
-from data.rebalance.classify import _classify_buy_sell_hold
+from strategy.rebalance.factors import _REBALANCE_MIN_FACTORS, _score_and_rank
+from strategy.rebalance.classify import _classify_buy_sell_hold
 
 
 def _rebalance_friday_dates(start_date, end_date) -> list:

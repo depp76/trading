@@ -3,7 +3,7 @@ import os
 import sys
 import unittest
 from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone, timedelta, time as dt_time
+from datetime import datetime
 
 _PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _PROJ_ROOT)

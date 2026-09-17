@@ -6,7 +6,7 @@ Contains:
   SingleStockFetchThread, AllDataFetchThread,
   UniverseLightweightFetchThread, PositionPriceFetchThread,
   AutoBackupThread, RebalanceBacktestThread,
-  GeminiFilterThread, GeminiDiagnosisThread
+  GeminiFilterThread, GeminiDiagnosisThread, AccountDepositThread
 """
 import os
 import shutil
@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from paths import BASE_DIR, DB_FILE, CUSTOM_SETTINGS_FILE, ARCHIVE_DIR
 from data_fetcher import (
     fetch_market_data,
     fetch_single_stock,
@@ -26,7 +27,7 @@ from data_fetcher import (
 
 logger = logging.getLogger(__name__)
 
-_AUTO_BACKUP_FILES = ["portfolio.db", "custom_settings.json"]
+_AUTO_BACKUP_FILES = [DB_FILE, CUSTOM_SETTINGS_FILE]
 _AUTO_BACKUP_MAX_KEEP = 7  # keep only the most recent N automatic backups
 
 
@@ -457,6 +458,26 @@ class PositionPriceFetchThread(QThread):
 
 
 # ---------------------------------------------------------------------------
+# Account deposit fetch thread (Trading History tab "Fetch" button)
+# ---------------------------------------------------------------------------
+class AccountDepositThread(QThread):
+    """Background thread: KIS inquire-balance via data_fetcher.fetch_account_deposit().
+
+    The REST call used to run synchronously on the UI thread from the Fetch
+    button handler, freezing the window whenever KIS was slow (roadmap 6-1c).
+    """
+    finished = pyqtSignal(float, str)  # deposit (KRW), error message ("" on success)
+
+    def run(self):
+        from data_fetcher import fetch_account_deposit
+        try:
+            self.finished.emit(float(fetch_account_deposit()), "")
+        except Exception as e:
+            logger.warning("Account deposit fetch failed", exc_info=True)
+            self.finished.emit(0.0, str(e))
+
+
+# ---------------------------------------------------------------------------
 # Auto-backup thread (runs on app start)
 # ---------------------------------------------------------------------------
 class AutoBackupThread(QThread):
@@ -472,13 +493,13 @@ class AutoBackupThread(QThread):
     def run(self):
         try:
             timestamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-            dest_dir = os.path.join("archive", f"auto_{timestamp}")
+            dest_dir = os.path.join(ARCHIVE_DIR, f"auto_{timestamp}")
 
             existing = [f for f in _AUTO_BACKUP_FILES if os.path.exists(f)]
             if not existing:
                 return  # nothing to back up yet (e.g. very first run)
 
-            if "portfolio.db" in existing:
+            if DB_FILE in existing:
                 try:
                     import trade_db
                     trade_db.checkpoint_wal()
@@ -490,19 +511,21 @@ class AutoBackupThread(QThread):
                     )
 
             os.makedirs(dest_dir, exist_ok=True)
-            for fname in existing:
-                shutil.copy2(fname, os.path.join(dest_dir, fname))
+            for fpath in existing:
+                shutil.copy2(fpath, os.path.join(dest_dir, os.path.basename(fpath)))
 
             self._prune_old_backups()
-            logger.info("Auto-backup completed: %s (%s)", dest_dir, ", ".join(existing))
-            self.backup_done.emit(f"Auto-backup complete: {dest_dir}")
+            rel_dest = os.path.relpath(dest_dir, BASE_DIR)
+            logger.info("Auto-backup completed: %s (%s)", rel_dest,
+                        ", ".join(os.path.basename(f) for f in existing))
+            self.backup_done.emit(f"Auto-backup complete: {rel_dest}")
         except Exception:
             logger.warning("Auto-backup failed", exc_info=True)
 
     @staticmethod
     def _prune_old_backups():
         """Keep only the _AUTO_BACKUP_MAX_KEEP most recent archive/auto_* folders."""
-        archive_dir = "archive"
+        archive_dir = ARCHIVE_DIR
         if not os.path.isdir(archive_dir):
             return
         auto_dirs = sorted(
@@ -521,7 +544,7 @@ class AutoBackupThread(QThread):
 # Weekly rebalance walk-forward backtest thread (trading.md section 6)
 # ---------------------------------------------------------------------------
 class RebalanceBacktestThread(QThread):
-    """Background thread: data_fetcher.run_rebalance_backtest(). Always run
+    """Background thread: strategy.rebalance.run_rebalance_backtest(). Always run
     off the UI thread -- it fetches full history for every ticker in the
     given universe, which for a large universe and a 5-year lookback can
     take a while even with _HIST_CACHE reuse on repeat runs."""
@@ -552,7 +575,7 @@ class RebalanceBacktestThread(QThread):
         self.sell_tax_rate = sell_tax_rate
 
     def run(self):
-        from data_fetcher import run_rebalance_backtest
+        from strategy.rebalance import run_rebalance_backtest
         try:
             result = run_rebalance_backtest(
                 self.tickers,

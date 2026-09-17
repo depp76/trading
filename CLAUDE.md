@@ -4,89 +4,124 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio: a "Trading Universe"
-watchlist (KOSPI/KOSDAQ/NASDAQ 100/S&P 500), a manually-entered "Trading History" trade log, and
-a "Total Assets" performance tab. Not a git repository — there is no `git`, so treat file edits
-as final (no diff/revert safety net) and rely on the `archive/` backup convention below when
-making risky changes.
+A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio, with four tabs:
+"Trading Universe" (KOSPI/KOSDAQ watchlist with live prices and indicators; the US market
+code paths still exist but are commented out in the UI), "Trading History" (manually-entered
+trade log backed by SQLite), "Total Assets" (weekly asset snapshots vs. KOSPI and USD), and
+"Auto Trading" (weekly factor-scoring rebalance signals plus a walk-forward backtest; signal
+generation only, it never places orders).
+
+The repo is a git repository (branch `master`). Commit or branch as usual; the old
+`archive/backup_<timestamp>/` copy-before-editing convention is no longer needed.
+`AutoBackupThread` still writes `archive/auto_<timestamp>/` snapshots of `portfolio.db` and
+`custom_settings.json` on every start (last 7 kept); `archive/` is gitignored.
 
 ## Running
 
-All application source code lives under `src/` (mirroring the structure described below);
-run from the repository root so relative paths to `.env`, `portfolio.db`, and the cache/state
-JSON files (which stay at the repo root, not under `src/`) still resolve correctly.
+All source lives under `src/`. Runtime files (`.env`, `portfolio.db`, the cache/state JSON
+files, `app.log`, `archive/`) live at the repo root and are resolved through `src/paths.py`
+(absolute paths derived from the module location), so the app behaves the same from any
+working directory:
 
 ```powershell
 .\.venv\Scripts\python.exe src\main.py
 ```
 
-There is no build step, linter config, or test suite in this repo. Verification is done ad hoc:
-`py_compile` / `ast.parse` for syntax, and one-off smoke-test scripts (see
-`CHANGELOG_optimization.md` for examples of the pattern used previously). When making non-trivial
-changes to `data_fetcher.py` logic (e.g. `run_backtest_strategy`), write a throwaway script that
-compares old vs. new behavior against random inputs before/after — do not assume correctness from
-reading alone, since GUI behavior can't be exercised headlessly in this environment.
+### Verification
 
-Because there's no VCS, before editing any of the three core files, copy the originals to
-`archive/backup_<yyyyMMdd_HHmmss>/` first (matches the existing `archive/backup_2026*` folders).
+```powershell
+.\.venv\Scripts\python.exe -m pytest src\tests -q      # ~120 tests, no network, ~10 s
+.\.venv\Scripts\ruff.exe check src                      # pyflakes rules only (ruff.toml)
+```
+
+Run pytest from the repo root or from `src/` (`tests/conftest.py` puts `src/` on `sys.path`).
+Tests patch the implementation modules (`data.cache`, `data.market`, `data.collectors.yahoo`),
+never names on the `data_fetcher` facade. GUI behaviour cannot be exercised headlessly here;
+for non-trivial changes to fetch/backtest logic write a throwaway script comparing old vs.
+new behaviour on random inputs (see `changelog_optimization.md` for the pattern), and see
+`test_plan.md` for the manual checks. Dev tooling is in `requirements-dev.txt`
+(`-r requirements.txt` + pytest + ruff); runtime pins are in `requirements.txt`.
 
 ## Architecture
 
-Three files hold essentially all application logic:
-
-- **`src/main.py`** (~5,900 lines) — PyQt6 UI: `MainWindow` (tabs), `StockTable`/`GroupedHeaderView`
-  (Universe grid with per-column filter popups), `TradingHistoryTab` (trade entry/edit dialogs,
-  backed by `trade_db`), `TradingRecordTab` (assets-over-time table + matplotlib graphs), plus
-  several `QThread` subclasses (`AllDataFetchThread`, `UniverseLightweightFetchThread`,
-  `PositionPriceFetchThread`, `RealtimePriceThread`, `IndexMaThread`, `StockMaThread`) that call
-  into `data_fetcher.py` off the UI thread and emit signals back to update widgets. A
-  60-second `QTimer` (`global_auto_timer`) drives auto-refresh of live prices/indices when the
-  "Auto Update" checkbox is on.
-- **`src/data_fetcher.py`** (~2,150 lines) — all external data access: market listings and OHLCV via
-  `pykrx`/`FinanceDataReader`/`yfinance`/`yahooquery`, real-time quotes via Naver and Yahoo
-  (`yf_quote_batch` is the shared batching/crumb/retry helper — reuse it rather than adding a new
-  direct `yfinance` call site), Korea Investment & Securities (한국투자증권, KIS) Open API for
-  account deposit, KR quotes/OHLCV, investor trend, and real-time KR prices (WebSocket),
-  KRX derivatives API for VKOSPI. Uses `polars` internally for indicator/backtest computation
-  (`_to_polars`, `_compute_indicators`, `run_backtest_strategy`) and converts to `pandas` at the
-  boundary because upstream libraries only speak pandas. Has module-level caches
-  (`_HIST_CACHE` as an `OrderedDict` LRU, `_YF_BULK_CACHE`, `_KIS_TOKEN_CACHE`,
-  `_KIS_KEYS_CACHE`) — reuse these rather than adding parallel caching.
-- **`src/trade_db.py`** — SQLite persistence (`portfolio.db`, WAL mode) for the trade log, replacing
-  the older `custom_history.json` + `trade_overrides.json` pair (still read once, on first run,
-  by `_migrate_legacy_json` for backward compatibility). Prefer `upsert_trades()` (batched,
-  single transaction) over looping `upsert_trade()` when writing more than one record.
+- **`src/main.py`** (~300 lines): `MainWindow` builds the four tabs, wires cross-tab
+  signals, owns the 60-second `global_auto_timer` (the only auto-refresh timer; the "Auto
+  Update" checkbox starts and stops it and everything downstream), the app stylesheet, and
+  logging setup (root INFO; `app.log` gets INFO and above, the console WARNING and above).
+- **`src/ui/`**: `universe_tab.py` (`UniverseTab`), `history_tab.py` (`TradingHistoryTab`),
+  `assets_tab.py` (`TradingRecordTab`), `auto_trading_tab.py` (`AutoTradingTab`),
+  `widgets.py` (`StockTable`, `FilterPopup`, `GroupedHeaderView`), `dialogs.py` (charts and
+  trade edit dialogs), `common.py` (`create_font`, `FONT_FAMILY_CSS`, input validators,
+  `atomic_save_json` / `safe_load_json`, `retire_thread`). Tabs never reference each other
+  directly; `MainWindow` connects their signals (`status_message`, `refresh_started`,
+  `auto_lightweight_tick`, `total_asset_updated`). The one exception is `AutoTradingTab`,
+  which reads `UniverseTab.all_data` on demand.
+- **`src/threads/`**: every network call the UI triggers runs in a `QThread` subclass here
+  (`AllDataFetchThread`, `UniverseLightweightFetchThread`, `PositionPriceFetchThread`,
+  `RealtimePriceThread`, `StockMaThread`, `AccountDepositThread`, `RebalanceBacktestThread`,
+  the Gemini threads, `AutoBackupThread`). Never call `data_fetcher` functions from a slot on
+  the UI thread; add a thread class instead. Connect `finished` signals to bound methods,
+  not closures, so Qt queues them onto the UI thread.
+- **`src/data/`**: all external data access, split by concern.
+  `cache.py` (HTTP sessions, `_HIST_CACHE` LRU with `_HIST_CACHE_STATS`, `start_date()`,
+  `is_kr_code()`, `safe_float`), `indicators.py` (polars indicator maths,
+  `fetch_historical_changes`), `market.py` (listing lookup, `get_historical_data`, market
+  aggregation, index MAs), `collectors/` (`naver.py`; `yahoo.py`, where `yf_quote_batch`
+  is the one Yahoo quote entry point; `kis.py`; `krx.py`). Pure data access only: uses
+  polars internally and converts to pandas only at library boundaries, reuses the
+  module-level caches rather than adding parallel ones, and never imports `strategy`.
+- **`src/strategy/`**: all trading-strategy logic (trading.md 11-5). `rebalance/` (weekly
+  factor scoring, buy/sell/hold classification, walk-forward backtest; spec in
+  `trading.md`), `ma_cross.py` (single-stock MA20/MA60 golden-cross backtest),
+  `trend_following/` (Donchian breakout; scaffold only, spec in `trend_following.md`).
+  Strategy code imports from `data.*`; callers import strategy symbols from
+  `strategy.<package>` directly, never via `data_fetcher`. New strategies get their own
+  sub-package with a `config.py`, `signals.py`, `backtest.py` and an `__init__.py` facade,
+  plus tests under `tests/strategy/<name>/`.
+- **`src/data_fetcher.py`**: a pure re-export facade over `data/` (data access only, no
+  strategy symbols) so UI and thread code import from one place. Nothing in `data/`
+  imports it back; keep it that way.
+- **`src/trade_db.py`**: SQLite persistence (`portfolio.db`, WAL mode). Prefer
+  `upsert_trades()` for batches. Do not generate `orig_key` values in callers:
+  `upsert_trade()` without a key claims a collision-free one inside the INSERT and writes it
+  back into the record.
+- **`src/gemini_helper.py`**: Gemini calls for the AI filter and diagnosis features
+  (`GOOGLE_API_KEY` in `.env`; the prompts are intentionally Korean).
 
 ### External dependencies / credentials
 
-- `.env` holds `KRX_AUTH_KEY` (KRX derivatives/VKOSPI API), loaded via `python-dotenv`.
-- KIS (한국투자증권) Open API keys are **not** in this repo: `_get_kis_keys()` in
-  `src/data/collectors/kis.py` reads them from `D:\Source Code\Trading MCP\kis_appkey.txt` /
-  `kis_secretkey.txt` (real/실전투자 credentials) — an external sibling-project folder,
-  renamed from `Kiwoom MCP` since it now holds keys for more than one brokerage API.
-  The account number is read the same way, from `kis_account.txt` in the same folder
-  (10 digits: 8-digit CANO + 2-digit product code) via `_get_kis_account()`, required
-  for the deposit/balance lookup. Code touching KIS calls will fail without that
-  folder present.
-- `register_secret.py` is a standalone CLI helper for pushing secrets to Google Cloud Secret
-  Manager (`gcloud secrets create/versions add`) — unrelated to the app's runtime secret loading.
+- `.env` (repo root, loaded via `paths.ENV_FILE`): `KRX_AUTH_KEY`, `GOOGLE_API_KEY`, and
+  optionally `GEMINI_MODEL`.
+- KIS (한국투자증권) Open API keys are **not** in this repo: `data/collectors/kis.py` reads
+  `kis_appkey.txt`, `kis_secretkey.txt` and `kis_account.txt` (10 digits: 8-digit CANO plus
+  2-digit product code) from `KIS_KEY_PATH` (default `D:\Source Code\Trading MCP`). KIS calls
+  fail without that folder. The issued access token is cached in plain text in
+  `kis_token_cache.json` (gitignored).
+- The KRX VKOSPI endpoint is disabled in code (`_VKOSPI_API_DISABLED`, persistent 403 since
+  2026-08-28); `vkospi_cache.json` serves the history until KRX lifts the block.
 
-### Local state / cache files (gitignored or otherwise not source)
+### Local state / cache files (gitignored)
 
-`portfolio.db` (trade log, source of truth), `custom_settings.json` (Universe tab
-added/deleted/highlighted tickers), `universe_cache.json`, `vkospi_cache.json`,
-`custom_history.json` / `trade_overrides.json` (legacy, pre-SQLite), `trading_record.json`. These
-are runtime data, not fixtures — don't treat their current contents as sample/test data to design
-around.
+`portfolio.db` (source of truth for trades), `custom_settings.json`, `universe_cache.json`,
+`trading_record.json`, `vkospi_cache.json`, `kis_token_cache.json`, `app.log`, `archive/`,
+plus the legacy `custom_history.json` / `trade_overrides.json` pair (read once by
+`_migrate_legacy_json`). All of these paths come from `src/paths.py`. They are runtime data,
+not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
+(scope "PortfolioManagement"/"PortfolioManagement"; migrated once from the old
+"MyCompany"/"PortfolioManager" scope).
 
-## Conventions seen in this codebase
+## Conventions
 
-- New/edited menus, labels, and comments should be written in English (per user direction,
-  2026-08-29) — do not introduce new Korean UI strings or comments even for financial terms.
-  Existing Korean text already in the codebase (e.g. 예수금/평가손익) is left as-is unless asked
-  to change it; this rule governs new and modified code going forward.
-- Font handling goes through `create_font()` in `main.py` to keep Malgun Gothic Semilight
-  consistent — don't set `QFont` directly in new widgets.
-- Large table widgets (`StockTable`, `TradingRecordTab`'s tables) wrap bulk repaints in
-  `setUpdatesEnabled(False)` / `finally: setUpdatesEnabled(True)` to avoid flicker/slowness —
-  follow this pattern for any new bulk table population.
+- New or edited menus, labels, and comments are written in English (user direction,
+  2026-08-29). Existing Korean strings stay unless asked.
+- Fonts go through `create_font()`; inline stylesheets splice `FONT_FAMILY_CSS` instead of
+  repeating the font-family list.
+- Bulk table repaints are wrapped in `setUpdatesEnabled(False)` / `finally:
+  setUpdatesEnabled(True)`.
+- Replacing a possibly-running `QThread` stored on a widget goes through
+  `ui.common.retire_thread(self, "<attr>")`; every tab exposes `collect_threads_to_stop()`
+  for `MainWindow.closeEvent`.
+- KR-vs-US ticker routing uses `is_kr_code()`; the daily-history lookback start is
+  `start_date()` (a function, not an import-time constant).
+- `roadmap.md` is the running log of what was done and why (sections per phase, a priority
+  matrix, and a dated change history). Add a row there for non-trivial changes.

@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon
 
-from ui.common import create_font, _HIST_KEYS
+from ui.common import create_font, _HIST_KEYS, FONT_FAMILY_CSS
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +213,7 @@ class StockTable(QTableWidget):
         # Table font: Malgun Gothic Semilight 9pt (set appropriate size to prevent text cutoff)
         self.setFont(create_font(9, style_name="Semilight"))
         self.setStyleSheet(
-            "QTableWidget { gridline-color: #d0d0d0; font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic'; font-size: 9pt; }"
+            "QTableWidget { gridline-color: #d0d0d0; " + FONT_FAMILY_CSS + " font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
         )
         # Use filterable header
@@ -824,13 +824,9 @@ class GroupedHeaderView(QHeaderView):
 
         # Find this column's group colour and section boundary flags
         col_color = "#444444"
-        is_left_edge = False
-        is_right_edge = False
         for _, start, span, color in self._sections:
             if start <= logical_index < start + span:
                 col_color = color
-                is_left_edge  = (logical_index == start)
-                is_right_edge = (logical_index == start + span - 1)
                 break
 
         # Draw frame

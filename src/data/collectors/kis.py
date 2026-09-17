@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone, time as dt_time
 
 import pandas as pd
 
+from paths import KIS_TOKEN_CACHE_FILE
 from data.cache import _KIS_SESSION
 from data.collectors.naver import _fetch_investor_trend_naver, _fetch_index_investor_trend
 
@@ -26,7 +27,7 @@ _KIS_APPROVAL_CACHE: dict = {"approval_key": None, "expires": 0}
 _KIS_TOKEN_LOCK = threading.Lock()
 _KIS_APPROVAL_LOCK = threading.Lock()
 
-_KIS_TOKEN_CACHE_PATH = "kis_token_cache.json"
+_KIS_TOKEN_CACHE_PATH = KIS_TOKEN_CACHE_FILE
 
 # Proactively reissue the access token / approval_key this long before their actual
 # expiry, rather than waiting until they're about to lapse. Since _get_kis_token()
