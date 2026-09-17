@@ -70,14 +70,18 @@ new behaviour on random inputs (see `changelog_optimization.md` for the pattern)
   is the one Yahoo quote entry point; `kis.py`; `krx.py`). Pure data access only: uses
   polars internally and converts to pandas only at library boundaries, reuses the
   module-level caches rather than adding parallel ones, and never imports `strategy`.
-- **`src/strategy/`**: all trading-strategy logic (`strategy/rebalance/rebalance.md` 11-5). `rebalance/` (weekly
-  factor scoring, buy/sell/hold classification, walk-forward backtest; spec in
-  `strategy/rebalance/rebalance.md`), `ma_cross.py` (single-stock MA20/MA60 golden-cross backtest),
-  `trend_following/` (Donchian breakout; scaffold only, spec in `trend_following.md`).
-  Strategy code imports from `data.*`; callers import strategy symbols from
-  `strategy.<package>` directly, never via `data_fetcher`. New strategies get their own
-  sub-package with a `config.py`, `signals.py`, `backtest.py` and an `__init__.py` facade,
-  plus tests under `tests/strategy/<name>/`.
+- **`src/strategy/`**: all trading-strategy logic (`strategy/rebalance/rebalance.md` 11-5).
+  **Rule (user direction, 2026-09-17): every strategy is its own sub-package
+  `src/strategy/<name>/` and its design/spec document is saved as `<name>.md` inside that
+  same folder.** A sub-package has a `config.py` (parameters), `signals.py`, `backtest.py`
+  and an `__init__.py` facade; tests go in `tests/strategy/<name>/`; docstrings and commit
+  messages cite the md section numbers, and the md is updated in the same commit as the
+  code. Current members: `rebalance/` (weekly factor scoring, classification, walk-forward
+  backtest; `rebalance.md`), `ma_cross/` (single-stock MA20/MA60 golden-cross backtest;
+  `ma_cross.md`), and `trend_following/` (Donchian breakout; `__init__.py` scaffold only,
+  full spec in `trend_following.md`, code not yet written). Strategy code
+  imports from `data.*`; callers import strategy symbols from `strategy.<name>` directly,
+  never via `data_fetcher`.
 - **`src/data_fetcher.py`**: a pure re-export facade over `data/` (data access only, no
   strategy symbols) so UI and thread code import from one place. Nothing in `data/`
   imports it back; keep it that way.
@@ -123,9 +127,10 @@ not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
   for `MainWindow.closeEvent`.
 - KR-vs-US ticker routing uses `is_kr_code()`; the daily-history lookback start is
   `start_date()` (a function, not an import-time constant).
-- Each strategy keeps its spec next to its code: `strategy/rebalance/rebalance.md` (which also
-  holds the multi-agent development methodology, ch. 12, and the manual-trading baseline,
-  ch. 10; formerly the root `trading.md`) and `strategy/trend_following/trend_following.md`
-  plus the full spec in the root `trend_following.md`.
+- Strategy specs live next to their code as `src/strategy/<name>/<name>.md` (see the
+  `src/strategy/` rule above). `rebalance.md` also holds the multi-agent development
+  methodology (ch. 12) and the manual-trading baseline (ch. 10); it was the root
+  `trading.md` until 2026-09-17. The other specs are `strategy/ma_cross/ma_cross.md` and
+  `strategy/trend_following/trend_following.md`; there are no strategy docs at the repo root.
 - `roadmap.md` is the running log of what was done and why (sections per phase, a priority
   matrix, and a dated change history). Add a row there for non-trivial changes.

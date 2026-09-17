@@ -12,7 +12,7 @@
 > 관련 파일: `strategy/rebalance/`(신호/백테스트 로직, 2026-09-04 패키지화, 2026-09-17 `data/`에서 이동),
 > `ui/auto_trading_tab.py`(수동 트리거 UI), `tests/strategy/rebalance/`(테스트),
 > `ROADMAP.md`(전체 로드맵 — 이 문서는 ROADMAP의 하위 작업 문서)
-> 관련 문서: `trend_following.md`(추세추종 — 별개 트랙, 코드/문서 미공유)
+> 관련 문서: `src/strategy/trend_following/trend_following.md`(추세추종 — 별개 트랙, 코드/문서 미공유)
 
 ---
 
@@ -56,7 +56,7 @@
 | 자산 | 위치 | 비고 |
 |------|------|------|
 | MA10/20/60 이격도, 52주 고저 대비, 기간별 수익률(3/5/10/20/60/120일) | `data/indicators.py`, `data/market.py` | Universe 탭에 이미 표시 중, `_compute_indicators()`가 4장 팩터 계산의 기반 |
-| `run_backtest_strategy()` | `strategy/ma_cross.py` | MA 이격도/데드크로스 매도 조건, +30% 익절 조건이 벡터화되어 검증 완료된, 종목별 개별 백테스트 로직 (리밸런싱과는 별개의 기존 자산) |
+| `run_backtest_strategy()` | `strategy/ma_cross/backtest.py` (스펙 `ma_cross.md`) | MA 이격도/데드크로스 매도 조건, +30% 익절 조건이 벡터화되어 검증 완료된, 종목별 개별 백테스트 로직 (리밸런싱과는 별개의 기존 자산) |
 | `compute_weekly_rebalance_signals()` / `run_rebalance_backtest()` | `data/rebalance.py` | **4장의 실제 구현 결과물** — 이 문서의 최초 작성 시점엔 미구현이었으나 이후 완성됨 |
 | `fetch_stock_ma_multi()` | `data/market.py` | 개별 종목 MA10/20/60 시계열 |
 | `fetch_investor_trend()` / `_fetch_index_investor_trend()` | `data/collectors/kis.py`, `data/collectors/naver.py` | 기관/외국인 순매수 동향 — 아직 리밸런싱 팩터로는 미사용 (8장 참고) |
@@ -318,7 +318,7 @@ UI·실시간 신호 계산·워크포워드 백테스트가 전부 이 하나�
 - [ ] ROADMAP.md 동기화 (8-E)
 - [ ] 밸류 팩터 확장 (8-F)
 - [x] `src/strategy/` 최상위 폴더로 재구성 — `data/`는 순수 데이터 계층만, 전략 로직(`rebalance/`,
-      `trend_following/`, 개별종목 백테스트 `ma_cross.py`)은 `strategy/`로 이동 (11-5, 2026-09-17 완료)
+      `trend_following/`, 개별종목 백테스트 `ma_cross/`)은 `strategy/`로 이동 (11-5, 2026-09-17 완료)
 
 ---
 
@@ -520,7 +520,7 @@ data/rebalance/
 > `tests/conftest.py`로 `src/` sys.path 설정 일원화. 8단계(archive 백업)는 git 관리 전환으로 불필요.
 > 검증: pytest 119/119, ruff 0건.
 
-> 별도 트랙인 리버모어 추세추종 알고리즘(`trend_following.md`) 작업을 시작하면서, `data/`
+> 별도 트랙인 리버모어 추세추종 알고리즘(`strategy/trend_following/trend_following.md`) 작업을 시작하면서, `data/`
 > 폴더 하나에 성격이 다른 두 가지가 섞여 있다는 점이 드러났다 — `market.py`/`indicators.py`/
 > `cache.py`/`collectors/`처럼 순수 데이터 접근 계층과, `rebalance/`처럼 실제 매매 전략
 > 로직이 같은 폴더 밑에 있다. `data`라는 이름이 전략 코드까지는 설명하지 못하므로,

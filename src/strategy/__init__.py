@@ -4,8 +4,11 @@
 everything that decides what to buy or sell lives here (rebalance.md 11-5):
 
   strategy/rebalance/        weekly factor-scoring portfolio rebalance (rebalance.md)
-  strategy/ma_cross.py       single-stock MA20/MA60 golden-cross backtest
+  strategy/ma_cross/         single-stock MA20/MA60 golden-cross backtest (ma_cross.md)
   strategy/trend_following/  Donchian channel breakout (trend_following.md, scaffold)
+
+Each strategy is its own sub-package with its spec saved as <name>.md in the
+same folder (user direction, 2026-09-17).
 
 Strategy packages import from `data.*`; nothing in `data/` imports `strategy`.
 Callers (UI, threads, tests) import strategy symbols from their own package,

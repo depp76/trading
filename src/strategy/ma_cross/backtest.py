@@ -1,4 +1,4 @@
-"""strategy/ma_cross.py — Single-stock MA20/MA60 golden-cross + RSI strategy backtest (moved from data/backtest.py, rebalance.md 11-5)."""
+"""strategy/ma_cross/backtest.py — Single-stock MA20/MA60 golden-cross strategy backtest (ma_cross.md 3, 4)."""
 import gc
 from datetime import datetime, timedelta
 import numpy as np
