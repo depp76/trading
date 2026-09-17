@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio, with four tabs:
+A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio, with five tabs:
 "Trading Universe" (KOSPI/KOSDAQ watchlist with live prices and indicators; the US market
 code paths still exist but are commented out in the UI), "Trading History" (manually-entered
 trade log backed by SQLite), "Total Assets" (weekly asset snapshots vs. KOSPI and USD), and
-"Auto Trading" (weekly factor-scoring rebalance signals plus a walk-forward backtest; signal
-generation only, it never places orders).
+"Auto Trading" (weekly factor-scoring rebalance signals plus a walk-forward backtest), and
+"Trend Following" (Donchian channel breakout backtest for one ticker). The strategy tabs are
+signal generation and research only; nothing places orders.
 
 The repo is a git repository (branch `master`). Commit or branch as usual; the old
 `archive/backup_<timestamp>/` copy-before-editing convention is no longer needed.
@@ -34,7 +35,9 @@ working directory:
 .\.venv\Scripts\ruff.exe check src                      # pyflakes rules only (ruff.toml)
 ```
 
-Run pytest from the repo root or from `src/` (`tests/conftest.py` puts `src/` on `sys.path`).
+Run pytest from the repo root or from `src/` (`tests/conftest.py` puts `src/` on `sys.path`;
+the `tests/` folders are packages so test files in different strategy folders may share
+a basename).
 Tests patch the implementation modules (`data.cache`, `data.history`, `data.fx`, `data.collectors.yahoo`),
 never names on the `data_fetcher` facade. GUI behaviour cannot be exercised headlessly here;
 for non-trivial changes to fetch/backtest logic write a throwaway script comparing old vs.
@@ -45,25 +48,29 @@ Dev tooling is in `requirements-dev.txt`
 
 ## Architecture
 
-- **`src/main.py`** (~300 lines): `MainWindow` builds the four tabs, wires cross-tab
+- **`src/main.py`** (~300 lines): `MainWindow` builds the five tabs, wires cross-tab
   signals, owns the 60-second `global_auto_timer` (the only auto-refresh timer; the "Auto
   Update" checkbox starts and stops it and everything downstream), the app stylesheet, and
   logging setup (root INFO; `app.log` gets INFO and above, the console WARNING and above).
 - **`src/ui/`**: `universe_tab.py` (`UniverseTab`), `history_tab.py` (`TradingHistoryTab`),
   `assets_tab.py` (`TradingRecordTab`), `auto_trading_tab.py` (`AutoTradingTab`),
+  `trend_following_tab.py` (`TrendFollowingTab`),
   `widgets.py` (`StockTable`, `FilterPopup`, `GroupedHeaderView`), `dialogs/` (one module per
   dialog group: `index_ma`, `stock_ma`, `trade_edit`, `trade_history`, `assets_graph`,
-  `backtest_result`, `holdings_summary`, `ai_diagnosis`; import from `ui.dialogs`),
+  `backtest_result`, `trend_following_chart`, `holdings_summary`, `ai_diagnosis`; import from
+  `ui.dialogs`),
   `history_table.py` (cell factories + `fill_table_rows` for the history grid),
   `history_calc.py` (pure P/L maths, no Qt), `common.py` (`create_font`, `FONT_FAMILY_CSS`,
   input validators, `atomic_save_json` / `safe_load_json`, `retire_thread`). Tabs never
   reference each other
   directly; `MainWindow` connects their signals (`status_message`, `refresh_started`,
   `auto_lightweight_tick`, `total_asset_updated`). The one exception is `AutoTradingTab`,
-  which reads `UniverseTab.all_data` on demand.
+  which reads `UniverseTab.all_data` on demand (`TrendFollowingTab` does the same, only
+  to list watchlist tickers).
 - **`src/threads/`**: every network call the UI triggers runs in a `QThread` subclass here
   (`AllDataFetchThread`, `UniverseLightweightFetchThread`, `PositionPriceFetchThread`,
   `RealtimePriceThread`, `StockMaThread`, `AccountDepositThread`, `RebalanceBacktestThread`,
+  `TrendFollowingBacktestThread`,
   the Gemini threads, `AutoBackupThread`). Never call `data_fetcher` functions from a slot on
   the UI thread; add a thread class instead. Connect `finished` signals to bound methods,
   not closures, so Qt queues them onto the UI thread.
@@ -88,8 +95,10 @@ Dev tooling is in `requirements-dev.txt`
   messages cite the md section numbers, and the md is updated in the same commit as the
   code. Current members: `rebalance/` (weekly factor scoring, classification, walk-forward
   backtest; `rebalance.md`), `ma_cross/` (single-stock MA20/MA60 golden-cross backtest;
-  `ma_cross.md`), and `trend_following/` (Donchian breakout; `__init__.py` scaffold only,
-  full spec in `trend_following.md`, code not yet written). Strategy code
+  `ma_cross.md`), and `trend_following/` (Donchian channel breakout: `config.py`,
+  `signals.py` with the no-lookahead `donchian_signal`, `backtest.py` with
+  `run_backtest` / `run_backtest_for_ticker`; spec and preliminary real-data results in
+  `trend_following.md`; UI in `ui/trend_following_tab.py`). Strategy code
   imports from `data.*`; callers import strategy symbols from `strategy.<name>` directly,
   never via `data_fetcher`.
 - **`src/data_fetcher.py`**: the single re-export facade over `data/` (data access only, no

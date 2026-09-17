@@ -1,0 +1,325 @@
+"""ui/trend_following_tab.py — TrendFollowingTab: run the Donchian channel breakout
+backtest (strategy/trend_following, spec trend_following.md) on one ticker from the UI.
+
+Signal generation / research only — nothing here places orders. Reads
+UniverseTab.all_data on demand to offer the watchlist tickers in a combo (same
+direct-reference pattern as ui/auto_trading_tab.py); the backtest itself runs in
+threads.fetch_threads.TrendFollowingBacktestThread so the window never blocks on
+the history fetch.
+"""
+import logging
+from datetime import date, timedelta
+
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
+    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+)
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QColor
+
+from strategy.trend_following import TrendFollowingConfig
+from threads.fetch_threads import TrendFollowingBacktestThread
+from ui.common import create_font, _validate_date_str, _normalize_date_str, _set_field_error
+from ui.dialogs.trend_following_chart import TrendFollowingChartDialog
+
+logger = logging.getLogger(__name__)
+
+_METRICS = [
+    ("total_return_pct", "Total return", "{:+.1f}%"),
+    ("cagr_pct", "CAGR", "{:+.1f}%"),
+    ("annual_vol_pct", "Annual vol", "{:.1f}%"),
+    ("sharpe", "Sharpe", "{:.2f}"),
+    ("max_drawdown_pct", "Max drawdown", "{:.1f}%"),
+    ("n_trades", "Trades", "{}"),
+    ("win_rate_pct", "Win rate", "{:.0f}%"),
+    ("avg_trade_return_pct", "Avg trade", "{:+.2f}%"),
+    ("exposure_pct", "Exposure", "{:.0f}%"),
+]
+
+
+class TrendFollowingTab(QWidget):
+
+    def __init__(self, universe_tab=None, parent=None):
+        super().__init__(parent)
+        self._universe_tab = universe_tab
+        self._backtest_thread = None
+        self._last_result = None
+        self._last_ticker = ""
+        self._build_ui()
+
+    # ── UI ───────────────────────────────────────────────────────────────────
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(8)
+
+        title = QLabel("Trend Following — Donchian Channel Breakout Backtest")
+        title.setFont(create_font(16, QFont.Weight.Bold))
+        root.addWidget(title)
+
+        subtitle = QLabel(
+            "Buy when the close breaks above the prior entry_n-day high, sell when it breaks below the "
+            "prior exit_n-day low; long only, single position, applied from the next day (trend_following.md 3)."
+        )
+        subtitle.setFont(create_font(9, style_name="Semilight"))
+        subtitle.setStyleSheet("color:#7f8c8d;")
+        subtitle.setWordWrap(True)
+        root.addWidget(subtitle)
+
+        # Row 1: ticker / universe picker / start date
+        row1 = QHBoxLayout()
+        row1.addWidget(self._lbl("Ticker:"))
+        self._ticker_edit = QLineEdit()
+        self._ticker_edit.setFont(create_font(10, style_name="Semilight"))
+        self._ticker_edit.setPlaceholderText("e.g. 005930, AAPL, ^GSPC")
+        self._ticker_edit.setFixedWidth(150)
+        self._ticker_edit.returnPressed.connect(self._on_run_clicked)
+        row1.addWidget(self._ticker_edit)
+
+        row1.addWidget(self._lbl("From Universe:"))
+        self._universe_combo = QComboBox()
+        self._universe_combo.setFont(create_font(10, style_name="Semilight"))
+        self._universe_combo.setMinimumWidth(260)
+        self._universe_combo.currentIndexChanged.connect(self._on_universe_pick)
+        row1.addWidget(self._universe_combo)
+
+        row1.addWidget(self._lbl("Start:"))
+        self._start_edit = QLineEdit((date.today() - timedelta(days=5 * 365)).strftime("%Y-%m-%d"))
+        self._start_edit.setFont(create_font(10, style_name="Semilight"))
+        self._start_edit.setFixedWidth(110)
+        row1.addWidget(self._start_edit)
+        row1.addStretch()
+        root.addLayout(row1)
+
+        # Row 2: parameters + run
+        row2 = QHBoxLayout()
+        row2.addWidget(self._lbl("entry_n:"))
+        self._entry_spin = QSpinBox()
+        self._entry_spin.setRange(1, 500)
+        self._entry_spin.setValue(TrendFollowingConfig().entry_n)
+        row2.addWidget(self._entry_spin)
+
+        row2.addWidget(self._lbl("exit_n:"))
+        self._exit_spin = QSpinBox()
+        self._exit_spin.setRange(1, 500)
+        self._exit_spin.setValue(TrendFollowingConfig().exit_n)
+        row2.addWidget(self._exit_spin)
+
+        row2.addWidget(self._lbl("Fee/side:"))
+        self._fee_spin = self._pct_spin()
+        row2.addWidget(self._fee_spin)
+
+        row2.addWidget(self._lbl("Slippage/side:"))
+        self._slip_spin = self._pct_spin()
+        row2.addWidget(self._slip_spin)
+
+        self._run_btn = QPushButton("▶ Run Backtest")
+        self._run_btn.setFont(create_font(10, QFont.Weight.Bold))
+        self._run_btn.setFixedHeight(32)
+        self._run_btn.setStyleSheet(
+            "QPushButton { background:#8e44ad; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
+            "QPushButton:hover { background:#732d91; }"
+            "QPushButton:disabled { background:#bbb; }"
+        )
+        self._run_btn.clicked.connect(self._on_run_clicked)
+        row2.addWidget(self._run_btn)
+
+        self._chart_btn = QPushButton("\U0001f4c8 Chart")
+        self._chart_btn.setFont(create_font(10, QFont.Weight.Bold))
+        self._chart_btn.setFixedHeight(32)
+        self._chart_btn.setEnabled(False)
+        self._chart_btn.clicked.connect(self._on_chart_clicked)
+        row2.addWidget(self._chart_btn)
+
+        self._status_lbl = QLabel("")
+        self._status_lbl.setFont(create_font(9, style_name="Semilight"))
+        self._status_lbl.setStyleSheet("color:#7f8c8d;")
+        row2.addWidget(self._status_lbl)
+        row2.addStretch()
+        root.addLayout(row2)
+
+        # Summary metrics (one row, one column per metric)
+        self._summary_tbl = QTableWidget(1, len(_METRICS) + 1)
+        self._summary_tbl.setHorizontalHeaderLabels([label for _, label, _ in _METRICS] + ["Risk gate"])
+        self._summary_tbl.setFont(create_font(10, QFont.Weight.Bold))
+        self._summary_tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._summary_tbl.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self._summary_tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._summary_tbl.verticalHeader().setVisible(False)
+        self._summary_tbl.setFixedHeight(64)
+        root.addWidget(self._summary_tbl)
+
+        # Trades
+        trades_lbl = QLabel("Trades")
+        trades_lbl.setFont(create_font(11, QFont.Weight.Bold))
+        root.addWidget(trades_lbl)
+        self._trades_tbl = QTableWidget(0, 5)
+        self._trades_tbl.setHorizontalHeaderLabels(["#", "Entry", "Exit", "Days", "Return %"])
+        self._trades_tbl.setFont(create_font(9, style_name="Semilight"))
+        self._trades_tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._trades_tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._trades_tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._trades_tbl.verticalHeader().setVisible(False)
+        root.addWidget(self._trades_tbl, 1)
+
+        disclaimer = QLabel(
+            "⚠️ Research/backtesting tool, not investment advice. Single-period in-sample result; "
+            "see trend_following.md section 5 for the preliminary real-data sweep and its caveats."
+        )
+        disclaimer.setFont(create_font(8, style_name="Semilight"))
+        disclaimer.setStyleSheet("color:#888;")
+        disclaimer.setWordWrap(True)
+        root.addWidget(disclaimer)
+
+    @staticmethod
+    def _lbl(text):
+        lbl = QLabel(text)
+        lbl.setFont(create_font(10, style_name="Semilight"))
+        return lbl
+
+    @staticmethod
+    def _pct_spin():
+        sp = QDoubleSpinBox()
+        sp.setRange(0.0, 5.0)
+        sp.setDecimals(3)
+        sp.setSingleStep(0.01)
+        sp.setSuffix(" %")
+        sp.setValue(0.0)
+        return sp
+
+    # ── universe picker ──────────────────────────────────────────────────────
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_universe_combo()
+
+    def _refresh_universe_combo(self):
+        data = getattr(self._universe_tab, "all_data", None) or []
+        items = [(it.get("ticker", ""), it.get("name", "")) for it in data if it.get("ticker")]
+        current = self._universe_combo.currentData()
+        self._universe_combo.blockSignals(True)
+        try:
+            self._universe_combo.clear()
+            self._universe_combo.addItem("(pick from Trading Universe)", userData="")
+            for ticker, name in items:
+                self._universe_combo.addItem(f"{ticker}  {name}", userData=ticker)
+            if current:
+                idx = self._universe_combo.findData(current)
+                if idx >= 0:
+                    self._universe_combo.setCurrentIndex(idx)
+        finally:
+            self._universe_combo.blockSignals(False)
+
+    def _on_universe_pick(self, _index):
+        ticker = self._universe_combo.currentData()
+        if ticker:
+            self._ticker_edit.setText(str(ticker))
+
+    # ── inputs ───────────────────────────────────────────────────────────────
+    def _config_from_inputs(self) -> TrendFollowingConfig:
+        return TrendFollowingConfig(
+            entry_n=int(self._entry_spin.value()),
+            exit_n=int(self._exit_spin.value()),
+            fee_rate=float(self._fee_spin.value()) / 100.0,
+            slippage_rate=float(self._slip_spin.value()) / 100.0,
+        )
+
+    def _read_inputs(self):
+        """Returns (ticker, start, config) or None after flagging the bad field."""
+        ticker = self._ticker_edit.text().strip().upper()
+        _set_field_error(self._ticker_edit, "" if ticker else "Ticker is required")
+        start_ok = _validate_date_str(self._start_edit.text())
+        _set_field_error(self._start_edit, "" if start_ok else "Start date must be YYYY-MM-DD")
+        if not ticker or not start_ok:
+            return None
+        return ticker, _normalize_date_str(self._start_edit.text()), self._config_from_inputs()
+
+    # ── run ──────────────────────────────────────────────────────────────────
+    def _on_run_clicked(self):
+        if self._backtest_thread is not None and self._backtest_thread.isRunning():
+            return
+        inputs = self._read_inputs()
+        if inputs is None:
+            return
+        ticker, start, config = inputs
+        self._last_ticker = ticker
+        self._run_btn.setEnabled(False)
+        self._chart_btn.setEnabled(False)
+        self._status_lbl.setText(f"Fetching {ticker} history from {start}...")
+        self._backtest_thread = TrendFollowingBacktestThread(ticker, start, config)
+        self._backtest_thread.finished.connect(self._on_backtest_finished)
+        self._backtest_thread.start()
+
+    def _on_backtest_finished(self, result, error: str):
+        self._run_btn.setEnabled(True)
+        if error or result is None:
+            self._status_lbl.setText("Backtest failed — see app.log")
+            QMessageBox.warning(self, "Backtest Error", f"Backtest failed:\n{error or 'unknown error'}")
+            return
+        if result.get("error"):
+            self._status_lbl.setText(f"{self._last_ticker}: {result['error']}")
+            QMessageBox.information(self, "No Data", f"No history for '{self._last_ticker}'.")
+            return
+        self._last_result = result
+        self._render(result)
+        self._chart_btn.setEnabled(True)
+        s = result["summary"]
+        self._status_lbl.setText(
+            f"{self._last_ticker}: {s['start_date']} → {s['end_date']} ({s['n_days']} days), "
+            f"Donchian {s['entry_n']}/{s['exit_n']}"
+        )
+
+    def _on_chart_clicked(self):
+        if not self._last_result:
+            return
+        dlg = TrendFollowingChartDialog(self._last_result, self._last_ticker, parent=self)
+        dlg.exec()
+
+    # ── render ───────────────────────────────────────────────────────────────
+    def _render(self, result: dict):
+        s = result["summary"]
+        tbl = self._summary_tbl
+        tbl.setUpdatesEnabled(False)
+        try:
+            for c, (key, _label, fmt) in enumerate(_METRICS):
+                val = s.get(key, 0)
+                it = QTableWidgetItem(fmt.format(val))
+                it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if key in ("total_return_pct", "cagr_pct", "avg_trade_return_pct"):
+                    it.setForeground(QColor("#c0392b" if val > 0 else "#2980b9" if val < 0 else "#555"))
+                tbl.setItem(0, c, it)
+            gate = bool(s.get("passes_risk_gate"))
+            gate_it = QTableWidgetItem("PASS" if gate else "FAIL")
+            gate_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            gate_it.setForeground(QColor("#107c10" if gate else "#c0392b"))
+            tbl.setItem(0, len(_METRICS), gate_it)
+        finally:
+            tbl.setUpdatesEnabled(True)
+
+        trades = result.get("trades") or []
+        tt = self._trades_tbl
+        tt.setUpdatesEnabled(False)
+        try:
+            tt.setRowCount(len(trades))
+            right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            for r, t in enumerate(trades):
+                ret = t.get("return_pct", 0.0)
+                cells = [
+                    (str(r + 1), Qt.AlignmentFlag.AlignCenter),
+                    (t.get("entry_date", ""), Qt.AlignmentFlag.AlignCenter),
+                    (t.get("exit_date") or "open", Qt.AlignmentFlag.AlignCenter),
+                    (str(t.get("days_held", 0)), right),
+                    (f"{ret:+.2f}%", right),
+                ]
+                for c, (text, align) in enumerate(cells):
+                    it = QTableWidgetItem(text)
+                    it.setTextAlignment(align)
+                    if c == 4:
+                        it.setForeground(QColor("#c0392b" if ret > 0 else "#2980b9" if ret < 0 else "#555"))
+                    tt.setItem(r, c, it)
+        finally:
+            tt.setUpdatesEnabled(True)
+
+    def collect_threads_to_stop(self):
+        """For MainWindow.closeEvent (mirrors the other tabs)."""
+        bt = getattr(self, "_backtest_thread", None)
+        return [bt] if bt is not None else []

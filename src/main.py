@@ -56,6 +56,9 @@ from ui.universe_tab import UniverseTab
 # --- rebalance.md 3-1: weekly rebalance signal tab ---
 from ui.auto_trading_tab import AutoTradingTab
 
+# --- trend_following.md 4: Donchian breakout backtest tab ---
+from ui.trend_following_tab import TrendFollowingTab
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -113,6 +116,11 @@ class MainWindow(QMainWindow):
         # docstring for why this is a direct reference rather than a signal).
         self.auto_trading_tab = AutoTradingTab(self.universe_tab)
         self.tabs.addTab(self.auto_trading_tab, "Auto Trading")
+
+        # 6. Trend Following Tab (trend_following.md 4) — same on-demand read of
+        # self.universe_tab.all_data, only to offer watchlist tickers in a combo.
+        self.trend_following_tab = TrendFollowingTab(self.universe_tab)
+        self.tabs.addTab(self.trend_following_tab, "Trend Following")
 
         self.trading_history_tab.total_asset_updated.connect(self.trading_record_tab.update_live_asset)
         self.trading_history_tab.status_message.connect(self._on_thread_status_message)
@@ -218,6 +226,9 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'auto_trading_tab'):
             threads_to_stop.extend(self.auto_trading_tab.collect_threads_to_stop())
+
+        if hasattr(self, 'trend_following_tab'):
+            threads_to_stop.extend(self.trend_following_tab.collect_threads_to_stop())
 
         for t in threads_to_stop:
             try:

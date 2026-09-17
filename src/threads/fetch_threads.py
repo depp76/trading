@@ -5,7 +5,7 @@ Contains:
   IndexMaThread, StockMaThread,
   SingleStockFetchThread, AllDataFetchThread,
   UniverseLightweightFetchThread, PositionPriceFetchThread,
-  AutoBackupThread, RebalanceBacktestThread,
+  AutoBackupThread, RebalanceBacktestThread, TrendFollowingBacktestThread,
   GeminiFilterThread, GeminiDiagnosisThread, AccountDepositThread
 """
 import os
@@ -592,6 +592,32 @@ class RebalanceBacktestThread(QThread):
             self.finished.emit(result, "")
         except Exception as e:
             logger.warning("Rebalance backtest failed", exc_info=True)
+            self.finished.emit(None, str(e))
+
+
+# ---------------------------------------------------------------------------
+# Trend-following (Donchian) backtest thread (trend_following.md 4)
+# ---------------------------------------------------------------------------
+class TrendFollowingBacktestThread(QThread):
+    """Background thread: strategy.trend_following.run_backtest_for_ticker().
+    The history fetch can take a few seconds on a cold cache, so it never runs
+    on the UI thread (ui/trend_following_tab.py)."""
+    finished = pyqtSignal(object, str)   # result dict | None, error message ("" on success)
+
+    def __init__(self, ticker: str, start: str, config):
+        super().__init__()
+        self.ticker = ticker
+        # not `self.start`: that would shadow QThread.start()
+        self.start_date = start
+        self.config = config
+
+    def run(self):
+        from strategy.trend_following import run_backtest_for_ticker
+        try:
+            result = run_backtest_for_ticker(self.ticker, self.start_date, self.config)
+            self.finished.emit(result, "")
+        except Exception as e:
+            logger.warning("Trend-following backtest failed for %s", self.ticker, exc_info=True)
             self.finished.emit(None, str(e))
 
 

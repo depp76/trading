@@ -15,6 +15,13 @@ from data.cache import _KR3Y_CACHE, _MISC_CACHE_LOCK, _NAVER_SESSION, _pdf_is_st
 
 logger = logging.getLogger(__name__)
 
+# finance.naver.com/marketindex/interestDailyQuote.naver now returns HTTP 410 Gone for
+# every marketindexCd (confirmed 2026-09-17), not just IRR_GOVT03Y — Naver has retired this
+# legacy page in favor of stock.naver.com. Disabled to stop firing a 39-page burst of
+# requests at a dead endpoint on every cache-stale call; flip back to False if Naver
+# reinstates an equivalent endpoint.
+_KR3Y_API_DISABLED = True
+
 
 def _fast_kr_history(ticker: str, start: str) -> pl.DataFrame:
     try:
@@ -306,6 +313,8 @@ def _get_kr3y_df():
     """Fetch KR 3-year bond yield from Naver."""
     with _MISC_CACHE_LOCK:
         cached = _KR3Y_CACHE["df"]
+        if _KR3Y_API_DISABLED:
+            return cached
         if cached is not None and not _pdf_is_stale(cached):
             return cached
         try:
