@@ -11,18 +11,21 @@ from yahooquery import Ticker as YQTicker
 import logging
 
 from data.cache import (
+    _YF_BULK_CACHE,
     _YF_SESSION,
     _NAVER_SESSION,
     _get_yf_crumb,
     start_date,
     safe_float,
 )
-from data.indicators import _to_polars, fetch_historical_changes
+from data.frames import _to_polars
+from data.indicators import fetch_historical_changes
+from data.history import get_historical_data
+from data.listing import get_stock_listing
+from data.fx import get_usd_krw_rate
 
 logger = logging.getLogger(__name__)
 
-# Temporary staging cache for yfinance bulk downloads
-_YF_BULK_CACHE: dict = {}
 
 
 def yf_quote_batch(symbols: list, timeout: int = 15, chunk_size: int = 50, max_retries: int = 3) -> dict:
@@ -158,8 +161,6 @@ def fetch_wti_futures_curve():
 
 def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_callback=None):
     """Fetches US stock data using yahooquery (batched history + meta, per-stock parallel processing)."""
-    from data.market import get_historical_data
-
     total = len(symbols_with_names)
     chunk_size = 20
     chunks = [symbols_with_names[i:i + chunk_size] for i in range(0, total, chunk_size)]
@@ -372,8 +373,6 @@ def fetch_us_stock_data_bulk(symbols_with_names, market_name, fx_rate, progress_
 
 
 def fetch_us_market_data(market="NASDAQ 100", top_n=200, progress_callback=None):
-    from data.market import get_stock_listing, get_usd_krw_rate
-
     try:
         df_list = pd.DataFrame()
         if market == "NASDAQ 100":

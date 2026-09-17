@@ -48,7 +48,7 @@
 
 | 자산 | 위치 | 비고 |
 |------|------|------|
-| `get_historical_data(ticker, start_date)` | `data/market.py` | KOSPI/KOSDAQ(KIS·Naver·KRX)·해외(Yahoo) OHLCV를 Polars DataFrame으로 반환. 이 알고리즘의 데이터 계층은 새로 만들 필요 없이 이 함수를 그대로 재사용한다 (프로토타입에서 쓴 yfinance 기반 `fetch_ohlcv`는 폐기). |
+| `get_historical_data(ticker, start_date)` | `data/history.py` (`data/market.py`에서도 재노출) | KOSPI/KOSDAQ(KIS·Naver·KRX)·해외(Yahoo) OHLCV를 Polars DataFrame으로 반환. 이 알고리즘의 데이터 계층은 새로 만들 필요 없이 이 함수를 그대로 재사용한다 (프로토타입에서 쓴 yfinance 기반 `fetch_ohlcv`는 폐기). |
 | `_compute_indicators()` | `data/indicators.py` | MA/RSI14 계산 — Donchian 채널 자체는 High/Low의 rolling max/min이라 별도 지표이지만, 추후 필터(RSI 등)를 추가할 때 재사용 가능. |
 | `run_backtest_strategy()` | `strategy/ma_cross/backtest.py` (구 `data/backtest.py`, 스펙 `ma_cross.md`) | 개별 종목 단위, 벡터화(numpy), no-lookahead 원칙이 이미 적용된 기존 백테스트 로직 — 이 알고리즘과 "종목 단위 백테스트"라는 성격이 가장 가깝다. 다만 전략 로직(MA20/60 골든크로스)은 다르므로 함수를 공유하지는 않고, 설계 패턴(벡터화 방식, 지표 재사용 방식)만 참고한다. |
 | `strategy/rebalance/` 패키지 구조 | `strategy/rebalance/{config,factors,classify,signals,walkforward,backtest}.py` | 서브패키지 분리 컨벤션(각 책임을 별도 파일로 분리 + `__init__.py` facade)의 선례 — 4장의 구성안이 이 패턴을 따른다. |

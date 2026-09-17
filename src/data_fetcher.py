@@ -26,6 +26,7 @@ from data.cache import (
     _HIST_CACHE_MAX,
     _HIST_CACHE_STATS,
     _HIST_CACHE_LOG_INTERVAL,
+    _YF_BULK_CACHE,
     _YF_SESSION,
     _NAVER_SESSION,
     _KIS_SESSION,
@@ -39,7 +40,6 @@ from data.cache import (
 )
 
 from data.indicators import (
-    _to_polars,
     _compute_indicators,
     fetch_historical_changes,
 )
@@ -59,7 +59,6 @@ from data.collectors.naver import (
 )
 
 from data.collectors.yahoo import (
-    _YF_BULK_CACHE,
     yf_quote_batch,
     fetch_us_realtime_prices,
     fetch_wti_futures_curve,
@@ -93,21 +92,32 @@ from data.collectors.krx import (
     _get_jp10y_df,
 )
 
+from data.frames import _to_polars
+
+from data.listing import (
+    get_stock_listing,
+    _get_listing_with_norm,
+    _fetch_kr_listing_fdr_fallback,
+)
+
+from data.history import (
+    get_historical_data,
+    _fetch_historical_uncached,
+)
+
+from data.fx import (
+    get_usd_krw_rate,
+    get_usd_krw_rate_for_date,
+)
+
 from data.market import (
     INDEX_TICKERS,
     _INDEX_DISPLAY_NAMES,
     _INDEX_ORDER,
-    get_stock_listing,
-    _get_listing_with_norm,
-    _fetch_kr_listing_fdr_fallback,
-    get_historical_data,
-    _fetch_historical_uncached,
     _build_kr_stock_res,
     fetch_kr_market_data,
     fetch_market_data,
     fetch_single_stock,
-    get_usd_krw_rate,
-    get_usd_krw_rate_for_date,
     get_index_close_for_date,
     fetch_index_mas,
     fetch_all_indices_mas,

@@ -38,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 
 from ui.common import create_font, _fmt_num_edit, FONT_FAMILY_CSS, retire_thread
+from ui.history_calc import compute_pl_fields, build_monthly_rows
+from ui.history_table import fill_table_rows
+from ui.dialogs.holdings_summary import show_holdings_summary
+from ui.dialogs.ai_diagnosis import show_ai_diagnosis_result
 
 
 class TradingHistoryTab(QWidget):
@@ -590,36 +594,22 @@ class TradingHistoryTab(QWidget):
             return False
 
 
+    # ---Delegates to the split-out modules (kept so callers/tests are unchanged) ---
     @staticmethod
     def _compute_pl_fields(rec: dict) -> None:
-        """Recalculate pl, pl_pct, days_held and curr_days in-place."""
-        s_amt = rec.get("sell_amount", 0.0)
-        b_amt = rec.get("buy_amount", 0.0)
-        s_qty = rec.get("sell_qty", 0.0)
-        b_qty = rec.get("qty", 0.0)
-        
-        if s_qty > 0 and b_qty > 0 and s_qty < b_qty:
-            prorated_b_amt = b_amt * (s_qty / b_qty)
-            rec["pl"]     = s_amt - prorated_b_amt if (s_amt > 0 and prorated_b_amt > 0) else 0.0
-            rec["pl_pct"] = (rec["pl"] / prorated_b_amt * 100) if prorated_b_amt > 0 else 0.0
-        else:
-            rec["pl"]     = s_amt - b_amt if (s_amt > 0 and b_amt > 0) else 0.0
-            rec["pl_pct"] = (rec["pl"] / b_amt * 100) if b_amt > 0 else 0.0
-        try:
-            bd = _dt.datetime.strptime(rec.get("buy_date", ""), "%Y-%m-%d").date()
-            sd_str = rec.get("sell_date", "")
-            if sd_str:
-                sd = _dt.datetime.strptime(sd_str, "%Y-%m-%d").date()
-                rec["days_held"] = (sd - bd).days
-                rec["curr_days"] = 0
-            else:
-                rec["days_held"] = 0
-                rec["curr_days"] = (_dt.date.today() - bd).days
-        except Exception:
-            logger.debug(
-                "Days-held calculation failed for company=%s buy_date=%s",
-                rec.get("company"), rec.get("buy_date"), exc_info=True,
-            )
+        """See ui.history_calc.compute_pl_fields."""
+        compute_pl_fields(rec)
+
+    @staticmethod
+    def _build_monthly_rows(all_rows: list) -> list:
+        """See ui.history_calc.build_monthly_rows."""
+        return build_monthly_rows(all_rows)
+
+    def _show_holdings_summary(self):
+        show_holdings_summary(self, self._closed_data, self._open_data)
+
+    def _display_ai_diagnosis_result(self, result_text: str):
+        show_ai_diagnosis_result(self, result_text)
 
     def _save_overrides(self):
         """Persist all currently edited/overridden records back to the DB."""
@@ -1173,159 +1163,6 @@ class TradingHistoryTab(QWidget):
         self._open_stocks_combo.setCurrentIndex(0)
         self._open_stocks_combo.blockSignals(False)
 
-    def _show_holdings_summary(self):
-        """Show a dialog with total P/L per company (closed realized + open unrealized),"
-        sorted by total P/L descending."""
-        # ---Accumulate per-company: buy amount, eval amount, P/L, days, buy_date ---
-        pl_map:       dict[str, float] = {}   # company -> total P/L
-        buy_map:      dict[str, float] = {}   # company -> total cost (buy amount)
-        eval_map:     dict[str, float] = {}   # company -> total eval amount
-        days_map:     dict[str, list]  = {}   # company -> list of days_held
-        buy_date_map: dict[str, str]   = {}   # company -> earliest buy_date (str)
-
-        for rec in self._closed_data:
-            comp     = rec.get("company", "")
-            buy_amt  = float(rec.get("buy_amount", 0.0))
-            sell_amt = float(rec.get("sell_amount", 0.0))
-            pl_val   = float(rec.get("pl", 0.0))
-            days     = int(rec.get("days_held", 0) or 0)
-            bd       = rec.get("buy_date", "")
-            pl_map[comp]   = pl_map.get(comp, 0.0)   + pl_val
-            buy_map[comp]  = buy_map.get(comp, 0.0)  + buy_amt
-            # For closed: eval = sell amount (realized value)
-            eval_map[comp] = eval_map.get(comp, 0.0) + sell_amt
-            if days > 0:
-                days_map.setdefault(comp, []).append(days)
-            # Track earliest buy_date per company
-            if bd and (comp not in buy_date_map or bd < buy_date_map[comp]):
-                buy_date_map[comp] = bd
-
-        for rec in self._open_data:
-            comp    = rec.get("company", "")
-            buy_amt = float(rec.get("buy_amount", 0.0))
-            curr_pl = float(rec.get("curr_pl", 0.0))
-            # If curr_price is not yet available, unrealized P/L = 0
-            if rec.get("curr_price", 0.0) <= 0:
-                curr_pl = 0.0
-            eval_amt = buy_amt + curr_pl
-            days     = int(rec.get("curr_days", 0) or 0)
-            bd       = rec.get("buy_date", "")
-            pl_map[comp]   = pl_map.get(comp, 0.0)   + curr_pl
-            buy_map[comp]  = buy_map.get(comp, 0.0)  + buy_amt
-            eval_map[comp] = eval_map.get(comp, 0.0) + eval_amt
-            if days > 0:
-                days_map.setdefault(comp, []).append(days)
-            if bd and (comp not in buy_date_map or bd < buy_date_map[comp]):
-                buy_date_map[comp] = bd
-
-        if not pl_map:
-            QMessageBox.information(self, "Summary", "No trading data available.")
-            return
-
-        # ---Sort by total P/L descending (default) ---
-        rows = sorted(pl_map.items(), key=lambda x: x[1], reverse=True)
-
-        # ---Build dialog ---
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Holdings Summary - P/L by Company")
-        dlg.resize(800, min(100 + 28 * len(rows) + 130, 780))
-
-        v = QVBoxLayout(dlg)
-        v.setContentsMargins(12, 10, 12, 10)
-        v.setSpacing(8)
-
-        # 5 columns: Company | Total Buy | Total Amount | P/L(- | P/L(%)
-        tbl = QTableWidget(len(rows), 5)
-        tbl.setHorizontalHeaderLabels(["Name", "Total Buy", "Total Amount", "P/L", "P/L (%)"])
-        tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        tbl.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        tbl.setAlternatingRowColors(True)
-        tbl.verticalHeader().setVisible(False)
-        tbl.setShowGrid(True)
-        tbl.setStyleSheet(
-            "QTableWidget { border:1px solid #d0d0d0; border-radius:6px; }"
-            "QTableWidget::item { padding:2px 6px; }"
-            "QHeaderView::section { background:#f0f2f5; font-weight:bold; padding:4px; "
-            "border:none; border-right:1px solid #d0d0d0; border-bottom:1px solid #d0d0d0; }"
-        )
-        tbl_font = create_font(9, style_name="Semilight")
-        tbl.setFont(tbl_font)
-        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for c in range(1, 5):
-            tbl.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
-        tbl.verticalHeader().setDefaultSectionSize(26)
-
-        col_red  = QColor("#c0392b")
-        col_blue = QColor("#2980b9")
-        col_gray = QColor("#888888")
-
-        def _ri(text, align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, color=None):
-            it = QTableWidgetItem(text)
-            it.setTextAlignment(align)
-            if color:
-                it.setForeground(color)
-            return it
-
-        def _fill_summary_table(row_data):
-            tbl.setRowCount(len(row_data))
-            for r, (comp, pl) in enumerate(row_data):
-                cost    = buy_map.get(comp, 0.0)
-                eval_v  = eval_map.get(comp, 0.0)
-                pct     = (pl / cost * 100) if cost > 0 else 0.0
-                pl_col  = col_red if pl > 0 else (col_blue if pl < 0 else col_gray)
-
-                # Col 0: Company name
-                comp_it = QTableWidgetItem(comp)
-                comp_it.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                tbl.setItem(r, 0, comp_it)
-
-                # Col 1: Buy amount
-                tbl.setItem(r, 1, _ri(f"{cost:,.0f}"))
-
-                # Col 2: Eval amount
-                tbl.setItem(r, 2, _ri(f"{eval_v:,.0f}"))
-
-                # Col 3: P/L amount
-                tbl.setItem(r, 3, _ri(f"{pl:+,.0f}", color=pl_col))
-
-                # Col 4: P/L %
-                tbl.setItem(r, 4, _ri(f"{pct:+.1f}%", color=pl_col))
-
-        _fill_summary_table(rows)
-        v.addWidget(tbl, 1)
-
-        # ---Bottom summary panel ---
-        pos_pl = sum(v2 for v2 in pl_map.values() if v2 > 0)
-        neg_pl = sum(v2 for v2 in pl_map.values() if v2 < 0)
-
-        def _html_val(val, positive=True):
-            color = "#c0392b" if positive else "#2980b9"
-            sign  = "+" if positive else ""
-            return f"<b style='color:{color}'>{sign}{val:,.0f} KRW</b>"
-
-        # (+)/(-) subtotals in a horizontal row
-        subtotal_html = (
-            f"(+) Total Profit:  {_html_val(pos_pl, positive=True)}"
-            f"&nbsp;&nbsp;&nbsp;&nbsp;"
-            f"(-) Total Loss:  {_html_val(neg_pl, positive=False)}"
-        )
-        subtotal_lbl = QLabel(subtotal_html)
-        subtotal_lbl.setTextFormat(Qt.TextFormat.RichText)
-        subtotal_lbl.setStyleSheet("padding:0px 4px 4px 4px;")
-        subtotal_lbl.setFont(create_font(9, style_name="Semilight"))
-        v.addWidget(subtotal_lbl)
-
-        close_btn = QPushButton("Close")
-        close_btn.setFixedWidth(90)
-        close_btn.clicked.connect(dlg.accept)
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_row.addWidget(close_btn)
-        v.addLayout(btn_row)
-
-        dlg.exec()
-
     def _show_ai_diagnosis(self):
         """Show an AI-powered portfolio diagnosis dialog using Gemini API."""
         if hasattr(self, "_ai_diagnosis_thread") and self._ai_diagnosis_thread is not None and self._ai_diagnosis_thread.isRunning():
@@ -1391,49 +1228,6 @@ class TradingHistoryTab(QWidget):
         if loading_dlg is not None:
             loading_dlg.reject()
 
-    def _display_ai_diagnosis_result(self, result_text: str):
-        """Display the AI portfolio diagnosis result in a modal dialog."""
-        result_dlg = QDialog(self)
-        result_dlg.setWindowTitle("🤖 AI Portfolio Diagnosis")
-        result_dlg.resize(560, 420)
-        v = QVBoxLayout(result_dlg)
-        v.setContentsMargins(16, 14, 16, 14)
-        v.setSpacing(10)
-
-        title_lbl = QLabel("📊 AI Portfolio Diagnosis Result")
-        title_lbl.setFont(create_font(12, QFont.Weight.Bold))
-        title_lbl.setStyleSheet("color:#0a3d62; margin-bottom:4px;")
-        v.addWidget(title_lbl)
-
-        from PyQt6.QtWidgets import QTextEdit
-        text_edit = QTextEdit()
-        text_edit.setReadOnly(True)
-        text_edit.setFont(create_font(10, style_name="Semilight"))
-        text_edit.setStyleSheet(
-            "QTextEdit { border:1px solid #d0d0d0; border-radius:6px; padding:8px; background:#fafafa; }"
-        )
-        # Convert markdown-style bold (**text**) to minimal HTML for readability
-        import re
-        html_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", result_text)
-        html_text = html_text.replace("\n", "<br>")
-        text_edit.setHtml(html_text)
-        v.addWidget(text_edit, 1)
-
-        disclaimer_lbl = QLabel("※ This analysis is for reference only and does not constitute investment advice.")
-        disclaimer_lbl.setFont(create_font(8, style_name="Semilight"))
-        disclaimer_lbl.setStyleSheet("color:#888;")
-        v.addWidget(disclaimer_lbl)
-
-        close_btn = QPushButton("Close")
-        close_btn.setFixedWidth(80)
-        close_btn.clicked.connect(result_dlg.accept)
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_row.addWidget(close_btn)
-        v.addLayout(btn_row)
-
-        result_dlg.exec()
-
     # ---Filter / refresh ---
     def _apply_filter(self, *_):
         closed_rows = [("closed", r) for r in self._closed_data]
@@ -1454,272 +1248,19 @@ class TradingHistoryTab(QWidget):
             rows = closed_rows + open_rows
         self._fill_table(rows)
 
-    @staticmethod
-    def _build_monthly_rows(all_rows: list) -> list:
-        """Insert a ("monthly", summary_rec) row after each buy-month group.
-
-        all_rows: [(kind, rec), ...] already sorted by buy_date ascending.
-        The summary carries the month total buy amount and the realized (pl)
-        + unrealized (curr_pl) P/L of that month's positions. Pure function so
-        it can be unit-tested without a widget (roadmap 6-3b).
-        """
-        rows = []
-        month_groups: dict = {}
-        for kind, rec in all_rows:
-            b_date = rec.get("buy_date", "")
-            month = str(b_date)[:7] if b_date else "Unknown"
-            month_groups.setdefault(month, []).append((kind, rec))
-
-        for month, m_rows in month_groups.items():
-            total_buy = 0.0
-            total_pl = 0.0
-            for k, r in m_rows:
-                rows.append((k, r))
-                b_amt = r.get("buy_amount")
-                if b_amt:
-                    total_buy += float(b_amt)
-                pl = r.get("pl", 0.0)
-                curr_pl = r.get("curr_pl", 0.0)
-                total_pl += (float(pl) if pl else 0.0) + (float(curr_pl) if curr_pl else 0.0)
-
-            rows.append(("monthly", {
-                "company": f"Monthly Summary [{month}]",
-                "buy_date": month,
-                "buy_amount": total_buy,
-                "sell_date": "",
-                "sell_amount": 0,
-                "pl": total_pl,
-                "pl_pct": 0.0,
-                "sell_price": 0, "buy_price": 0, "qty": 0, "sell_qty": 0, "days_held": 0, "curr_days": 0,
-            }))
-        return rows
-
     # ---Table item helpers ---
-    @staticmethod
-    def _si(text, align=Qt.AlignmentFlag.AlignCenter) -> QTableWidgetItem:
-        it = QTableWidgetItem(text)
-        it.setTextAlignment(align)
-        return it
-
-    @staticmethod
-    def _ni(val, fmt="{:,.0f}") -> QTableWidgetItem:
-        it = QTableWidgetItem()
-        it.setData(Qt.ItemDataRole.EditRole, round(float(val), 4))
-        it.setText(fmt.format(val))
-        it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        return it
-
-    @staticmethod
-    def _pi(val: float) -> QTableWidgetItem:
-        it = QTableWidgetItem()
-        it.setData(Qt.ItemDataRole.EditRole, round(val, 4))
-        it.setText(f"{val:+.1f}%")
-        it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        if val > 0:
-            it.setForeground(QColor("#c0392b"))
-        elif val < 0:
-            it.setForeground(QColor("#2980b9"))
-        return it
-
-    @staticmethod
-    def _wi(val: float) -> QTableWidgetItem:
-        it = QTableWidgetItem()
-        it.setData(Qt.ItemDataRole.EditRole, round(val, 4))
-        it.setText(f"{val:.1f}%")
-        it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        return it
-
-    @staticmethod
-    def _dash() -> QTableWidgetItem:
-        it = QTableWidgetItem("-")
-        it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        it.setForeground(QColor("#aaaaaa"))
-        return it
-
     # ---Unified table fill ---
-    @staticmethod
-    def _loading_item() -> QTableWidgetItem:
-        it = QTableWidgetItem("Total")
-        it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        it.setForeground(QColor("#999999"))
-        return it
-
     def _fill_table(self, rows: list):
         tbl = self._table
         tbl.setSortingEnabled(False)
         tbl.setUpdatesEnabled(False)
         try:
-            self._fill_table_rows(tbl, rows)
+            self._row_data = fill_table_rows(tbl, rows)
         finally:
             tbl.setUpdatesEnabled(True)
         self._update_open_stocks_combo()
         self._fit_columns()
         tbl.scrollToBottom()
-
-    def _fill_table_rows(self, tbl, rows: list):
-        n_rows = len(rows)
-        cur_rows = tbl.rowCount()
-        # Adjust row count without full reset when possible
-        if cur_rows != n_rows:
-            tbl.setRowCount(n_rows)
-
-        L = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        bg_even = QColor("#ffffff")
-        bg_odd  = QColor("#f5f7fa")
-        bg_open = QColor("#edfbf0")   # mint for current holdings
-        n_cols  = tbl.columnCount()
-
-        # Pre-build colour-constant items to avoid repeated QColor() in inner loop
-        col_red  = QColor("#c0392b")
-        col_blue = QColor("#2980b9")
-        bg_summary = QColor("#fff5e6")
-
-        self._row_data = []
-        closed_idx = 0
-        for r, (kind, rec) in enumerate(rows):
-            self._row_data.append((kind, rec))  # preserve reference for double-click editing
-            
-            if kind == "monthly":
-                tbl.setItem(r, 0, self._si(rec["company"], Qt.AlignmentFlag.AlignCenter))
-                tbl.setItem(r, 1, self._dash())
-                tbl.setItem(r, 2, self._dash())
-                
-                tbl.setItem(r, 3, self._si(rec["buy_date"]))
-                tbl.setItem(r, 4, self._dash())
-                tbl.setItem(r, 5, self._dash())
-                tbl.setItem(r, 6, self._ni(rec["buy_amount"]))
-                
-                tbl.setItem(r, 7, self._dash())
-                tbl.setItem(r, 8, self._dash())
-                tbl.setItem(r, 9, self._dash())
-                tbl.setItem(r, 10, self._dash())
-                tbl.setItem(r, 11, self._dash())
-                
-                pl_it = self._ni(rec["pl"])
-                if rec["pl"] > 0: pl_it.setForeground(col_red)
-                elif rec["pl"] < 0: pl_it.setForeground(col_blue)
-                tbl.setItem(r, 12, pl_it)
-                tbl.setItem(r, 13, self._dash())
-                
-                for c in range(14, tbl.columnCount()):
-                    tbl.setItem(r, c, self._dash())
-                    
-                # Highlight summary row
-                for c in range(tbl.columnCount()):
-                    if tbl.item(r, c):
-                        tbl.item(r, c).setBackground(bg_summary)
-                        font = tbl.item(r, c).font()
-                        font.setBold(True)
-                        tbl.item(r, c).setFont(font)
-                continue
-                
-            # ---Col 0-2: Company ---
-            tbl.setItem(r, 0, self._si(rec["company"], L))
-            tbl.setItem(r, 1, self._si(rec.get("market", ""), Qt.AlignmentFlag.AlignCenter))
-            tbl.setItem(r, 2, self._si(rec.get("ticker", ""), Qt.AlignmentFlag.AlignCenter))
-
-            # ---Col 3-6: Buy section ---
-            tbl.setItem(r, 3, self._si(rec["buy_date"]))
-            tbl.setItem(r, 4, self._ni(rec["buy_price"]))
-            tbl.setItem(r, 5, self._ni(rec["qty"]))
-            tbl.setItem(r, 6, self._ni(rec["buy_amount"]))
-
-            is_closed = bool(rec.get("sell_date") or rec.get("sell_price"))
-
-            # ---Col 7-13: Sell section ---
-            if is_closed:
-                tbl.setItem(r, 7,  self._si(rec.get("sell_date", "")) if rec.get("sell_date") else self._dash())
-                tbl.setItem(r, 8,  self._ni(rec.get("days_held", 0)))
-                tbl.setItem(r, 9,  self._ni(rec.get("sell_price", 0.0)))
-                tbl.setItem(r, 10, self._ni(rec.get("sell_qty", 0.0)))
-                tbl.setItem(r, 11, self._ni(rec.get("sell_amount", 0.0)))
-                pl_it = self._ni(rec.get("pl", 0.0))
-                if rec.get("pl", 0.0) > 0:   pl_it.setForeground(col_red)
-                elif rec.get("pl", 0.0) < 0: pl_it.setForeground(col_blue)
-                tbl.setItem(r, 12, pl_it)
-                tbl.setItem(r, 13, self._pi(rec.get("pl_pct", 0.0)))
-            else:
-                for c in range(7, 14):
-                    tbl.setItem(r, c, self._dash())
-
-            # ---Col 14-17: Position section ---
-            is_open_row = (kind == "open")
-            curr_price  = rec.get("curr_price", 0)
-
-            # _refresh_summary already sets curr_days = (today - sell_date).days for closed rows
-            hide_past_info = (kind == "closed" and rec.get("curr_days", 0) > 30)
-
-            if hide_past_info:
-                tbl.setItem(r, 14, self._dash())
-            else:
-                tbl.setItem(r, 14, self._ni(rec["curr_days"]) if rec["curr_days"] else self._dash())
-
-            if hide_past_info:
-                tbl.setItem(r, 15, self._dash())
-                tbl.setItem(r, 16, self._dash())
-                tbl.setItem(r, 17, self._dash())
-            elif curr_price > 0:
-                tbl.setItem(r, 15, self._ni(curr_price))
-                if is_open_row:
-                    pl_cur = self._ni(rec.get("curr_pl", 0.0))
-                    if rec.get("curr_pl", 0.0) > 0:   pl_cur.setForeground(col_red)
-                    elif rec.get("curr_pl", 0.0) < 0: pl_cur.setForeground(col_blue)
-                    tbl.setItem(r, 16, pl_cur)
-                    tbl.setItem(r, 17, self._pi(rec.get("curr_pl_pct", 0.0)))
-                else:
-                    # closed row: Do not display P/L amount (col 16)
-                    # EXCEPT if sold today, display P/L based on current price (user request)
-                    if rec.get("curr_days") == 0:
-                        curr_price = rec.get("curr_price", 0.0)
-                        sell_price = rec.get("sell_price", 0.0)
-                        s_qty      = rec.get("sell_qty", 0.0)
-                        
-                        if curr_price > 0 and sell_price > 0:
-                            # Opportunity P/L for positions sold today: current price - sell price
-                            opp_pl = (curr_price - sell_price) * s_qty
-                            opp_pl_pct = (curr_price - sell_price) / sell_price * 100
-                            
-                            pl_cur = self._ni(opp_pl)
-                            if opp_pl > 0:   pl_cur.setForeground(col_red)
-                            elif opp_pl < 0: pl_cur.setForeground(col_blue)
-                            tbl.setItem(r, 16, pl_cur)
-                            tbl.setItem(r, 17, self._pi(opp_pl_pct))
-                        else:
-                            tbl.setItem(r, 16, self._dash())
-                            tbl.setItem(r, 17, self._pi(rec.get("curr_pl_pct", 0.0)))
-                    else:
-                        tbl.setItem(r, 16, self._dash())
-                        tbl.setItem(r, 17, self._pi(rec.get("curr_pl_pct", 0.0)))
-            elif is_open_row:
-                tbl.setItem(r, 15, self._loading_item())
-                tbl.setItem(r, 16, self._loading_item())
-                tbl.setItem(r, 17, self._loading_item())
-            else:
-                tbl.setItem(r, 15, self._dash())
-                tbl.setItem(r, 16, self._dash())
-                tbl.setItem(r, 17, self._dash())
-
-            # ---Col 18-20: Past section ---
-            if hide_past_info:
-                tbl.setItem(r, 18, self._dash())
-                tbl.setItem(r, 19, self._dash())
-                tbl.setItem(r, 20, self._dash())
-            else:
-                tbl.setItem(r, 18, self._pi(rec["wk1"])  if rec["wk1"]  else self._dash())
-                tbl.setItem(r, 19, self._pi(rec["wk2"])  if rec["wk2"]  else self._dash())
-                tbl.setItem(r, 20, self._pi(rec["mth1"]) if rec["mth1"] else self._dash())
-
-            # ---Row background (single pass via setBackground per item) ---
-            if kind == "closed":
-                bg = bg_even if closed_idx % 2 == 0 else bg_odd
-                closed_idx += 1
-            else:
-                bg = bg_open
-
-            for c in range(n_cols):
-                it = tbl.item(r, c)
-                if it:
-                    it.setBackground(bg)
 
     # ---Buy/Sell cell double-click edit ---
     # Editable columns: Buy(3=Date, 4=Price, 5=Qty, 6=Amount), Sell(8=Date, 10=Price, 11=Qty, 12=Amount)

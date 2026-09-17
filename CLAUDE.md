@@ -35,7 +35,7 @@ working directory:
 ```
 
 Run pytest from the repo root or from `src/` (`tests/conftest.py` puts `src/` on `sys.path`).
-Tests patch the implementation modules (`data.cache`, `data.market`, `data.collectors.yahoo`),
+Tests patch the implementation modules (`data.cache`, `data.history`, `data.fx`, `data.collectors.yahoo`),
 never names on the `data_fetcher` facade. GUI behaviour cannot be exercised headlessly here;
 for non-trivial changes to fetch/backtest logic write a throwaway script comparing old vs.
 new behaviour on random inputs (`docs/history/changelog_optimization_2026-08-11.md` shows the
@@ -51,9 +51,13 @@ Dev tooling is in `requirements-dev.txt`
   logging setup (root INFO; `app.log` gets INFO and above, the console WARNING and above).
 - **`src/ui/`**: `universe_tab.py` (`UniverseTab`), `history_tab.py` (`TradingHistoryTab`),
   `assets_tab.py` (`TradingRecordTab`), `auto_trading_tab.py` (`AutoTradingTab`),
-  `widgets.py` (`StockTable`, `FilterPopup`, `GroupedHeaderView`), `dialogs.py` (charts and
-  trade edit dialogs), `common.py` (`create_font`, `FONT_FAMILY_CSS`, input validators,
-  `atomic_save_json` / `safe_load_json`, `retire_thread`). Tabs never reference each other
+  `widgets.py` (`StockTable`, `FilterPopup`, `GroupedHeaderView`), `dialogs/` (one module per
+  dialog group: `index_ma`, `stock_ma`, `trade_edit`, `trade_history`, `assets_graph`,
+  `backtest_result`, `holdings_summary`, `ai_diagnosis`; import from `ui.dialogs`),
+  `history_table.py` (cell factories + `fill_table_rows` for the history grid),
+  `history_calc.py` (pure P/L maths, no Qt), `common.py` (`create_font`, `FONT_FAMILY_CSS`,
+  input validators, `atomic_save_json` / `safe_load_json`, `retire_thread`). Tabs never
+  reference each other
   directly; `MainWindow` connects their signals (`status_message`, `refresh_started`,
   `auto_lightweight_tick`, `total_asset_updated`). The one exception is `AutoTradingTab`,
   which reads `UniverseTab.all_data` on demand.
@@ -63,14 +67,19 @@ Dev tooling is in `requirements-dev.txt`
   the Gemini threads, `AutoBackupThread`). Never call `data_fetcher` functions from a slot on
   the UI thread; add a thread class instead. Connect `finished` signals to bound methods,
   not closures, so Qt queues them onto the UI thread.
-- **`src/data/`**: all external data access, split by concern.
-  `cache.py` (HTTP sessions, `_HIST_CACHE` LRU with `_HIST_CACHE_STATS`, `start_date()`,
-  `is_kr_code()`, `safe_float`), `indicators.py` (polars indicator maths,
-  `fetch_historical_changes`), `market.py` (listing lookup, `get_historical_data`, market
-  aggregation, index MAs), `collectors/` (`naver.py`; `yahoo.py`, where `yf_quote_batch`
-  is the one Yahoo quote entry point; `kis.py`; `krx.py`). Pure data access only: uses
-  polars internally and converts to pandas only at library boundaries, reuses the
-  module-level caches rather than adding parallel ones, and never imports `strategy`.
+- **`src/data/`**: all external data access, layered bottom-up with no import cycles
+  (module-level or lazy): `cache.py` (HTTP sessions, `_HIST_CACHE` LRU with
+  `_HIST_CACHE_STATS`, `_YF_BULK_CACHE`, `start_date()`, `is_kr_code()`, `safe_float`) ->
+  `frames.py` (`_to_polars`) -> `collectors/naver.py`, `kis.py`, `krx.py` -> `listing.py`
+  (`get_stock_listing`, day-scoped single-flight cache), `history.py` (`get_historical_data`
+  routing KR codes to Naver, bonds to cached series, else yfinance/yahooquery/FDR), `fx.py`
+  (`get_usd_krw_rate`) -> `indicators.py` (`_compute_indicators`, `fetch_historical_changes`)
+  -> `collectors/yahoo.py` (`yf_quote_batch` is the one Yahoo quote entry point, US bulk
+  universe) -> `market.py` (per-market universe builds, single-stock lookup, index/MA
+  series; re-exports the lower names for older callers). Keep new code in the lowest
+  layer that has what it needs, never add a `from data.market import` below market.py, and
+  never import `strategy`. Uses polars internally and converts to pandas only at library
+  boundaries; reuse the module-level caches rather than adding parallel ones.
 - **`src/strategy/`**: all trading-strategy logic (`strategy/rebalance/rebalance.md` 11-5).
   **Rule (user direction, 2026-09-17): every strategy is its own sub-package
   `src/strategy/<name>/` and its design/spec document is saved as `<name>.md` inside that

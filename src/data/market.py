@@ -1,31 +1,32 @@
-"""data/market.py — Market data aggregation, stock listings, historical prices, and index indicators."""
+"""data/market.py — Market data aggregation: per-market universe builds, single-stock lookup,
+index/MA series. Listings, history and FX live one layer down (data.listing / data.history /
+data.fx) and are re-exported here for existing callers."""
 import re
 import threading
-from collections import OrderedDict
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import pandas as pd
 import polars as pl
 import FinanceDataReader as fdr
 import logging
 
-import data.cache as _dc
 from data.cache import (
     start_date,
-    _FDR_ONLY_TICKERS,
-    _USD_KRW_CACHE,
-    _MISC_CACHE_LOCK,
     _YF_SESSION,
-    _hist_df_is_stale,
-    _record_hist_cache_lookup,
     safe_float,
     is_kr_code,
 )
+from data.frames import _to_polars
 from data.indicators import (
-    _to_polars,
     _compute_indicators,
     fetch_historical_changes,
 )
+from data.listing import (  # noqa: F401 - re-exported for callers of data.market
+    get_stock_listing,
+    _get_listing_with_norm,
+    _fetch_kr_listing_fdr_fallback,
+)
+from data.history import get_historical_data, _fetch_historical_uncached  # noqa: F401 - re-exported
+from data.fx import get_usd_krw_rate, get_usd_krw_rate_for_date  # noqa: F401 - re-exported
 from data.collectors.naver import (
     _fast_kr_history,
     fetch_naver_realtime_prices,
@@ -35,10 +36,7 @@ from data.collectors.naver import (
     _fetch_kr_listing_naver,
     _get_kr3y_df,
 )
-from data.collectors.yahoo import (
-    fetch_us_market_data,
-    _YF_BULK_CACHE,
-)
+from data.collectors.yahoo import fetch_us_market_data
 from data.collectors.krx import (
     _get_vkospi_pdf,
     _get_jp10y_df,
@@ -82,232 +80,6 @@ _INDEX_ORDER = {
     "US 10Y Treasury": 6, "JP 10Y Bond": 7, "KR 3Y Bond": 8,
     "VIX": 9, "VKOSPI": 10, "WTI Crude Oil": 11,
 }
-
-
-def _singleflight_cache(maxsize):
-    """Like functools.lru_cache(maxsize), but de-duplicates concurrent calls:
-    if a second thread requests a key that's still being computed by another
-    thread, it waits for and reuses that in-flight result instead of firing
-    its own redundant (here, network-bound) computation. Plain lru_cache only
-    guarantees the cache structure itself isn't corrupted by concurrent
-    access -- it does not prevent two threads from both missing on the same
-    key and both calling the wrapped function.
-
-    Entries expire at the day boundary: listings (constituents, market caps)
-    change daily, and before this the cache lived for the whole process
-    lifetime (roadmap 6-2f).
-
-    Only meant for single-argument functions keyed on that argument, which
-    is all get_stock_listing/_get_listing_with_norm need."""
-    def decorator(fn):
-        cache: "OrderedDict[str, tuple]" = OrderedDict()  # key -> (date, result)
-        cache_lock = threading.Lock()
-        key_locks: dict = {}
-
-        def _lookup(key, today):
-            hit = cache.get(key)
-            if hit is not None and hit[0] == today:
-                cache.move_to_end(key)
-                return hit[1]
-            return None
-
-        def wrapper(key):
-            today = datetime.now().date()
-            with cache_lock:
-                cached = _lookup(key, today)
-                if cached is not None:
-                    return cached
-                key_lock = key_locks.setdefault(key, threading.Lock())
-
-            with key_lock:
-                with cache_lock:
-                    cached = _lookup(key, today)
-                    if cached is not None:
-                        return cached
-                result = fn(key)
-                with cache_lock:
-                    cache[key] = (today, result)
-                    cache.move_to_end(key)
-                    if len(cache) > maxsize:
-                        cache.popitem(last=False)
-                    key_locks.pop(key, None)
-                return result
-
-        def cache_clear():
-            with cache_lock:
-                cache.clear()
-                key_locks.clear()
-
-        wrapper.cache_clear = cache_clear
-        return wrapper
-    return decorator
-
-
-@_singleflight_cache(maxsize=16)
-def get_stock_listing(market: str) -> pd.DataFrame:
-    """Cached version of fdr.StockListing to prevent redundant network requests."""
-    if market in ('KRX-DESC', 'KRX', 'KOSPI', 'KOSDAQ'):
-        try:
-            from FinanceDataReader.krx.listing import KrxStockListing
-            market_arg = f'{market}-DESC' if market in ('KOSPI', 'KOSDAQ') else 'KRX-DESC'
-            return KrxStockListing(market_arg).read()
-        except Exception:
-            logger.warning("KrxStockListing failed for market=%s, falling back to fdr.StockListing", market, exc_info=True)
-
-    try:
-        return fdr.StockListing(market)
-    except Exception:
-        logger.error("fdr.StockListing('%s') failed", market, exc_info=True)
-        return pd.DataFrame(columns=['Symbol', 'Code', 'Name', 'Market'])
-
-
-@_singleflight_cache(maxsize=4)
-def _get_listing_with_norm(market: str) -> pd.DataFrame:
-    """Cached listing with pre-computed NameNorm column (upper, stripped)."""
-    df = get_stock_listing(market).copy()
-    df['NameNorm'] = df['Name'].str.upper().str.replace(r'[\s_]+', '', regex=True)
-    return df
-
-
-def _fetch_kr_listing_fdr_fallback(market, top_n):
-    """Fallback KR market-listing source."""
-    try:
-        df = get_stock_listing(market)
-        code_col = 'Code' if 'Code' in df.columns else ('Symbol' if 'Symbol' in df.columns else None)
-        marcap_col = next((c for c in ('Marcap', 'MarCap', 'MarketCap') if c in df.columns), None)
-        if df is None or df.empty or not code_col or 'Name' not in df.columns or not marcap_col:
-            # Try KRX-DESC which contains Marcap for all KRX listings
-            df_desc = get_stock_listing('KRX-DESC')
-            if df_desc is not None and not df_desc.empty and 'Market' in df_desc.columns:
-                df = df_desc[df_desc['Market'].str.upper() == market.upper()]
-                code_col = 'Code' if 'Code' in df.columns else ('Symbol' if 'Symbol' in df.columns else None)
-                marcap_col = next((c for c in ('Marcap', 'MarCap', 'MarketCap') if c in df.columns), None)
-
-        if df is None or df.empty or not code_col or 'Name' not in df.columns:
-            return []
-
-        rows = [
-            {
-                'Code': str(row[code_col]).zfill(6),
-                'Name': str(row['Name']),
-                'Marcap': safe_float(row[marcap_col]) if marcap_col else 0.0,
-            }
-            for _, row in df.iterrows()
-        ]
-        rows.sort(key=lambda x: -x['Marcap'])
-        return rows[:top_n]
-    except Exception:
-        logger.warning("FDR listing fallback failed for market=%s", market, exc_info=True)
-        return []
-
-
-def get_historical_data(ticker: str, start: str) -> pl.DataFrame:
-    """Historical data with a smart cache that skips empty DataFrames.
-
-    _HIST_CACHE is a plain OrderedDict shared across every fetch thread
-    (up to 20 concurrent workers during a full-universe refresh), so all
-    reads/writes to it are serialized under _HIST_CACHE_LOCK. The network
-    fetch itself happens outside the lock so concurrent misses still run
-    in parallel — only the dict bookkeeping is made atomic.
-
-    The cache dict/lock/max are read through the `data.cache` module object
-    (`_dc`) rather than imported names so tests can rebind e.g.
-    `data.cache._HIST_CACHE_MAX` and have it take effect here.
-    """
-    cache_key = (ticker, start)
-
-    with _dc._HIST_CACHE_LOCK:
-        cached = _dc._HIST_CACHE.get(cache_key)
-        if cached is not None:
-            _dc._HIST_CACHE.move_to_end(cache_key)
-
-    if cached is not None and not _hist_df_is_stale(cached):
-        _record_hist_cache_lookup(hit=True)
-        return cached
-
-    _record_hist_cache_lookup(hit=False)
-
-    df = _fetch_historical_uncached(ticker, start)
-    if not df.is_empty():
-        max_size = _dc._HIST_CACHE_MAX
-        with _dc._HIST_CACHE_LOCK:
-            if cache_key not in _dc._HIST_CACHE and len(_dc._HIST_CACHE) >= max_size:
-                try:
-                    _dc._HIST_CACHE.popitem(last=False)
-                except Exception:
-                    logger.debug("LRU cache eviction failed", exc_info=True)
-            _dc._HIST_CACHE[cache_key] = df
-            _dc._HIST_CACHE.move_to_end(cache_key)
-        return df
-    return cached if cached is not None else df
-
-
-def _fetch_historical_uncached(ticker: str, start: str) -> pl.DataFrame:
-    """Actual fetch — called only on cache miss."""
-    try:
-        # Fast path for Korean indices via Naver (includes intraday live data)
-        if ticker in ("^KS11", "KS11", "KOSPI"):
-            df = _fast_kr_history("KOSPI", start)
-            if not df.is_empty():
-                return df
-        elif ticker in ("^KQ11", "KQ11", "KOSDAQ"):
-            df = _fast_kr_history("KOSDAQ", start)
-            if not df.is_empty():
-                return df
-
-        if is_kr_code(ticker):
-            df = _fast_kr_history(ticker, start)
-            if not df.is_empty():
-                return df
-
-        if ticker in _FDR_ONLY_TICKERS:
-            if ticker == "KR3YT":
-                df_pd = _get_kr3y_df()
-                if df_pd is not None and not df_pd.empty:
-                    if start:
-                        df_pd = df_pd[df_pd.index >= start]
-                    return _to_polars(df_pd)
-                return pl.DataFrame()
-
-            df_pd = fdr.DataReader(ticker, start)
-            return _to_polars(df_pd)
-
-        bulk_key = f"{ticker}_{start}"
-        if bulk_key in _YF_BULK_CACHE:
-            return _YF_BULK_CACHE[bulk_key]
-
-        import yfinance as yf
-        yf_ticker = ticker.replace(".", "-")
-        df_pd = None
-        try:
-            _yf_df = yf.Ticker(yf_ticker).history(start=start, timeout=10, auto_adjust=True)
-            if _yf_df is not None and not _yf_df.empty:
-                if isinstance(_yf_df.columns, pd.MultiIndex):
-                    _yf_df.columns = _yf_df.columns.get_level_values(0)
-                df_pd = _yf_df
-        except Exception:
-            logger.debug("yfinance history fetch failed for %s", ticker, exc_info=True)
-
-        if df_pd is None or (hasattr(df_pd, 'empty') and df_pd.empty):
-            try:
-                from yahooquery import Ticker as YQTicker
-                _yq = YQTicker(ticker, asynchronous=False)
-                _yq_df = _yq.history(start=start)
-                if isinstance(_yq_df, pd.DataFrame) and not _yq_df.empty:
-                    _yq_df = _yq_df.reset_index()
-                    if 'date' in _yq_df.columns:
-                        _yq_df = _yq_df.rename(columns={'date': 'Date', 'close': 'Close', 'high': 'High', 'low': 'Low', 'open': 'Open', 'volume': 'Volume'})
-                    df_pd = _yq_df
-            except Exception:
-                logger.debug("yahooquery history fetch failed for %s", ticker, exc_info=True)
-
-        if df_pd is None or (hasattr(df_pd, 'empty') and df_pd.empty):
-            df_pd = fdr.DataReader(ticker, start)
-
-        return _to_polars(df_pd)
-    except Exception:
-        logger.warning("All history sources failed for ticker=%s, returning empty DataFrame", ticker, exc_info=True)
-        return pl.DataFrame()
 
 
 def _build_kr_stock_res(code, name, market, marcap):
@@ -566,27 +338,6 @@ def fetch_single_stock(market, ticker):
         return None, str(e)
 
 
-def get_usd_krw_rate():
-    """Returns USD/KRW FX rate."""
-    usd_cache = _USD_KRW_CACHE
-    with _MISC_CACHE_LOCK:
-        if usd_cache["rate"] is not None and not _hist_df_is_stale(usd_cache["df"]):
-            return usd_cache["rate"]
-        try:
-            df = _to_polars(fdr.DataReader('USD/KRW'))
-            if not df.is_empty():
-                usd_cache["df"] = df
-                close_s = df.get_column("Close").drop_nulls()
-                rate = float(close_s[-1]) if len(close_s) > 0 else 1450.0
-            else:
-                rate = usd_cache["rate"] if usd_cache["rate"] is not None else 1450.0
-        except Exception:
-            rate = usd_cache["rate"] if usd_cache["rate"] is not None else 1450.0
-            logger.warning("USD/KRW rate fetch failed, using cached/fallback rate=%.1f", rate, exc_info=True)
-        usd_cache["rate"] = rate
-        return rate
-
-
 def get_index_close_for_date(ticker: str, date_str: str) -> float:
     """Returns the closing price for an index/ticker for a specific date (YYYY-MM-DD)."""
     df = get_historical_data(ticker, start_date())
@@ -599,21 +350,6 @@ def get_index_close_for_date(ticker: str, date_str: str) -> float:
         except Exception:
             logger.debug("get_index_close_for_date failed for ticker=%s date=%s", ticker, date_str, exc_info=True)
     return 0.0
-
-
-def get_usd_krw_rate_for_date(date_str: str) -> float:
-    """Returns USD/KRW rate for a specific date (YYYY-MM-DD)."""
-    get_usd_krw_rate()
-    df = _USD_KRW_CACHE.get("df")
-    if df is not None and not df.is_empty():
-        try:
-            target = datetime.strptime(date_str, "%Y-%m-%d").date()
-            sub = df.filter(pl.col("Date") <= target)
-            if not sub.is_empty():
-                return float(sub.get_column("Close")[-1])
-        except Exception:
-            logger.debug("get_usd_krw_rate_for_date failed for date=%s", date_str, exc_info=True)
-    return get_usd_krw_rate()
 
 
 def fetch_index_mas(fdr_ticker, days=365):

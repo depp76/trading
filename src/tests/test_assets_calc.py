@@ -9,21 +9,21 @@ import data_fetcher
 
 
 class TestUsdKrwCache(unittest.TestCase):
-    """get_usd_krw_rate's session cache. `fdr` is patched on data.market, the
+    """get_usd_krw_rate's session cache. `fdr` is patched on data.fx, the
     module that actually calls it (roadmap 6-2a)."""
 
     def setUp(self):
         data_fetcher._USD_KRW_CACHE["rate"] = None
         data_fetcher._USD_KRW_CACHE["df"] = None
 
-    @patch("data.market.fdr")
+    @patch("data.fx.fdr")
     def test_cached_rate_is_reused(self, mock_fdr):
         data_fetcher._USD_KRW_CACHE["rate"] = 1350.0
         rate = data_fetcher.get_usd_krw_rate()
         self.assertAlmostEqual(rate, 1350.0)
         mock_fdr.DataReader.assert_not_called()
 
-    @patch("data.market.fdr")
+    @patch("data.fx.fdr")
     def test_fallback_on_fdr_error(self, mock_fdr):
         mock_fdr.DataReader.side_effect = Exception("Network error")
         rate = data_fetcher.get_usd_krw_rate()

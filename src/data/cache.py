@@ -51,6 +51,10 @@ _VKOSPI_CACHE: dict = {}
 # thread per index) don't each redundantly fetch on a cold/stale cache.
 _MISC_CACHE_LOCK = threading.Lock()
 
+# Staging cache for yfinance bulk downloads: fetch_us_stock_data_bulk() fills it
+# per chunk and _fetch_historical_uncached() reads it before hitting the network.
+_YF_BULK_CACHE: dict = {}
+
 # Shared history cache — only non-empty DataFrames are stored,
 # so transient fetch failures (e.g. during parallel startup) are retried.
 # Capped at _HIST_CACHE_MAX entries; least-recently-used entries are evicted first.

@@ -16,7 +16,7 @@ def _reset_hist_cache():
 
 class TestHistCache(unittest.TestCase):
     """LRU cache of get_historical_data. Patches target the implementation
-    modules (data.market / data.cache), not the data_fetcher facade (roadmap 6-2a)."""
+    modules (data.history / data.cache), not the data_fetcher facade (roadmap 6-2a)."""
 
     def setUp(self):
         _reset_hist_cache()
@@ -30,45 +30,45 @@ class TestHistCache(unittest.TestCase):
                              "Open": closes, "High": closes,
                              "Low": closes, "Volume": [1000]*n})
 
-    @patch("data.market._fetch_historical_uncached")
+    @patch("data.history._fetch_historical_uncached")
     def test_cache_miss_on_first_call(self, mock_fetch):
         mock_fetch.return_value = self._make_polars_df()
         data_fetcher.get_historical_data("005930", "2024-01-01")
         self.assertEqual(dcache._HIST_CACHE_STATS["misses"], 1)
         self.assertEqual(dcache._HIST_CACHE_STATS["hits"], 0)
 
-    @patch("data.market._fetch_historical_uncached")
+    @patch("data.history._fetch_historical_uncached")
     def test_cache_hit_on_second_call(self, mock_fetch):
         df = self._make_polars_df()
         mock_fetch.return_value = df
-        with patch("data.market._hist_df_is_stale", return_value=False):
+        with patch("data.history._hist_df_is_stale", return_value=False):
             data_fetcher.get_historical_data("005930", "2024-01-01")
             data_fetcher.get_historical_data("005930", "2024-01-01")
         self.assertEqual(dcache._HIST_CACHE_STATS["hits"], 1)
         mock_fetch.assert_called_once()
 
-    @patch("data.market._fetch_historical_uncached")
+    @patch("data.history._fetch_historical_uncached")
     def test_stale_cache_triggers_refetch(self, mock_fetch):
         df = self._make_polars_df()
         mock_fetch.return_value = df
-        with patch("data.market._hist_df_is_stale", return_value=True):
+        with patch("data.history._hist_df_is_stale", return_value=True):
             data_fetcher.get_historical_data("005930", "2024-01-01")
             data_fetcher.get_historical_data("005930", "2024-01-01")
         self.assertEqual(mock_fetch.call_count, 2)
 
-    @patch("data.market._fetch_historical_uncached")
+    @patch("data.history._fetch_historical_uncached")
     def test_empty_df_not_cached(self, mock_fetch):
         import polars as pl
         mock_fetch.return_value = pl.DataFrame()
         data_fetcher.get_historical_data("INVALID", "2024-01-01")
         self.assertNotIn(("INVALID", "2024-01-01"), dcache._HIST_CACHE)
 
-    @patch("data.market._fetch_historical_uncached")
+    @patch("data.history._fetch_historical_uncached")
     def test_lru_eviction_at_max(self, mock_fetch):
         df = self._make_polars_df()
         mock_fetch.return_value = df
         with patch.object(dcache, "_HIST_CACHE_MAX", 3), \
-             patch("data.market._hist_df_is_stale", return_value=False):
+             patch("data.history._hist_df_is_stale", return_value=False):
             for i in range(4):
                 data_fetcher.get_historical_data(f"TICKER{i}", "2024-01-01")
         self.assertLessEqual(len(dcache._HIST_CACHE), 3)

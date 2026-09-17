@@ -1,34 +1,15 @@
-"""data/indicators.py — Technical indicator calculations using Polars & NumPy."""
+"""data/indicators.py — Technical indicator calculations using Polars & NumPy
+(_compute_indicators, fetch_historical_changes)."""
 from datetime import datetime, timedelta
 import polars as pl
 import numpy as np
 import logging
 
 from data.cache import start_date, _CHANGE_KEYS, _TD_PERIODS
+from data.frames import _to_polars  # noqa: F401 - re-exported (strategy.ma_cross imports it from here)
+from data.history import get_historical_data
 
 logger = logging.getLogger(__name__)
-
-
-def _to_polars(df_pd):
-    if isinstance(df_pd, pl.DataFrame):
-        return df_pd
-    if df_pd is None or (hasattr(df_pd, 'empty') and getattr(df_pd, 'empty')):
-        return pl.DataFrame()
-    df = pl.from_pandas(df_pd, include_index=True)
-    for alias in ("index", "date", "None"):
-        if alias in df.columns:
-            df = df.rename({alias: "Date"})
-            break
-    if "Date" in df.columns:
-        date_dtype = df["Date"].dtype
-        if isinstance(date_dtype, pl.Datetime):
-            if date_dtype.time_zone:
-                df = df.with_columns(pl.col("Date").dt.replace_time_zone(None))
-            df = df.with_columns(pl.col("Date").dt.date())
-        elif not isinstance(date_dtype, pl.Date):
-            df = df.with_columns(pl.col("Date").cast(pl.Datetime).dt.date())
-        df = df.unique(subset=["Date"], keep="last").sort("Date")
-    return df
 
 
 def _compute_indicators(df: pl.DataFrame, windows=(10, 20, 60)) -> pl.DataFrame:
@@ -88,7 +69,6 @@ def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
 
     try:
         if df_pd is None:
-            from data.market import get_historical_data
             df = get_historical_data(ticker, start_date())
         else:
             df = _to_polars(df_pd)

@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import polars as pl
 
-from data.market import get_historical_data
+from data.history import get_historical_data
 from strategy.rebalance.config import RebalanceConfig
 from strategy.rebalance.classify import _DEFAULT_TOP_N_BY_MARKET
 from strategy.rebalance.walkforward import (

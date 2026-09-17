@@ -4,7 +4,7 @@ from datetime import timedelta
 import polars as pl
 
 from data.indicators import _compute_indicators
-from data.market import get_historical_data
+from data.history import get_historical_data
 from strategy.rebalance.factors import _REBALANCE_MIN_FACTORS, _score_and_rank
 from strategy.rebalance.classify import _classify_buy_sell_hold
 
