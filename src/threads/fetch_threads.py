@@ -6,6 +6,7 @@ Contains:
   SingleStockFetchThread, AllDataFetchThread,
   UniverseLightweightFetchThread, PositionPriceFetchThread,
   AutoBackupThread, RebalanceBacktestThread, TrendFollowingBacktestThread,
+  TrendFollowingPortfolioThread,
   GeminiFilterThread, GeminiDiagnosisThread, AccountDepositThread
 """
 import os
@@ -618,6 +619,59 @@ class TrendFollowingBacktestThread(QThread):
             self.finished.emit(result, "")
         except Exception as e:
             logger.warning("Trend-following backtest failed for %s", self.ticker, exc_info=True)
+            self.finished.emit(None, str(e))
+
+
+# ---------------------------------------------------------------------------
+# Trend-following v3 portfolio / IS-OOS validation thread (trend_following.md 3 v3, 5)
+# ---------------------------------------------------------------------------
+class TrendFollowingPortfolioThread(QThread):
+    """Background thread for the multi-instrument work: fetches every ticker's
+    history once, then either runs the equal-sleeve portfolio backtest
+    (mode="portfolio") or the holdout + yearly walk-forward validation over
+    DEFAULT_GRID (mode="validate"). Validation is grid x instruments backtests,
+    so it can take a minute on a cold cache."""
+    progress = pyqtSignal(str)            # short status text
+    finished = pyqtSignal(object, str)    # result dict | None, error message ("" on success)
+
+    def __init__(self, tickers: list, start: str, config, mode: str = "portfolio",
+                 oos_first_year: int = None, oos_last_year: int = None):
+        super().__init__()
+        self.tickers = list(tickers)
+        self.start_date = start
+        self.config = config
+        self.mode = mode
+        self.oos_first_year = oos_first_year
+        self.oos_last_year = oos_last_year
+
+    def run(self):
+        from datetime import date
+        from data.history import get_historical_data
+        from strategy.trend_following import (
+            run_portfolio_backtest, holdout_validation, walk_forward_validation, yearly_folds, DEFAULT_GRID,
+        )
+        try:
+            histories = {}
+            for i, t in enumerate(self.tickers, start=1):
+                self.progress.emit(f"Fetching history {i}/{len(self.tickers)}: {t}")
+                histories[t] = get_historical_data(t, self.start_date)
+
+            if self.mode == "portfolio":
+                self.progress.emit("Running portfolio backtest...")
+                result = run_portfolio_backtest(histories, self.config)
+                result["tickers"] = self.tickers
+            else:
+                last = self.oos_last_year or date.today().year
+                first = self.oos_first_year or max(last - 4, 2000)
+                self.progress.emit(f"Walk-forward validation {first}-{last} over {len(DEFAULT_GRID)} configs...")
+                wf = walk_forward_validation(histories, yearly_folds(first, last), grid=DEFAULT_GRID, base=self.config)
+                self.progress.emit(f"Holdout validation (split {first}-01-01)...")
+                ho = holdout_validation(histories, split_date=date(first, 1, 1), grid=DEFAULT_GRID, base=self.config)
+                n_inst = sum(1 for df in histories.values() if df is not None and not df.is_empty())
+                result = {"walkforward": wf, "holdout": ho, "n_instruments": n_inst, "tickers": self.tickers}
+            self.finished.emit(result, "")
+        except Exception as e:
+            logger.warning("Trend-following %s failed", self.mode, exc_info=True)
             self.finished.emit(None, str(e))
 
 

@@ -118,8 +118,16 @@ def _extract_trades(dates, pos, weight, close, strategy_ret, reasons) -> list:
     return trades
 
 
-def _summarize(dates, strategy_ret, equity, pos, w_lag, trades, config, initial_capital) -> dict:
+def return_metrics(dates, strategy_ret, config: TrendFollowingConfig, initial_capital: float = 1.0) -> dict:
+    """Return-stream metrics shared by the single-instrument backtest, the portfolio
+    backtest and the IS/OOS validation: total return, CAGR, annual vol, Sharpe, max
+    drawdown and the risk-gate verdict, computed from a daily strategy-return series."""
+    strategy_ret = np.asarray(strategy_ret, dtype=float)
     n = len(strategy_ret)
+    if n == 0:
+        return {"total_return_pct": 0.0, "cagr_pct": 0.0, "annual_vol_pct": 0.0, "sharpe": 0.0,
+                "max_drawdown_pct": 0.0, "passes_risk_gate": False, "start_date": None, "end_date": None, "n_days": 0}
+    equity = initial_capital * np.cumprod(1.0 + strategy_ret)
     final = float(equity[-1])
     total_return = final / initial_capital - 1.0
 
@@ -138,7 +146,24 @@ def _summarize(dates, strategy_ret, equity, pos, w_lag, trades, config, initial_
 
     peak = np.maximum.accumulate(equity)
     drawdown = equity / peak - 1.0
-    mdd = float(drawdown.min()) if n else 0.0   # <= 0
+    mdd_pct = -float(drawdown.min()) * 100.0 if n else 0.0
+    return {
+        "total_return_pct": total_return * 100.0,
+        "cagr_pct": cagr * 100.0,
+        "annual_vol_pct": vol * 100.0,
+        "sharpe": sharpe,
+        "max_drawdown_pct": mdd_pct,
+        "passes_risk_gate": bool(sharpe >= config.sharpe_min and mdd_pct <= config.mdd_max_pct),
+        "start_date": _iso(dates[0]),
+        "end_date": _iso(dates[-1]),
+        "n_days": n,
+    }
+
+
+def _summarize(dates, strategy_ret, equity, pos, w_lag, trades, config, initial_capital) -> dict:
+    n = len(strategy_ret)
+    m = return_metrics(dates, strategy_ret, config, initial_capital)
+    sharpe, mdd_pct = m["sharpe"], m["max_drawdown_pct"]
 
     closed = [t for t in trades if t["exit_date"] is not None]
     wins = sum(1 for t in closed if t["return_pct"] > 0)
@@ -148,11 +173,10 @@ def _summarize(dates, strategy_ret, equity, pos, w_lag, trades, config, initial_
     in_pos_w = w_lag[w_lag > 0]
     avg_weight = float(np.mean(in_pos_w)) if in_pos_w.size else 0.0
 
-    mdd_pct = -mdd * 100.0
     return {
-        "total_return_pct": total_return * 100.0,
-        "cagr_pct": cagr * 100.0,
-        "annual_vol_pct": vol * 100.0,
+        "total_return_pct": m["total_return_pct"],
+        "cagr_pct": m["cagr_pct"],
+        "annual_vol_pct": m["annual_vol_pct"],
         "sharpe": sharpe,
         "max_drawdown_pct": mdd_pct,
         "n_trades": len(trades),

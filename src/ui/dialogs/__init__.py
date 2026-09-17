@@ -8,10 +8,11 @@ from ui.dialogs.trade_history import StockTradeHistoryDialog
 from ui.dialogs.assets_graph import TotalAssetsGraphDialog
 from ui.dialogs.backtest_result import BacktestResultDialog
 from ui.dialogs.trend_following_chart import TrendFollowingChartDialog
+from ui.dialogs.trend_following_portfolio import TrendFollowingPortfolioDialog, TrendFollowingValidationDialog
 
 __all__ = [
     "IndexMaDialog", "StockMaDialog",
     "BuyEditDialog", "SellEditDialog", "TradeEntryDialog",
     "StockTradeHistoryDialog", "TotalAssetsGraphDialog", "BacktestResultDialog",
-    "TrendFollowingChartDialog",
+    "TrendFollowingChartDialog", "TrendFollowingPortfolioDialog", "TrendFollowingValidationDialog",
 ]

@@ -57,7 +57,8 @@ Dev tooling is in `requirements-dev.txt`
   `trend_following_tab.py` (`TrendFollowingTab`),
   `widgets.py` (`StockTable`, `FilterPopup`, `GroupedHeaderView`), `dialogs/` (one module per
   dialog group: `index_ma`, `stock_ma`, `trade_edit`, `trade_history`, `assets_graph`,
-  `backtest_result`, `trend_following_chart`, `holdings_summary`, `ai_diagnosis`; import from
+  `backtest_result`, `trend_following_chart`, `trend_following_portfolio`, `holdings_summary`,
+  `ai_diagnosis`; import from
   `ui.dialogs`),
   `history_table.py` (cell factories + `fill_table_rows` for the history grid),
   `history_calc.py` (pure P/L maths, no Qt), `common.py` (`create_font`, `FONT_FAMILY_CSS`,
@@ -70,7 +71,7 @@ Dev tooling is in `requirements-dev.txt`
 - **`src/threads/`**: every network call the UI triggers runs in a `QThread` subclass here
   (`AllDataFetchThread`, `UniverseLightweightFetchThread`, `PositionPriceFetchThread`,
   `RealtimePriceThread`, `StockMaThread`, `AccountDepositThread`, `RebalanceBacktestThread`,
-  `TrendFollowingBacktestThread`,
+  `TrendFollowingBacktestThread`, `TrendFollowingPortfolioThread`,
   the Gemini threads, `AutoBackupThread`). Never call `data_fetcher` functions from a slot on
   the UI thread; add a thread class instead. Connect `finished` signals to bound methods,
   not closures, so Qt queues them onto the UI thread.
@@ -98,8 +99,10 @@ Dev tooling is in `requirements-dev.txt`
   `ma_cross.md`), and `trend_following/` (Donchian channel breakout with optional v2
   overlays — regime MA filter, ATR stop, volatility-target sizing, all off by default:
   `config.py`, `signals.py` with the no-lookahead `donchian_signal`, `backtest.py` with
-  `run_backtest` / `run_backtest_for_ticker`; spec and preliminary real-data results in
-  `trend_following.md`; UI in `ui/trend_following_tab.py`). Strategy code
+  `run_backtest` / `run_backtest_for_ticker`, `portfolio.py` with the equal-sleeve
+  `run_portfolio_backtest`, `validation.py` with `holdout_validation` /
+  `walk_forward_validation`; spec and real-data results in `trend_following.md`; UI for
+  single-instrument, portfolio and validation runs in `ui/trend_following_tab.py`). Strategy code
   imports from `data.*`; callers import strategy symbols from `strategy.<name>` directly,
   never via `data_fetcher`.
 - **`src/data_fetcher.py`**: the single re-export facade over `data/` (data access only, no

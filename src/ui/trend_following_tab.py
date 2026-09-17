@@ -18,9 +18,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor
 
 from strategy.trend_following import TrendFollowingConfig
-from threads.fetch_threads import TrendFollowingBacktestThread
+from threads.fetch_threads import TrendFollowingBacktestThread, TrendFollowingPortfolioThread
 from ui.common import create_font, _validate_date_str, _normalize_date_str, _set_field_error
 from ui.dialogs.trend_following_chart import TrendFollowingChartDialog
+from ui.dialogs.trend_following_portfolio import TrendFollowingPortfolioDialog, TrendFollowingValidationDialog
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class TrendFollowingTab(QWidget):
         super().__init__(parent)
         self._universe_tab = universe_tab
         self._backtest_thread = None
+        self._portfolio_thread = None
         self._last_result = None
         self._last_ticker = ""
         self._build_ui()
@@ -185,6 +187,62 @@ class TrendFollowingTab(QWidget):
         row3.addStretch()
         root.addLayout(row3)
 
+        # Row 4: v3 portfolio + IS/OOS validation (trend_following.md 3 "v3", 5)
+        row4 = QHBoxLayout()
+        row4.addWidget(self._lbl("v3 \u2014 Portfolio tickers:"))
+        self._portfolio_edit = QLineEdit()
+        self._portfolio_edit.setFont(create_font(10, style_name="Semilight"))
+        self._portfolio_edit.setPlaceholderText("comma-separated, e.g. 005930, 000660, AAPL")
+        self._portfolio_edit.setMinimumWidth(320)
+        row4.addWidget(self._portfolio_edit, 1)
+
+        row4.addWidget(self._lbl("Top N:"))
+        self._topn_spin = QSpinBox()
+        self._topn_spin.setRange(2, 300)
+        self._topn_spin.setValue(20)
+        self._topn_spin.setToolTip("How many Trading Universe stocks (by market cap) to load with the button")
+        row4.addWidget(self._topn_spin)
+
+        self._use_universe_btn = QPushButton("Use Universe")
+        self._use_universe_btn.setToolTip("Fill the ticker list with the top-N Trading Universe stocks by market cap")
+        self._use_universe_btn.clicked.connect(self._on_use_universe)
+        row4.addWidget(self._use_universe_btn)
+
+        self._portfolio_btn = QPushButton("\u25b6 Run Portfolio")
+        self._portfolio_btn.setFont(create_font(10, QFont.Weight.Bold))
+        self._portfolio_btn.setFixedHeight(32)
+        self._portfolio_btn.setStyleSheet(
+            "QPushButton { background:#1a5276; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
+            "QPushButton:hover { background:#21618c; }"
+            "QPushButton:disabled { background:#bbb; }"
+        )
+        self._portfolio_btn.setToolTip("Equal-sleeve portfolio backtest with the parameters above")
+        self._portfolio_btn.clicked.connect(lambda: self._on_portfolio_clicked("portfolio"))
+        row4.addWidget(self._portfolio_btn)
+
+        row4.addWidget(self._lbl("OOS years:"))
+        self._oos_years_spin = QSpinBox()
+        self._oos_years_spin.setRange(1, 15)
+        self._oos_years_spin.setValue(5)
+        self._oos_years_spin.setToolTip("Number of most recent calendar years used as yearly out-of-sample folds; "
+                                        "the first of them is also the holdout split")
+        row4.addWidget(self._oos_years_spin)
+
+        self._validate_btn = QPushButton("\u2696 Validate (IS/OOS)")
+        self._validate_btn.setFont(create_font(10, QFont.Weight.Bold))
+        self._validate_btn.setFixedHeight(32)
+        self._validate_btn.setStyleSheet(
+            "QPushButton { background:#6c3483; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
+            "QPushButton:hover { background:#9b59b6; }"
+            "QPushButton:disabled { background:#bbb; }"
+        )
+        self._validate_btn.setToolTip("Holdout + anchored yearly walk-forward over the 12-config default grid "
+                                      "(entry/exit x vol target x ATR stop); the parameters above are the base config. "
+                                      "Use a Start date well before the OOS years.")
+        self._validate_btn.clicked.connect(lambda: self._on_portfolio_clicked("validate"))
+        row4.addWidget(self._validate_btn)
+        root.addLayout(row4)
+
         # Summary metrics (one row, one column per metric)
         self._summary_tbl = QTableWidget(1, len(_METRICS) + 1)
         self._summary_tbl.setHorizontalHeaderLabels([label for _, label, _ in _METRICS] + ["Risk gate"])
@@ -262,6 +320,28 @@ class TrendFollowingTab(QWidget):
         if ticker:
             self._ticker_edit.setText(str(ticker))
 
+    def _universe_top_tickers(self, n: int) -> list:
+        data = getattr(self._universe_tab, "all_data", None) or []
+        stocks = [it for it in data if it.get("ticker") and not it.get("is_index")]
+        stocks.sort(key=lambda it: -float(it.get("market_cap", 0) or 0))
+        return [it["ticker"] for it in stocks[:n]]
+
+    def _on_use_universe(self):
+        tickers = self._universe_top_tickers(int(self._topn_spin.value()))
+        if not tickers:
+            QMessageBox.information(self, "No Data", "Trading Universe has no stocks yet \u2014 refresh it first.")
+            return
+        self._portfolio_edit.setText(", ".join(tickers))
+
+    def _portfolio_tickers(self) -> list:
+        seen, out = set(), []
+        for raw in self._portfolio_edit.text().replace(";", ",").split(","):
+            t = raw.strip().upper()
+            if t and t not in seen:
+                seen.add(t)
+                out.append(t)
+        return out
+
     # ── inputs ───────────────────────────────────────────────────────────────
     def _config_from_inputs(self) -> TrendFollowingConfig:
         return TrendFollowingConfig(
@@ -331,6 +411,61 @@ class TrendFollowingTab(QWidget):
             f"Donchian {s['entry_n']}/{s['exit_n']}" + (" + " + ", ".join(overlays) if overlays else " (v1)") + exits
         )
 
+    # ── v3 portfolio / validation ────────────────────────────────────────────
+    def _on_portfolio_clicked(self, mode: str):
+        if self._portfolio_thread is not None and self._portfolio_thread.isRunning():
+            return
+        tickers = self._portfolio_tickers()
+        _set_field_error(self._portfolio_edit, "" if len(tickers) >= 2 else "Enter at least two tickers")
+        start_ok = _validate_date_str(self._start_edit.text())
+        _set_field_error(self._start_edit, "" if start_ok else "Start date must be YYYY-MM-DD")
+        if len(tickers) < 2 or not start_ok:
+            return
+        start = _normalize_date_str(self._start_edit.text())
+        config = self._config_from_inputs()
+        oos_last = date.today().year
+        oos_first = oos_last - int(self._oos_years_spin.value()) + 1
+        self._portfolio_btn.setEnabled(False)
+        self._validate_btn.setEnabled(False)
+        self._status_lbl.setText(f"{'Validating' if mode == 'validate' else 'Portfolio backtest'}: {len(tickers)} tickers from {start}...")
+        self._portfolio_thread = TrendFollowingPortfolioThread(tickers, start, config, mode=mode,
+                                                               oos_first_year=oos_first, oos_last_year=oos_last)
+        self._portfolio_thread.progress.connect(self._status_lbl.setText)
+        self._portfolio_thread.finished.connect(self._on_portfolio_finished)
+        self._portfolio_thread.start()
+
+    def _on_portfolio_finished(self, result, error: str):
+        self._portfolio_btn.setEnabled(True)
+        self._validate_btn.setEnabled(True)
+        if error or result is None:
+            self._status_lbl.setText("Portfolio run failed \u2014 see app.log")
+            QMessageBox.warning(self, "Portfolio Error", f"Run failed:\n{error or 'unknown error'}")
+            return
+        if "walkforward" in result:
+            wf = result["walkforward"]
+            if not wf.get("n_folds"):
+                self._status_lbl.setText("Validation produced no folds \u2014 use an earlier Start date")
+                QMessageBox.information(self, "Validation", "No out-of-sample fold had enough in-sample history. "
+                                                            "Set an earlier Start date or fewer OOS years.")
+                return
+            o = wf["oos"]
+            self._status_lbl.setText(
+                f"Walk-forward OOS ({wf['n_folds']} folds): Sharpe {o['sharpe']:.2f}, MDD {o['max_drawdown_pct']:.1f}%, "
+                f"CAGR {o['cagr_pct']:+.1f}% \u2014 gate {'PASS' if o['passes_risk_gate'] else 'FAIL'}"
+            )
+            TrendFollowingValidationDialog(result, parent=self).exec()
+            return
+        s = result["summary"]
+        if not s.get("n_instruments"):
+            self._status_lbl.setText("Portfolio: no usable history")
+            QMessageBox.information(self, "No Data", "None of the tickers returned enough history.")
+            return
+        self._status_lbl.setText(
+            f"Portfolio ({s['n_instruments']} instruments): Sharpe {s['sharpe']:.2f}, MDD {s['max_drawdown_pct']:.1f}%, "
+            f"CAGR {s['cagr_pct']:+.1f}%, exposure {s['avg_gross_exposure_pct']:.0f}% \u2014 gate {'PASS' if s['passes_risk_gate'] else 'FAIL'}"
+        )
+        TrendFollowingPortfolioDialog(result, parent=self).exec()
+
     def _on_chart_clicked(self):
         if not self._last_result:
             return
@@ -392,5 +527,4 @@ class TrendFollowingTab(QWidget):
 
     def collect_threads_to_stop(self):
         """For MainWindow.closeEvent (mirrors the other tabs)."""
-        bt = getattr(self, "_backtest_thread", None)
-        return [bt] if bt is not None else []
+        return [t for t in (getattr(self, "_backtest_thread", None), getattr(self, "_portfolio_thread", None)) if t is not None]
