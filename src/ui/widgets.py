@@ -7,7 +7,7 @@ Contains:
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLineEdit, QCheckBox, QScrollArea,
     QWidget, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QStyleOptionHeader,
+    QStyleOptionHeader, QMenu,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon
@@ -185,6 +185,7 @@ class FilterableHeader(QHeaderView):
 # ---------------------------------------------------------------------------
 class StockTable(QTableWidget):
     col_filter_changed = pyqtSignal()  # emitted when any column filter changes
+    ai_report_requested = pyqtSignal(str)  # emitted with the row's ticker (roadmap 2-1)
 
     # Fixed column widths for Pf, MA, and Del columns
     W_PF  = 30
@@ -254,6 +255,23 @@ class StockTable(QTableWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._stretch_columns()
+
+    def contextMenuEvent(self, event):
+        """Right-click menu (roadmap 2-1): reads the ticker straight from the
+        clicked row's own cell rather than an index into the data list passed
+        to load_data(), so it stays correct after the user re-sorts a column
+        (setSortingEnabled(True) means visual row order != load order)."""
+        row = self.rowAt(event.pos().y())
+        if row < 0:
+            return
+        ticker_item = self.item(row, 3)
+        if ticker_item is None or not ticker_item.text():
+            return
+        menu = QMenu(self)
+        report_action = menu.addAction("🤖 AI Stock Report")
+        chosen = menu.exec(event.globalPos())
+        if chosen is report_action:
+            self.ai_report_requested.emit(ticker_item.text())
 
     def _stretch_columns(self):
         if self.rowCount() == 0:

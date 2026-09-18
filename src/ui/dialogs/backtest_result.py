@@ -47,6 +47,7 @@ class BacktestResultDialog(QDialog):
             f"Net Return: <b style='color:{'#c0392b' if s['total_return_pct'] >= 0 else '#2980b9'}'>"
             f"{s['total_return_pct']:+.1f}%</b> vs benchmark {s['benchmark_return_pct']:+.1f}% | "
             f"CAGR {s['cagr_pct']:+.1f}% | Max Drawdown {s['max_drawdown_pct']:.1f}% | "
+            f"Sharpe {s.get('sharpe', 0.0):.2f} | Annual Vol {s.get('annual_vol_pct', 0.0):.1f}% | "
             f"{s['n_rebalances']} rebalances, {s['n_trades']} trades, win rate {s['win_rate_pct']:.0f}%"
             f"{cost_str}"
         )

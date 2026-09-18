@@ -809,3 +809,23 @@ class GeminiDiagnosisThread(QThread):
         except Exception as e:
             logger.warning("Gemini portfolio diagnosis failed", exc_info=True)
             self.finished.emit("", str(e))
+
+
+class GeminiStockReportThread(QThread):
+    """Background thread for the per-stock AI report (roadmap 2-1, review.md 2-1)."""
+    finished = pyqtSignal(str, str, str, str)  # ticker, name, result_text, error_message ("" on success)
+
+    def __init__(self, item: dict):
+        super().__init__()
+        self.item = item
+
+    def run(self):
+        ticker = self.item.get("ticker", "")
+        name = self.item.get("name", ticker)
+        try:
+            import gemini_helper
+            result_text = gemini_helper.stock_report_summary(self.item)
+            self.finished.emit(ticker, name, result_text, "")
+        except Exception as e:
+            logger.warning("Gemini stock report failed for ticker=%s", ticker, exc_info=True)
+            self.finished.emit(ticker, name, "", str(e))

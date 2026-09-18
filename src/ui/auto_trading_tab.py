@@ -35,8 +35,8 @@ from PyQt6.QtGui import QFont
 
 import trade_db
 from strategy.rebalance import compute_weekly_rebalance_signals, RebalanceConfig
-from threads.fetch_threads import RebalanceBacktestThread
-from ui.dialogs import BacktestResultDialog
+from threads.fetch_threads import RebalanceBacktestThread, StockMaThread
+from ui.dialogs import BacktestResultDialog, StockMaDialog
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,8 @@ class AutoTradingTab(QWidget):
         self._universe_tab = universe_tab
         self._last_result = None
         self._backtest_thread = None
+        self._stock_ma_threads: list = []
+        self._open_dialogs: list = []
         self._build_ui()
 
     # ---UI construction ---
@@ -150,6 +152,9 @@ class AutoTradingTab(QWidget):
         buy_lbl.setFont(create_font(11, QFont.Weight.Bold))
         buy_col.addWidget(buy_lbl)
         self._buy_table = self._make_candidate_table()
+        self._buy_table.cellDoubleClicked.connect(
+            lambda row, col: self._on_candidate_double_clicked(self._buy_table, row, col)
+        )
         buy_col.addWidget(self._buy_table)
         lists_row.addLayout(buy_col)
 
@@ -158,6 +163,9 @@ class AutoTradingTab(QWidget):
         sell_lbl.setFont(create_font(11, QFont.Weight.Bold))
         sell_col.addWidget(sell_lbl)
         self._sell_table = self._make_candidate_table()
+        self._sell_table.cellDoubleClicked.connect(
+            lambda row, col: self._on_candidate_double_clicked(self._sell_table, row, col)
+        )
         sell_col.addWidget(self._sell_table)
         lists_row.addLayout(sell_col)
 
@@ -177,7 +185,13 @@ class AutoTradingTab(QWidget):
         self._rank_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._rank_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self._rank_table.verticalHeader().setVisible(False)
+        self._rank_table.cellDoubleClicked.connect(self._on_rank_double_clicked)
         root.addWidget(self._rank_table, 2)
+
+        hint = QLabel("Double-click a row to open its MA20/MA60 chart.")
+        hint.setFont(create_font(8, style_name="Semilight"))
+        hint.setStyleSheet("color:#888;")
+        root.addWidget(hint)
 
         disclaimer = QLabel(
             "⚠️ Research/backtesting signal generator, not investment advice. "
@@ -273,6 +287,51 @@ class AutoTradingTab(QWidget):
         finally:
             tbl.setUpdatesEnabled(True)
 
+    # ---MA chart on double-click (review.md 2-3) ---
+    def _on_candidate_double_clicked(self, tbl, row, _col):
+        ticker = tbl.item(row, 1).text() if tbl.item(row, 1) else ""
+        name = tbl.item(row, 2).text() if tbl.item(row, 2) else ticker
+        market = tbl.item(row, 3).text() if tbl.item(row, 3) else ""
+        self._show_stock_ma(ticker, name, market)
+
+    def _on_rank_double_clicked(self, row, _col):
+        tbl = self._rank_table
+        ticker = tbl.item(row, 2).text() if tbl.item(row, 2) else ""
+        name = tbl.item(row, 3).text() if tbl.item(row, 3) else ticker
+        market = tbl.item(row, 4).text() if tbl.item(row, 4) else ""
+        self._show_stock_ma(ticker, name, market)
+
+    def _show_stock_ma(self, ticker, name, market):
+        if not ticker:
+            return
+        self._stock_ma_threads = [t for t in self._stock_ma_threads if t.isRunning()]
+        thread = StockMaThread(ticker, name, market)
+        # Default-arg lambda (same pattern as UniverseTab.show_stock_ma) so the
+        # dialog gets the market this specific double-click was for, not
+        # whatever a later double-click's thread happens to resolve first.
+        thread.finished.connect(
+            lambda t, n, df, e, inv, m=market: self._on_stock_ma_loaded(t, n, df, e, inv, m)
+        )
+        self._stock_ma_threads.append(thread)
+        thread.start()
+
+    def _on_stock_ma_loaded(self, ticker, name, df, error, investor_data, market):
+        if error and df is None:
+            QMessageBox.warning(self, "Error", f"Failed to load data for {ticker}:\n{error}")
+            return
+        dlg = StockMaDialog(ticker, name, market, df, investor_data=investor_data, parent=None)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._open_dialogs = [d for d in self._open_dialogs if self._dialog_is_visible(d)]
+        self._open_dialogs.append(dlg)
+        dlg.show()
+
+    @staticmethod
+    def _dialog_is_visible(dlg):
+        try:
+            return dlg.isVisible()
+        except RuntimeError:
+            return False
+
     # ---Backtest (rebalance.md section 6) ---
     def _on_backtest_clicked(self):
         if self._backtest_thread is not None and self._backtest_thread.isRunning():
@@ -328,5 +387,9 @@ class AutoTradingTab(QWidget):
     def collect_threads_to_stop(self):
         """Return every QThread this tab may have started, for MainWindow.closeEvent
         (mirrors UniverseTab.collect_threads_to_stop() / TradingHistoryTab's)."""
+        threads = []
         bt = getattr(self, "_backtest_thread", None)
-        return [bt] if bt is not None else []
+        if bt is not None:
+            threads.append(bt)
+        threads.extend(getattr(self, "_stock_ma_threads", []))
+        return threads

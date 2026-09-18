@@ -58,7 +58,7 @@ Dev tooling is in `requirements-dev.txt`
   `widgets.py` (`StockTable`, `FilterPopup`, `GroupedHeaderView`), `dialogs/` (one module per
   dialog group: `index_ma`, `stock_ma`, `trade_edit`, `trade_history`, `assets_graph`,
   `backtest_result`, `trend_following_chart`, `trend_following_portfolio`, `holdings_summary`,
-  `ai_diagnosis`; import from
+  `ai_diagnosis`, `stock_report`; import from
   `ui.dialogs`),
   `history_table.py` (cell factories + `fill_table_rows` for the history grid),
   `history_calc.py` (pure P/L maths, no Qt), `common.py` (`create_font`, `FONT_FAMILY_CSS`,

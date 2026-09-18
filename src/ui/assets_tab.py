@@ -4,6 +4,7 @@ Split out from: main.py (2026-08-29 feat/3-1-modularize, Phase 4)
 Contains:
   TradingRecordTab
 """
+import csv
 import logging
 import datetime as _dt
 from datetime import datetime
@@ -11,7 +12,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QLineEdit, QPushButton, QLabel, QHeaderView, QComboBox, QMessageBox,
-    QInputDialog,
+    QInputDialog, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
@@ -163,6 +164,18 @@ class TradingRecordTab(QWidget):
         graph_btn.clicked.connect(self._show_graph)
         ctrl.addSpacing(6)
         ctrl.addWidget(graph_btn)
+
+        export_btn = QPushButton("\U0001f4e5  Export")
+        export_btn.setFont(create_font(10, QFont.Weight.Bold))
+        export_btn.setFixedHeight(32)
+        export_btn.setToolTip("Export the asset snapshot table to Excel or CSV")
+        export_btn.setStyleSheet(
+            "QPushButton { background:#6c757d; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
+            "QPushButton:hover { background:#5a6268; }"
+        )
+        export_btn.clicked.connect(self._on_export_clicked)
+        ctrl.addSpacing(6)
+        ctrl.addWidget(export_btn)
 
         ctrl.addStretch()
         ctrl.addWidget(del_btn)
@@ -416,6 +429,62 @@ class TradingRecordTab(QWidget):
             
         dlg = TotalAssetsGraphDialog(dates, kospi_returns, asset_returns, usd_asset_returns, totals, usd_totals, self)
         dlg.exec()
+
+    # ---Export (review.md 2-2) ---
+    _EXPORT_HEADERS = [
+        "Date", "KOSPI", "KOSPI Weekly %", "KOSPI Cumulative %",
+        "Total Assets", "Weekly P/L", "Weekly P/L %", "Cumulative P/L", "Cumulative P/L %",
+        "USD/KRW", "Total Assets ($)", "Weekly P/L ($)", "Weekly P/L (%) [$]",
+        "Cumulative P/L ($)", "Cumulative P/L (%) [$]",
+    ]
+
+    def _on_export_clicked(self):
+        if self._table.rowCount() == 0:
+            QMessageBox.information(self, "Export", "No data to export.")
+            return
+
+        default_name = f"total_assets_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, "Export Total Assets", default_name,
+            "Excel Workbook (*.xlsx);;CSV File (*.csv)",
+        )
+        if not path:
+            return
+
+        want_csv = "csv" in selected_filter.lower() or path.lower().endswith(".csv")
+        if want_csv and not path.lower().endswith(".csv"):
+            path += ".csv"
+        elif not want_csv and not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+
+        rows = []
+        for r in range(self._table.rowCount()):
+            rows.append([
+                (self._table.item(r, c).text() if self._table.item(r, c) else "")
+                for c in range(self._table.columnCount())
+            ])
+
+        try:
+            if want_csv:
+                with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(self._EXPORT_HEADERS)
+                    writer.writerows(rows)
+            else:
+                from openpyxl import Workbook
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Total Assets"
+                ws.append(self._EXPORT_HEADERS)
+                for row in rows:
+                    ws.append(row)
+                wb.save(path)
+        except Exception as e:
+            logger.warning("Total assets export failed: %s", e, exc_info=True)
+            QMessageBox.warning(self, "Export Error", f"Failed to export:\n{e}")
+            return
+
+        QMessageBox.information(self, "Export", f"Exported {len(rows)} row(s) to {path}")
 
     def _on_cell_double_clicked(self, row, col):
         if col == 1:

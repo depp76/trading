@@ -40,9 +40,11 @@ from threads.fetch_threads import (
     UniverseLightweightFetchThread,
     StockMaThread,
     GeminiFilterThread,
+    GeminiStockReportThread,
 )
 from ui.widgets import StockTable
 from ui.dialogs import StockMaDialog
+from ui.dialogs.stock_report import show_stock_report_result
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +173,7 @@ class UniverseTab(QWidget):
 
         self.table = StockTable()
         self.table.col_filter_changed.connect(self.filter_table)
+        self.table.ai_report_requested.connect(self._on_ai_report_requested)
         universe_layout.addWidget(self.table)
 
     def load_custom_settings(self):
@@ -529,6 +532,30 @@ class UniverseTab(QWidget):
         self._open_dialogs.append(dlg)
         dlg.show()
 
+    # ---AI Stock Report (roadmap 2-1, review.md 2-1) ---
+    def _on_ai_report_requested(self, ticker: str):
+        item = next((d for d in self.all_data if d.get('ticker') == ticker), None)
+        if item is None:
+            QMessageBox.warning(self, "AI Stock Report", f"No data found for {ticker}.")
+            return
+        name = item.get('name', ticker)
+        self.status_text_changed.emit(f"🤖 Generating AI report for {name} ({ticker})...")
+        self._stock_report_threads = [
+            t for t in getattr(self, '_stock_report_threads', []) if t.isRunning()
+        ]
+        thread = GeminiStockReportThread(item)
+        thread.finished.connect(self._on_stock_report_ready)
+        self._stock_report_threads.append(thread)
+        thread.start()
+
+    def _on_stock_report_ready(self, ticker: str, name: str, result_text: str, error: str):
+        if error:
+            self.status_text_changed.emit(f"AI report failed for {name} ({ticker}).")
+            QMessageBox.warning(self, "AI Stock Report", f"Failed to generate report:\n{error}")
+            return
+        self.status_text_changed.emit(f"AI report ready for {name} ({ticker}).")
+        show_stock_report_result(self, ticker, name, result_text)
+
     def refresh_data(self):
         self.refresh_btn.setEnabled(False)
         self.all_data = []
@@ -687,5 +714,6 @@ class UniverseTab(QWidget):
         sft = getattr(self, '_single_fetch_thread', None)
         if sft is not None:
             threads.append(sft)
+        threads.extend(getattr(self, '_stock_report_threads', []))
         threads.extend(getattr(self, '_zombie_threads', []))
         return threads

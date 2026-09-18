@@ -4,6 +4,7 @@ Split out from: main.py (2026-08-29 feat/3-1-modularize, Phase 4)
 Contains:
   TradingHistoryTab
 """
+import csv
 import logging
 import datetime as _dt
 
@@ -11,7 +12,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QTableWidget, QTableWidgetItem, QLineEdit, QPushButton,
     QLabel, QHeaderView, QComboBox, QMessageBox, QDialog, QFrame,
-    QInputDialog,
+    QInputDialog, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
@@ -428,6 +429,17 @@ class TradingHistoryTab(QWidget):
         )
         ai_diag_btn.clicked.connect(self._show_ai_diagnosis)
         lower_layout.addWidget(ai_diag_btn)
+
+        export_btn = QPushButton("📥 Export")
+        export_btn.setFixedHeight(BTN_H)
+        export_btn.setFixedWidth(FLD_W)
+        export_btn.setToolTip("Export the currently displayed rows to Excel or CSV")
+        export_btn.setStyleSheet(
+            "QPushButton { background:#6c757d; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; }"
+            "QPushButton:hover { background:#5a6268; }"
+        )
+        export_btn.clicked.connect(self._on_export_clicked)
+        lower_layout.addWidget(export_btn)
 
         lower_layout.addStretch()
 
@@ -1261,6 +1273,69 @@ class TradingHistoryTab(QWidget):
         self._update_open_stocks_combo()
         self._fit_columns()
         tbl.scrollToBottom()
+
+    # ---Export (review.md 2-2) ---
+    def _export_headers(self) -> list[str]:
+        """Column headers for export, derived from _SECTIONS/_COLS so they can't
+        drift out of sync with the table -- repeated sub-labels (Date/Price/Q'ty/
+        Amount/Days/P&L/P&L%) get their section name prefixed so the exported
+        file's headers are unambiguous even though the on-screen grouped header
+        only shows the section name once."""
+        headers = []
+        for label, start, span in self._SECTIONS:
+            for i in range(start, start + span):
+                col_name = self._COLS[i]
+                headers.append(col_name if label == "Trading" else f"{label} {col_name}")
+        return headers
+
+    def _on_export_clicked(self):
+        if self._table.rowCount() == 0:
+            QMessageBox.information(self, "Export", "No data to export.")
+            return
+
+        default_name = f"trading_history_{_dt.date.today().strftime('%Y%m%d')}.xlsx"
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, "Export Trading History", default_name,
+            "Excel Workbook (*.xlsx);;CSV File (*.csv)",
+        )
+        if not path:
+            return
+
+        want_csv = "csv" in selected_filter.lower() or path.lower().endswith(".csv")
+        if want_csv and not path.lower().endswith(".csv"):
+            path += ".csv"
+        elif not want_csv and not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+
+        headers = self._export_headers()
+        rows = []
+        for r in range(self._table.rowCount()):
+            rows.append([
+                (self._table.item(r, c).text() if self._table.item(r, c) else "")
+                for c in range(self._table.columnCount())
+            ])
+
+        try:
+            if want_csv:
+                with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers)
+                    writer.writerows(rows)
+            else:
+                from openpyxl import Workbook
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Trading History"
+                ws.append(headers)
+                for row in rows:
+                    ws.append(row)
+                wb.save(path)
+        except Exception as e:
+            logger.warning("Trading history export failed: %s", e, exc_info=True)
+            QMessageBox.warning(self, "Export Error", f"Failed to export:\n{e}")
+            return
+
+        self.status_message.emit(f"Exported {len(rows)} row(s) to {path}")
 
     # ---Buy/Sell cell double-click edit ---
     # Editable columns: Buy(3=Date, 4=Price, 5=Qty, 6=Amount), Sell(8=Date, 10=Price, 11=Qty, 12=Amount)

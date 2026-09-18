@@ -1,6 +1,6 @@
 """gemini_helper.py — Gemini API helpers for Portfolio Management.
 
-Provides two features:
+Provides three features:
   1. portfolio_diagnosis(open_data, closed_data) → str
        Analyses risk diversification, performance, and sector concentration of held
        positions and returns Korean-language guidance (the prompt asks Gemini to
@@ -8,6 +8,8 @@ Provides two features:
        end user — see the prompt text in portfolio_diagnosis()).
   2. nl_to_filter(nl_query, columns) → dict | None
        Converts a natural-language filter query into a StockTable column-filter dict.
+  3. stock_report_summary(item) → str
+       3-line AI briefing for one Trading Universe row (roadmap 2-1, review.md 2-1).
 
 Uses GOOGLE_API_KEY from .env.
 """
@@ -210,6 +212,74 @@ _NL_FILTER_SCHEMA = """
 주의: 숫자형 컬럼은 숫자로, Market 컬럼(2)의 val은 "KOSPI", "KOSDAQ", "NASDAQ 100", "S&P500" 중 하나.
 conditions가 비어 있어도 됩니다 (text_filter만 사용 시).
 """
+
+
+def stock_report_summary(item: dict) -> str:
+    """3-line Korean AI briefing for one Trading Universe row.
+
+    Built from the metrics StockTable already has in memory (price, PER,
+    MA20/50 divergence, 52-week high/low position, 3D~120D returns) rather
+    than fetching a fresh OHLCV history -- the divergence/52-week fields
+    already encode where price sits relative to recent structure, which is
+    enough for a short support/resistance-flavored comment without an extra
+    network round trip per click.
+    """
+    name = item.get("name", "")
+    ticker = item.get("ticker", "")
+    market = item.get("market", "")
+    if not name and not ticker:
+        return "종목 데이터가 없습니다."
+
+    price = item.get("usd_price") if item.get("currency") == "$" and "usd_price" in item else item.get("price", 0)
+    changes = item.get("changes", {}) or {}
+
+    data_block = json.dumps(
+        {
+            "종목명": name,
+            "티커": ticker,
+            "시장": market,
+            "현재가": price,
+            "PER_실적": item.get("trailing_per"),
+            "PER_예상": item.get("forward_per"),
+            "MA20_이격도": changes.get("ma20_div"),
+            "MA50_이격도": changes.get("ma50_div"),
+            "52주_고가": changes.get("52w_high"),
+            "52주_고가대비_퍼센트": changes.get("52w_high_diff"),
+            "52주_저가": changes.get("52w_low"),
+            "52주_저가대비_퍼센트": changes.get("52w_low_diff"),
+            "수익률_3D": changes.get("3d"),
+            "수익률_5D": changes.get("5d"),
+            "수익률_10D": changes.get("10d"),
+            "수익률_20D": changes.get("20d"),
+            "수익률_60D": changes.get("60d"),
+            "수익률_120D": changes.get("120d"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+    prompt = f"""당신은 한국 주식시장 전문 애널리스트입니다.
+아래 종목의 현재 지표를 바탕으로 짧은 브리핑을 작성해 주세요.
+
+# 종목 데이터
+{data_block}
+
+# 작성 요청
+1. 최근 추세와 현재 위치(52주 고점/저점 대비, 이동평균 이격도)를 한 문장으로 요약.
+2. 밸류에이션(PER)에 대한 짧은 코멘트 한 문장.
+3. 위 데이터에서 유추 가능한 참고 지지/저항선(52주 고점·저점, 이동평균 등)을 한 문장으로 언급.
+
+# 출력 형식
+- 정확히 3줄, 각 줄은 이모지로 시작 (예: 📈, 💰, 🎯)
+- 총 200자 이내
+- 투자 권유가 아닌 참고용 분석임을 마지막 줄 끝에 짧게 덧붙일 것
+"""
+
+    try:
+        return _generate(prompt)
+    except Exception as e:
+        logger.warning("stock_report_summary API call failed for ticker=%s: %s", ticker, e, exc_info=True)
+        return f"⚠️ AI 리포트 생성 중 오류가 발생했습니다:\n{e}"
 
 
 def nl_to_filter(nl_query: str) -> dict | None:

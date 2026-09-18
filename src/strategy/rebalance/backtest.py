@@ -2,6 +2,8 @@
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
+import math
+import numpy as np
 import polars as pl
 
 from data.history import get_historical_data
@@ -14,6 +16,34 @@ from strategy.rebalance.walkforward import (
 )
 
 logger = logging.getLogger(__name__)
+
+# equity_curve has one point per rebalance Friday (rebalance.md 3-1), so
+# annualizing Sharpe/volatility from period-over-period returns uses 52
+# periods/year rather than trading_following's daily trading_days_per_year.
+_REBALANCE_PERIODS_PER_YEAR = 52
+
+
+def _sharpe_and_vol(equity_curve: list) -> tuple:
+    """Annualized volatility and Sharpe ratio from the weekly equity curve's
+    period-over-period returns. No risk-free-rate config exists for this
+    strategy yet (RebalanceConfig has none), so this uses a 0% risk-free rate
+    -- a simple/naive Sharpe, same ballpark convention as
+    strategy.trend_following.backtest.return_metrics() but for weekly, not
+    daily, periods.
+    """
+    values = np.array([pt["value"] for pt in equity_curve], dtype=float)
+    if values.size < 2:
+        return 0.0, 0.0
+    period_returns = np.diff(values) / values[:-1]
+    if period_returns.size < 2:
+        return 0.0, 0.0
+    std_ret = float(np.std(period_returns, ddof=1))
+    vol_annual_pct = std_ret * math.sqrt(_REBALANCE_PERIODS_PER_YEAR) * 100
+    sharpe = (
+        float(np.mean(period_returns)) / std_ret * math.sqrt(_REBALANCE_PERIODS_PER_YEAR)
+        if std_ret > 0 else 0.0
+    )
+    return vol_annual_pct, sharpe
 
 
 def _summarize_backtest(
@@ -29,7 +59,8 @@ def _summarize_backtest(
     if not equity_curve:
         return {
             "total_return_pct": 0.0, "benchmark_return_pct": 0.0, "cagr_pct": 0.0,
-            "max_drawdown_pct": 0.0, "n_rebalances": 0, "n_trades": 0, "win_rate_pct": 0.0,
+            "max_drawdown_pct": 0.0, "annual_vol_pct": 0.0, "sharpe": 0.0,
+            "n_rebalances": 0, "n_trades": 0, "win_rate_pct": 0.0,
             "total_cost_amount": 0.0, "total_cost_drag_pct": 0.0,
         }
 
@@ -64,11 +95,15 @@ def _summarize_backtest(
 
     total_cost_drag_pct = (total_cost_paid / initial_capital * 100) if initial_capital else 0.0
 
+    annual_vol_pct, sharpe = _sharpe_and_vol(equity_curve)
+
     return {
         "total_return_pct": total_return_pct,
         "benchmark_return_pct": benchmark_return_pct,
         "cagr_pct": cagr_pct,
         "max_drawdown_pct": max_dd,
+        "annual_vol_pct": annual_vol_pct,
+        "sharpe": sharpe,
         "n_rebalances": n_rebalances,
         "n_trades": n_trades,
         "win_rate_pct": win_rate_pct,
