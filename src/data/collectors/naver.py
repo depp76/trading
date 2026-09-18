@@ -77,11 +77,11 @@ def fetch_naver_realtime_prices(tickers: list) -> dict:
     """Batch-fetch real-time prices for Korean stocks using Naver mobile polling API."""
     if not tickers:
         return {}
-    results = {}
     chunk_size = 50
     chunks = [tickers[i:i + chunk_size] for i in range(0, len(tickers), chunk_size)]
 
-    def _fetch_chunk(chunk):
+    def _fetch_chunk(chunk) -> dict:
+        chunk_result = {}
         codes_str = ",".join(chunk)
         url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{codes_str}"
         try:
@@ -92,14 +92,17 @@ def fetch_naver_realtime_prices(tickers: list) -> dict:
                     code = item.get('itemCode', '')
                     price_str = str(item.get('closePrice', '0')).replace(',', '')
                     try:
-                        results[code] = float(price_str)
+                        chunk_result[code] = float(price_str)
                     except ValueError:
                         pass
         except Exception:
             logger.debug("Naver realtime prices fetch error", exc_info=True)
+        return chunk_result
 
+    results = {}
     with ThreadPoolExecutor(max_workers=min(len(chunks) or 1, 8)) as exe:
-        list(exe.map(_fetch_chunk, chunks))
+        for chunk_result in exe.map(_fetch_chunk, chunks):
+            results.update(chunk_result)
     return results
 
 

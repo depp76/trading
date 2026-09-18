@@ -224,6 +224,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'trading_history_tab'):
             threads_to_stop.extend(self.trading_history_tab.collect_threads_to_stop())
 
+        if hasattr(self, 'trading_record_tab'):
+            threads_to_stop.extend(self.trading_record_tab.collect_threads_to_stop())
+
         if hasattr(self, 'auto_trading_tab'):
             threads_to_stop.extend(self.auto_trading_tab.collect_threads_to_stop())
 

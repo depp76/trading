@@ -24,6 +24,9 @@ from data_fetcher import (
     fetch_all_indices_mas,
     fetch_stock_ma_multi,
     _fetch_naver_info,
+    get_usd_krw_rate,
+    get_historical_data,
+    start_date,
     INDEX_TICKERS,
 )
 
@@ -165,6 +168,33 @@ class TickerValidateThread(QThread):
             err = str(e)
 
         self.finished.emit(is_valid, company, err or "")
+
+
+# ---------------------------------------------------------------------------
+# Asset-tab metrics preload thread (USD/KRW + KOSPI history warm-up)
+# ---------------------------------------------------------------------------
+class AssetMetricsPreloadThread(QThread):
+    """Warms TradingRecordTab's USD/KRW-rate and KOSPI-close caches off the UI thread.
+
+    get_usd_krw_rate_for_date()/get_index_close_for_date() each trigger a full
+    network fetch (fdr.DataReader('USD/KRW') / get_historical_data("KS11", ...))
+    on their first call per session (or once their cache goes stale), and are
+    cheap polars lookups after that — calling the same underlying fetchers here
+    just pays that one-time cost in the background instead of freezing the
+    window at tab construction.
+    """
+    finished = pyqtSignal()
+
+    def run(self):
+        try:
+            get_usd_krw_rate()
+        except Exception:
+            logger.debug("AssetMetricsPreloadThread: USD/KRW warm-up failed", exc_info=True)
+        try:
+            get_historical_data("KS11", start_date())
+        except Exception:
+            logger.debug("AssetMetricsPreloadThread: KOSPI warm-up failed", exc_info=True)
+        self.finished.emit()
 
 
 # ---------------------------------------------------------------------------

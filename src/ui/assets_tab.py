@@ -18,13 +18,14 @@ from PyQt6.QtGui import QColor, QFont
 
 from paths import TRADING_RECORD_FILE
 from data_fetcher import get_usd_krw_rate_for_date, get_index_close_for_date
+from threads.fetch_threads import AssetMetricsPreloadThread
 from ui.widgets import GroupedHeaderView
 from ui.dialogs import TotalAssetsGraphDialog
 
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, atomic_save_json, safe_load_json, FONT_FAMILY_CSS
+from ui.common import create_font, atomic_save_json, safe_load_json, FONT_FAMILY_CSS, retire_thread
 
 
 class TradingRecordTab(QWidget):
@@ -39,9 +40,17 @@ class TradingRecordTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._records: list[dict] = []   # [{"date": str, "total": float}, ...]
+        # USD/KRW rate and KOSPI-close lookups hit the network on their first
+        # call per session (fx.py/market.py's own staleness-aware caches), so
+        # the first table render skips them (see _refresh_table_impl) and
+        # AssetMetricsPreloadThread warms those caches in the background
+        # instead of blocking __init__ (roadmap 2026-09-18, review.md 1-2).
+        self._metrics_ready = False
+        self._metrics_thread = None
         self._build_ui()
         self._load_records()
         self._schedule_daily_sync()
+        self._start_metrics_preload()
 
     # ---UI ---
     def _build_ui(self):
@@ -272,6 +281,28 @@ class TradingRecordTab(QWidget):
         except Exception as e:
             logger.warning("[TradingRecord] Save error: %s", e, exc_info=True)
 
+    # ---Background metrics warm-up (roadmap 2026-09-18, review.md 1-2) ---
+    def _start_metrics_preload(self):
+        retire_thread(self, '_metrics_thread')
+        thread = AssetMetricsPreloadThread()
+        thread.finished.connect(self._on_metrics_preloaded)
+        self._metrics_thread = thread
+        thread.start()
+
+    def _on_metrics_preloaded(self):
+        self._metrics_ready = True
+        self._refresh_table()
+
+    def collect_threads_to_stop(self):
+        """Return every QThread this tab may have started, for MainWindow.closeEvent
+        (mirrors TradingHistoryTab.collect_threads_to_stop())."""
+        threads = []
+        mt = getattr(self, '_metrics_thread', None)
+        if mt is not None:
+            threads.append(mt)
+        threads.extend(getattr(self, '_zombie_threads', []))
+        return threads
+
     # ---CRUD ---
     def _add_record(self):
         date_str = self._selected_date()
@@ -459,13 +490,18 @@ class TradingRecordTab(QWidget):
 
         first_total = records[0]["total"] if n > 0 else None
 
-        # Pre-compute all USD/KRW rates and index prices in one pass
+        # Pre-compute all USD/KRW rates and index prices in one pass.
+        # Skipped until the background preload thread warms the underlying
+        # caches (self._metrics_ready) so this first render never blocks the
+        # UI thread on a network fetch; rows just show "-" until it lands and
+        # _on_metrics_preloaded() re-runs this with real values.
         rate_cache: dict = {}
         kospi_cache: dict = {}
-        for rec in records:
-            d = rec["date"]
-            if d not in rate_cache:
-                rate_cache[d], kospi_cache[d] = self._rate_kospi_for_date(d)
+        if self._metrics_ready:
+            for rec in records:
+                d = rec["date"]
+                if d not in rate_cache:
+                    rate_cache[d], kospi_cache[d] = self._rate_kospi_for_date(d)
 
         first_usd_total = None
         first_kospi = 0.0

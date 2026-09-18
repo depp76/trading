@@ -100,6 +100,40 @@ def _get_kis_account():
     return acct[:8], acct[8:]
 
 
+def _kis_oauth_post(path: str, json_payload: dict, max_attempts: int = 3):
+    """POST to a KIS OAuth endpoint (token/approval-key issuance) with a short
+    retry for transient network errors, mirroring naver._fast_kr_history's
+    retry pattern (roadmap 2026-09-18, review.md 3-3).
+
+    Only smooths over connection errors/timeouts and real HTTP error statuses.
+    KIS returns issuance failures (bad keys, rate-limited) as HTTP 200 with an
+    error payload, which _get_kis_token()/_get_kis_approval_key() still raise
+    on immediately after this returns -- retrying those instantly would just
+    fail again given KIS's ~once/minute-per-appkey issuance limit.
+    """
+    last_exc = None
+    for attempt in range(max_attempts):
+        try:
+            res = _KIS_SESSION.post(
+                f"{_KIS_BASE_URL}{path}",
+                headers={"content-type": "application/json; charset=utf-8"},
+                json=json_payload,
+                timeout=5,
+            )
+            res.raise_for_status()
+            return res
+        except Exception as e:
+            last_exc = e
+            if attempt == max_attempts - 1:
+                raise
+            logger.debug(
+                "KIS OAuth POST %s failed (attempt %d/%d), retrying: %s",
+                path, attempt + 1, max_attempts, e,
+            )
+            time.sleep(1)
+    raise last_exc
+
+
 def _load_kis_token_cache() -> dict:
     if os.path.exists(_KIS_TOKEN_CACHE_PATH):
         try:
@@ -144,13 +178,10 @@ def _get_kis_token():
             _KIS_TOKEN_CACHE["expires"] = disk_cache["expires"]
             return disk_cache["token"], appkey, appsecret
 
-        res = _KIS_SESSION.post(
-            f"{_KIS_BASE_URL}/oauth2/tokenP",
-            headers={"content-type": "application/json; charset=utf-8"},
-            json={"grant_type": "client_credentials", "appkey": appkey, "appsecret": appsecret},
-            timeout=5,
+        res = _kis_oauth_post(
+            "/oauth2/tokenP",
+            {"grant_type": "client_credentials", "appkey": appkey, "appsecret": appsecret},
         )
-        res.raise_for_status()
         data = res.json()
         token = data.get("access_token")
         if not token:
@@ -179,13 +210,10 @@ def _get_kis_approval_key():
             return _KIS_APPROVAL_CACHE["approval_key"]
 
         appkey, appsecret = _get_kis_keys()
-        res = _KIS_SESSION.post(
-            f"{_KIS_BASE_URL}/oauth2/Approval",
-            headers={"content-type": "application/json; charset=utf-8"},
-            json={"grant_type": "client_credentials", "appkey": appkey, "secretkey": appsecret},
-            timeout=5,
+        res = _kis_oauth_post(
+            "/oauth2/Approval",
+            {"grant_type": "client_credentials", "appkey": appkey, "secretkey": appsecret},
         )
-        res.raise_for_status()
         data = res.json()
         approval_key = data.get("approval_key")
         if not approval_key:
