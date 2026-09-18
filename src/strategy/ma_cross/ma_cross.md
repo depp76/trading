@@ -5,7 +5,7 @@
 > 목적: 이 폴더의 코드(`backtest.py`)가 구현하는 전략 규칙과 산출물을 문서화한다. 다른 전략
 > 문서(`rebalance.md`, `trend_following.md`)와 달리 이 문서는 먼저 존재하던 코드를 **역으로
 > 정리한 것**이라, 규칙의 근거·파라미터 선택 이유는 코드에 남아 있지 않아 기록하지 못했다.
-> 관련 파일: `strategy/ma_cross/backtest.py`, `tests/strategy/test_ma_cross.py`,
+> 관련 파일: `strategy/ma_cross/backtest.py`, `tests/strategy/ma_cross/test_backtest.py`,
 > `data/market.py::fetch_stock_ma_multi` / `data/indicators.py::_compute_indicators`(입력 데이터)
 > 관련 문서: `rebalance.md` 3-4("기존 백테스트 로직 재사용 — 별도 유지"),
 > `trend_following.md` 2장(설계 패턴 참고 자산으로 언급)
@@ -31,7 +31,7 @@
 - 리밸런싱 알고리즘(`rebalance.md`, 종목군 단위 주간 스코어링)과는 별개 자산이며 함수를
   공유하지 않는다 (`rebalance.md` 3-4).
 - **현재 UI 연결 없음** — `src/ui/`, `src/threads/`에서 이 패키지를 호출하는 곳이 없다
-  (2026-09-17 확인). 호출자는 `tests/strategy/test_ma_cross.py`뿐이다. `roadmap.md` 4-4
+  (2026-09-18 확인). 호출자는 `tests/strategy/ma_cross/test_backtest.py`뿐이다. `roadmap.md` 4-4
   "백테스트 — 전략 비교 UI"가 이 로직을 다시 화면에 올리는 후보 작업이다.
 - 패키지 구성은 `strategy/__init__.py`의 규칙(전략별 폴더 + `<name>.md`)을 따르되, 코드는
   `backtest.py` 하나다 — `config.py`/`signals.py` 분리는 6장 참고.
@@ -81,7 +81,10 @@
 
 **집계**
 - `trade_return = (매도가 − 매수가) / 매수가 × 100`
-- `cumulative_return`은 트레이드 수익률의 **단순 합**(복리 아님), `win_count`는 `trade_return > 0`인
+- `cumulative_return`은 트레이드 수익률의 **복리 누적**(`growth_factor = Π(1 + trade_return_i / 100)`,
+  `cumulative_return = (growth_factor − 1) × 100`) — 단일 계좌로 트레이드를 순차 실행했을 때의
+  결과와 같다. `rebalance`/`trend_following`의 `cumprod` 기반 에쿼티 커브와 동일한 방식
+  (2026-09-18 이전에는 단순 합이었음 — 7장 변경 이력 참고). `win_count`는 `trade_return > 0`인
   트레이드 수.
 
 ---
@@ -102,10 +105,11 @@
 
 ## 5. 테스트
 
-`tests/strategy/test_ma_cross.py` (11개, 합성 데이터):
+`tests/strategy/ma_cross/test_backtest.py` (12개, 합성 데이터):
 - 엣지: `None`/빈 DataFrame/MA 컬럼 누락 → `(0, 0, 0.0)`, 반환 튜플 길이 3/8.
 - 신호: 평탄한 가격에 신호 없음, 승수 ≤ 트레이드 수, 매수/매도 리스트 길이 일치,
-  `target_year=2099`에 트레이드 없음, 누적 수익률 = 개별 수익률 합.
+  `target_year=2099`에 트레이드 없음, 누적 수익률이 `growth_factor` 복리 계산과 일치하고
+  (트레이드가 2건 이상일 때) 단순 합과는 다름을 확인.
 
 실데이터 기준 성과 검증은 수행된 기록이 없다(6장).
 
@@ -117,7 +121,7 @@
       박혀 있다 — `config.py`의 `MaCrossConfig` dataclass로 분리 (`rebalance.md` 8-H와 같은 방식).
 - [ ] 신호 생성(3장 진입/청산 조건)을 `signals.py`로 분리해 `backtest.py`는 체결·집계만 담당.
 - [ ] 수수료·세금 미반영 (리밸런싱 백테스트는 반영함 — `rebalance.md` 7장 참고).
-- [ ] 누적 수익률이 단순 합이라 복리·자본 배분을 반영하지 않는다. 에쿼티 커브 방식으로 바꿀지 결정.
+- [ ] 복리 누적 수익률은 반영됐으나(2026-09-18) MDD·Sharpe 등 리스크 지표는 아직 없음.
 - [ ] 미청산 포지션 무시, 슬리피지 없음, 롱 온리.
 - [ ] 실데이터 백테스트 결과를 이 문서 5장에 기록.
 - [ ] UI 재연결 여부 결정 (`roadmap.md` 4-4).
@@ -129,3 +133,9 @@
 - 2026-09-17: 최초 작성 — `strategy/ma_cross.py`를 `strategy/ma_cross/` 패키지(`__init__.py`
   파사드 + `backtest.py`)로 재구성하면서 기존 코드를 분석해 규칙·함수·한계를 정리.
   docstring의 "+ RSI" 표기는 실제 로직에 없어 제거.
+- 2026-09-18: `cumulative_return`을 트레이드 수익률 단순 합에서 복리 누적(`growth_factor`
+  기반)으로 변경 — `rebalance`/`trend_following`과 계산 방식을 통일. 단순 합은 +20% 트레이드
+  10회를 +200%로 계산했지만 실제 복리 결과는 $(1.2)^{10}-1 = +519\%$로, 다건 트레이드에서
+  수익률이 크게 저평가되는 문제가 있었다 (외부 코드 리뷰로 식별, `review_claude.md` 참고).
+  `tests/strategy/ma_cross/test_backtest.py`의 `test_cumulative_return_equals_sum`을
+  `test_cumulative_return_is_compounded`로 교체.

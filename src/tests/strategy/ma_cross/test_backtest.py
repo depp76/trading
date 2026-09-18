@@ -83,13 +83,20 @@ class TestBacktestSignal(unittest.TestCase):
         total, _, _ = run_backtest_strategy(df, target_year=2099)
         self.assertEqual(total, 0)
 
-    def test_cumulative_return_equals_sum(self):
+    def test_cumulative_return_is_compounded(self):
         df = self._make_golden_cross_df()
         res = run_backtest_strategy(df, buy_sell_points=True)
         total, _, cum_ret, _, b_prices, _, s_prices, _ = res
         if total > 0:
-            manual_sum = sum((s - b) / b * 100 for b, s in zip(b_prices, s_prices))
-            self.assertAlmostEqual(cum_ret, manual_sum, places=6)
+            growth_factor = 1.0
+            for b, s in zip(b_prices, s_prices):
+                growth_factor *= 1.0 + (s - b) / b
+            expected = (growth_factor - 1.0) * 100
+            self.assertAlmostEqual(cum_ret, expected, places=6)
+            # Compounding diverges from a plain sum once there's more than one trade.
+            if total > 1:
+                manual_sum = sum((s - b) / b * 100 for b, s in zip(b_prices, s_prices))
+                self.assertNotAlmostEqual(cum_ret, manual_sum, places=2)
 
 
 if __name__ == "__main__":

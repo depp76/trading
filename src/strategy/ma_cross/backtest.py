@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 def run_backtest_strategy(df, buy_sell_points=False, target_year=None):
     """MA20/MA60 Golden Cross + RSI strategy (vectorised numpy).
 
+    cumulative_return is compounded across trades (growth_factor = prod(1 + r_i),
+    not sum(r_i)) so back-to-back winning trades compound the way they actually
+    would in a single account, consistent with rebalance/trend_following's
+    cumprod-based equity curves.
+
     Returns:
         buy_sell_points=False: (total_trades, win_count, cumulative_return)
         buy_sell_points=True:  (total_trades, win_count, cumulative_return,
@@ -43,12 +48,12 @@ def run_backtest_strategy(df, buy_sell_points=False, target_year=None):
     sell_dates, sell_prices = [], []
     bt_buy_date_list        = []
     total_trades = win_count = 0
-    cumulative_return = 0.0
+    growth_factor = 1.0
 
     if len(buy_idx) == 0:
-        return (total_trades, win_count, cumulative_return,
+        return (total_trades, win_count, 0.0,
                 buy_dates, buy_prices, sell_dates, sell_prices, bt_buy_date_list) if buy_sell_points \
-               else (total_trades, win_count, cumulative_return)
+               else (total_trades, win_count, 0.0)
 
     n = len(df)
     sell_indep_bool = (df_ma20 >= df_ma60 * 1.30) | (df_ma20 < df_ma60)
@@ -84,7 +89,7 @@ def run_backtest_strategy(df, buy_sell_points=False, target_year=None):
             s_date = df_dates[exec_sell_idx]
 
             trade_return = (s_price - b_price) / b_price * 100
-            cumulative_return += trade_return
+            growth_factor *= 1.0 + trade_return / 100
             total_trades += 1
             if trade_return > 0:
                 win_count += 1
@@ -96,6 +101,7 @@ def run_backtest_strategy(df, buy_sell_points=False, target_year=None):
                 sell_prices.append(s_price)
             last_sell_idx = s
 
+    cumulative_return = (growth_factor - 1.0) * 100
     return (total_trades, win_count, cumulative_return,
             buy_dates, buy_prices, sell_dates, sell_prices, bt_buy_date_list) if buy_sell_points \
            else (total_trades, win_count, cumulative_return)
