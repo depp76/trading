@@ -151,22 +151,25 @@ def retire_thread(owner, attr_name: str) -> None:
     """Abandon the QThread stored at ``owner.<attr_name>`` so a replacement can
     be started, without letting a still-running one be garbage-collected.
 
-    If the thread is still running, every signal it might still emit is
-    disconnected (so a late result cannot touch widgets the caller has moved
-    on from) and the thread object is parked in ``owner._zombie_threads``,
-    which collect_threads_to_stop() drains at shutdown. The attribute is then
-    cleared. Replaces three hand-copied versions of this dance in the
-    Universe and Trading History tabs (roadmap 6-2e).
+    If the thread is still running, its signals are blocked (so a late result
+    cannot touch widgets the caller has moved on from) and the thread object
+    is parked in ``owner._zombie_threads``, which collect_threads_to_stop()
+    drains at shutdown. The attribute is then cleared. Replaces three
+    hand-copied versions of this dance in the Universe and Trading History
+    tabs (roadmap 6-2e).
+
+    Uses blockSignals() rather than disconnect(): a wildcard disconnect()
+    trips a benign but noisy "QObject::disconnect: wildcard call disconnects
+    from destroyed signal" Qt warning when the connection's Python-slot side
+    has no named C++ slot; blockSignals() gets the same "no late emissions
+    reach the UI" effect without touching the connection list.
     """
     thread = getattr(owner, attr_name, None)
     if thread is None:
         return
     try:
         if thread.isRunning():
-            try:
-                thread.disconnect()
-            except Exception:
-                pass
+            thread.blockSignals(True)
             zombies = [t for t in getattr(owner, "_zombie_threads", []) if t.isRunning()]
             zombies.append(thread)
             owner._zombie_threads = zombies
