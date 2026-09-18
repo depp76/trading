@@ -1,7 +1,7 @@
-"""data/collectors/kis.py — Korea Investment & Securities (한국투자증권, KIS) REST/WebSocket
+"""data/collectors/kis.py — Korea Investment & Securities (KIS) REST/WebSocket
 client for quotes, daily OHLCV, account balance, investor trend, and real-time prices.
 
-Replaces data/collectors/kiwoom.py. Real (실전투자) trading environment only.
+Replaces data/collectors/kiwoom.py. Real (live) trading environment only.
 """
 import os
 import json
@@ -189,7 +189,7 @@ def _get_kis_token():
             raise ValueError(
                 f"Failed to issue KIS access token: {reason} "
                 "(check kis_appkey.txt/kis_secretkey.txt in the KIS_KEY_PATH folder are "
-                "correct and current, that the account is registered for real/실전투자 "
+                "correct and current, that the account is registered for real/live "
                 "Open API access, and that token issuance hasn't been rate-limited — "
                 "KIS allows roughly one issuance per minute per appkey)."
             )
@@ -259,7 +259,7 @@ def fetch_kis_stock_info(code: str):
     price = int(out.get("stck_prpr", "0") or "0")
     market_cap = 0
     try:
-        # hts_avls is in 억원 (100M KRW) units.
+        # hts_avls is in 100M KRW units.
         market_cap = int(float(out.get("hts_avls", "0") or "0") * 100_000_000)
     except (ValueError, TypeError):
         pass
@@ -494,7 +494,7 @@ def fetch_kis_realtime_prices(tickers: list, timeout: float = 6.0) -> dict:
                 continue
 
             # Pipe-delimited real-time data frame: "0|H0STCNT0|<count>|field^field^..."
-            # Field order per KIS docs: [0]=종목코드, [2]=현재가(체결가). Only the first
+            # Field order per KIS docs: [0]=stock code, [2]=current price (execution price). Only the first
             # record's fields are read here (data_count>1 frames are rare for a single
             # subscribed ticker); confirmed against a live capture before relying on this.
             parts = frame.split("|")

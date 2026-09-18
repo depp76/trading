@@ -294,7 +294,7 @@ def _fetch_kr_listing_naver(market, top_n):
                 if raw_marcap is not None:
                     marcap = int(raw_marcap)
                 else:
-                    # Fallback to marketValue in 100M KRW (억)
+                    # Fallback to marketValue in 100M KRW units
                     mv_str = str(s.get("marketValue", "0")).replace(",", "")
                     cleaned = re.sub(r'[^\d]', '', mv_str)
                     marcap = int(cleaned) * 100_000_000 if cleaned else 0

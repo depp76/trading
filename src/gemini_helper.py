@@ -3,9 +3,7 @@
 Provides three features:
   1. portfolio_diagnosis(open_data, closed_data) → str
        Analyses risk diversification, performance, and sector concentration of held
-       positions and returns Korean-language guidance (the prompt asks Gemini to
-       respond in Korean, since this feature's output is meant for a Korean-speaking
-       end user — see the prompt text in portfolio_diagnosis()).
+       positions and returns an investment insight string.
   2. nl_to_filter(nl_query, columns) → dict | None
        Converts a natural-language filter query into a StockTable column-filter dict.
   3. stock_report_summary(item) → str
@@ -36,8 +34,8 @@ def _get_client():
     api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
-            "GOOGLE_API_KEY가 설정되지 않았습니다.\n"
-            ".env 파일에 GOOGLE_API_KEY=<your-key>를 추가하세요."
+            "GOOGLE_API_KEY is not set.\n"
+            "Add GOOGLE_API_KEY=<your-key> to the .env file."
         )
 
     try:
@@ -45,7 +43,7 @@ def _get_client():
         _genai_client = genai.Client(api_key=api_key)
     except ImportError as e:
         raise RuntimeError(
-            f"google-genai 패키지를 찾을 수 없습니다 (pip install google-genai): {e}"
+            f"google-genai package not found (pip install google-genai): {e}"
         ) from e
 
     return _genai_client
@@ -80,7 +78,7 @@ def _generate(prompt: str, *, json_mode: bool = False, model: str = None) -> str
 # ---------------------------------------------------------------------------
 
 def portfolio_diagnosis(open_data: list[dict], closed_data: list[dict]) -> str:
-    """Analyse open/closed positions and return a Korean investment insight string.
+    """Analyse open/closed positions and return an investment insight string.
 
     Parameters
     ----------
@@ -89,10 +87,10 @@ def portfolio_diagnosis(open_data: list[dict], closed_data: list[dict]) -> str:
 
     Returns
     -------
-    Korean multi-line string with portfolio insights.
+    Multi-line string with portfolio insights.
     """
     if not open_data and not closed_data:
-        return "분석할 포지션 데이터가 없습니다."
+        return "No position data to analyse."
 
     # ── Build a compact summary dict for the prompt ──────────────────────────
     open_summary = []
@@ -102,12 +100,12 @@ def portfolio_diagnosis(open_data: list[dict], closed_data: list[dict]) -> str:
         curr_pct  = float(r.get("curr_pl_pct", 0) or 0)
         curr_days = int(r.get("curr_days",    0) or 0)
         open_summary.append({
-            "종목명":  r.get("company", ""),
-            "시장":    r.get("market",  ""),
-            "매수금액": round(buy_amt),
-            "현재P/L": round(curr_pl),
-            "수익률":  f"{curr_pct:.1f}%",
-            "보유일수": curr_days,
+            "name":        r.get("company", ""),
+            "market":      r.get("market",  ""),
+            "buy_amount":  round(buy_amt),
+            "current_pl":  round(curr_pl),
+            "return_pct":  f"{curr_pct:.1f}%",
+            "days_held":   curr_days,
         })
 
     closed_summary = []
@@ -116,15 +114,15 @@ def portfolio_diagnosis(open_data: list[dict], closed_data: list[dict]) -> str:
         pl_pct  = float(r.get("pl_pct",   0) or 0)
         days    = int(r.get("days_held",  0) or 0)
         closed_summary.append({
-            "종목명":   r.get("company", ""),
-            "실현P/L":  round(pl_val),
-            "수익률":   f"{pl_pct:.1f}%",
-            "보유일수": days,
+            "name":         r.get("company", ""),
+            "realized_pl":  round(pl_val),
+            "return_pct":   f"{pl_pct:.1f}%",
+            "days_held":    days,
         })
 
     # Market concentration (open positions only)
     from collections import Counter
-    market_counter = Counter(r.get("market", "기타") for r in open_data)
+    market_counter = Counter(r.get("market", "Other") for r in open_data)
 
     # Total buy amount and unrealized P/L
     total_buy = sum(float(r.get("buy_amount", 0) or 0) for r in open_data)
@@ -132,38 +130,38 @@ def portfolio_diagnosis(open_data: list[dict], closed_data: list[dict]) -> str:
 
     data_block = json.dumps(
         {
-            "보유중_종목": open_summary,
-            "청산완료_종목": closed_summary,
-            "시장별_집중도": dict(market_counter),
-            "총_매수금액": round(total_buy),
-            "총_미실현손익": round(total_pl),
+            "open_positions":       open_summary,
+            "closed_positions":     closed_summary,
+            "market_concentration": dict(market_counter),
+            "total_buy_amount":     round(total_buy),
+            "total_unrealized_pl":  round(total_pl),
         },
         ensure_ascii=False,
         indent=2,
     )
 
-    prompt = f"""당신은 한국 주식시장 전문 투자 어드바이저입니다.
-아래 포트폴리오 데이터를 분석해 투자자에게 유용한 한국어 인사이트를 제공해 주세요.
+    prompt = f"""You are a professional investment advisor specialising in the Korean stock market.
+Analyse the portfolio data below and provide insights useful to the investor.
 
-# 포트폴리오 데이터
+# Portfolio Data
 {data_block}
 
-# 분석 요청
-1. **리스크 분산도**: 시장/종목 집중도를 평가하고, 과집중 또는 분산 부족 여부를 지적해 주세요.
-2. **성과 분석**: 수익 중인 종목과 손실 중인 종목의 비율, 평균 보유 기간을 평가해 주세요.
-3. **투자 아이디어**: 현재 포트폴리오 구성을 바탕으로 구체적인 개선 방향 2~3가지를 제안해 주세요.
+# Analysis Request
+1. **Risk diversification**: Evaluate market/stock concentration and flag over-concentration or under-diversification.
+2. **Performance**: Evaluate the ratio of winning vs. losing positions and the average holding period.
+3. **Investment ideas**: Suggest 2-3 concrete improvements based on the current portfolio composition.
 
-# 출력 형식
-- 각 섹션은 이모지 헤더로 구분 (예: 📊 리스크 분산도)
-- 간결하고 실용적으로, 총 400자 이내
-- 투자 권유가 아닌 참고용 분석임을 마지막에 명시
+# Output Format
+- Separate each section with an emoji header (e.g. 📊 Risk Diversification)
+- Concise and practical, under 400 characters total
+- State at the end that this is reference-only analysis, not investment advice
 """
 
     try:
         return _generate(prompt)
     except Exception as e:
         logger.warning("portfolio_diagnosis API call failed: %s", e, exc_info=True)
-        return f"⚠️ AI 분석 중 오류가 발생했습니다:\n{e}"
+        return f"⚠️ An error occurred during AI analysis:\n{e}"
 
 
 # ---------------------------------------------------------------------------
@@ -172,50 +170,51 @@ def portfolio_diagnosis(open_data: list[dict], closed_data: list[dict]) -> str:
 
 # Column metadata that Gemini needs to map user queries correctly.
 _COLUMN_METADATA = """
-StockTable에는 다음 컬럼(0-based 인덱스)이 있습니다:
-- 0  Name        : 종목명 (문자열)
-- 2  Market      : 시장 (KOSPI / KOSDAQ / NASDAQ 100 / S&P500)
-- 3  Ticker      : 종목코드 (문자열)
-- 4  MarketCap   : 시가총액 억원 (숫자)
-- 5  tPER        : 트레일링 PER (숫자)
-- 6  fPER        : 포워드 PER (숫자)
-- 7  Price       : 현재가 (숫자)
-- 8  Div20       : MA20 이격도 % (숫자, 100 기준. 예: 95.0 = MA20 대비 -5%)
-- 9  Div50       : MA50 이격도 % (숫자, 100 기준)
-- 10 High52W     : 52주 고가 (숫자)
-- 11 HighDiff    : 52주 고가 대비 차이 % (숫자, 음수=고점 아래)
-- 12 Low52W      : 52주 저가 (숫자)
-- 13 LowDiff     : 52주 저가 대비 차이 % (숫자, 양수=저점 위)
-- 14 Chg3D       : 3일 수익률 % (숫자)
-- 15 Chg5D       : 5일 수익률 % (숫자)
-- 16 Chg10D      : 10일 수익률 % (숫자)
-- 17 Chg20D      : 20일 수익률 % (숫자)
-- 18 Chg60D      : 60일 수익률 % (숫자)
-- 19 Chg120D     : 120일 수익률 % (숫자)
+StockTable has the following columns (0-based index):
+- 0  Name        : stock name (string)
+- 2  Market      : market (KOSPI / KOSDAQ / NASDAQ 100 / S&P500)
+- 3  Ticker      : ticker code (string)
+- 4  MarketCap   : market cap in 100M KRW (number)
+- 5  tPER        : trailing PER (number)
+- 6  fPER        : forward PER (number)
+- 7  Price       : current price (number)
+- 8  Div20       : MA20 divergence % (number, base 100. e.g. 95.0 = -5% vs MA20)
+- 9  Div50       : MA50 divergence % (number, base 100)
+- 10 High52W     : 52-week high (number)
+- 11 HighDiff    : % difference vs. 52-week high (number, negative = below the high)
+- 12 Low52W      : 52-week low (number)
+- 13 LowDiff     : % difference vs. 52-week low (number, positive = above the low)
+- 14 Chg3D       : 3-day return % (number)
+- 15 Chg5D       : 5-day return % (number)
+- 16 Chg10D      : 10-day return % (number)
+- 17 Chg20D      : 20-day return % (number)
+- 18 Chg60D      : 60-day return % (number)
+- 19 Chg120D     : 120-day return % (number)
 """
 
 # JSON schema description for the structured response.
 _NL_FILTER_SCHEMA = """
-반환 형식 (JSON):
+Return format (JSON):
 {
-  "text_filter": "검색창에 넣을 텍스트 (종목명/티커 검색, 없으면 빈 문자열)",
+  "text_filter": "text to put in the search box (stock name/ticker search, empty string if none)",
   "conditions": [
     {
-      "col": <컬럼 인덱스(int)>,
+      "col": <column index (int)>,
       "op":  "<  |  <=  |  ==  |  >=  |  >  |  contains",
-      "val": <비교값 (숫자 또는 문자열)>
+      "val": <comparison value (number or string)>
     }
   ],
-  "explanation": "필터 조건 요약 (한국어, 1줄)"
+  "explanation": "one-line summary of the filter conditions"
 }
 
-주의: 숫자형 컬럼은 숫자로, Market 컬럼(2)의 val은 "KOSPI", "KOSDAQ", "NASDAQ 100", "S&P500" 중 하나.
-conditions가 비어 있어도 됩니다 (text_filter만 사용 시).
+Note: numeric columns take numbers; val for the Market column (2) is one of
+"KOSPI", "KOSDAQ", "NASDAQ 100", "S&P500".
+conditions may be empty (when using text_filter only).
 """
 
 
 def stock_report_summary(item: dict) -> str:
-    """3-line Korean AI briefing for one Trading Universe row.
+    """3-line AI briefing for one Trading Universe row.
 
     Built from the metrics StockTable already has in memory (price, PER,
     MA20/50 divergence, 52-week high/low position, 3D~120D returns) rather
@@ -228,58 +227,59 @@ def stock_report_summary(item: dict) -> str:
     ticker = item.get("ticker", "")
     market = item.get("market", "")
     if not name and not ticker:
-        return "종목 데이터가 없습니다."
+        return "No stock data available."
 
     price = item.get("usd_price") if item.get("currency") == "$" and "usd_price" in item else item.get("price", 0)
     changes = item.get("changes", {}) or {}
 
     data_block = json.dumps(
         {
-            "종목명": name,
-            "티커": ticker,
-            "시장": market,
-            "현재가": price,
-            "PER_실적": item.get("trailing_per"),
-            "PER_예상": item.get("forward_per"),
-            "MA20_이격도": changes.get("ma20_div"),
-            "MA50_이격도": changes.get("ma50_div"),
-            "52주_고가": changes.get("52w_high"),
-            "52주_고가대비_퍼센트": changes.get("52w_high_diff"),
-            "52주_저가": changes.get("52w_low"),
-            "52주_저가대비_퍼센트": changes.get("52w_low_diff"),
-            "수익률_3D": changes.get("3d"),
-            "수익률_5D": changes.get("5d"),
-            "수익률_10D": changes.get("10d"),
-            "수익률_20D": changes.get("20d"),
-            "수익률_60D": changes.get("60d"),
-            "수익률_120D": changes.get("120d"),
+            "name": name,
+            "ticker": ticker,
+            "market": market,
+            "price": price,
+            "per_trailing": item.get("trailing_per"),
+            "per_forward": item.get("forward_per"),
+            "ma20_divergence": changes.get("ma20_div"),
+            "ma50_divergence": changes.get("ma50_div"),
+            "high_52w": changes.get("52w_high"),
+            "high_52w_diff_pct": changes.get("52w_high_diff"),
+            "low_52w": changes.get("52w_low"),
+            "low_52w_diff_pct": changes.get("52w_low_diff"),
+            "return_3d": changes.get("3d"),
+            "return_5d": changes.get("5d"),
+            "return_10d": changes.get("10d"),
+            "return_20d": changes.get("20d"),
+            "return_60d": changes.get("60d"),
+            "return_120d": changes.get("120d"),
         },
         ensure_ascii=False,
         indent=2,
     )
 
-    prompt = f"""당신은 한국 주식시장 전문 애널리스트입니다.
-아래 종목의 현재 지표를 바탕으로 짧은 브리핑을 작성해 주세요.
+    prompt = f"""You are a professional analyst covering the Korean stock market.
+Write a short briefing based on this stock's current metrics.
 
-# 종목 데이터
+# Stock Data
 {data_block}
 
-# 작성 요청
-1. 최근 추세와 현재 위치(52주 고점/저점 대비, 이동평균 이격도)를 한 문장으로 요약.
-2. 밸류에이션(PER)에 대한 짧은 코멘트 한 문장.
-3. 위 데이터에서 유추 가능한 참고 지지/저항선(52주 고점·저점, 이동평균 등)을 한 문장으로 언급.
+# Writing Request
+1. Summarise the recent trend and current position (vs. 52-week high/low, MA divergence) in one sentence.
+2. A short one-sentence comment on valuation (PER).
+3. Mention, in one sentence, reference support/resistance levels inferable from the data above
+   (52-week high/low, moving averages, etc.).
 
-# 출력 형식
-- 정확히 3줄, 각 줄은 이모지로 시작 (예: 📈, 💰, 🎯)
-- 총 200자 이내
-- 투자 권유가 아닌 참고용 분석임을 마지막 줄 끝에 짧게 덧붙일 것
+# Output Format
+- Exactly 3 lines, each starting with an emoji (e.g. 📈, 💰, 🎯)
+- Under 200 characters total
+- Briefly note at the end of the last line that this is reference-only analysis, not investment advice
 """
 
     try:
         return _generate(prompt)
     except Exception as e:
         logger.warning("stock_report_summary API call failed for ticker=%s: %s", ticker, e, exc_info=True)
-        return f"⚠️ AI 리포트 생성 중 오류가 발생했습니다:\n{e}"
+        return f"⚠️ An error occurred while generating the AI report:\n{e}"
 
 
 def nl_to_filter(nl_query: str) -> dict | None:
@@ -293,14 +293,15 @@ def nl_to_filter(nl_query: str) -> dict | None:
         explanation : str          — human-readable summary
     or None on failure.
     """
-    prompt = f"""당신은 주식 스크리너 쿼리 파서입니다.
-사용자의 자연어 필터 요청을 아래 컬럼 정보를 참고하여 구조화된 JSON으로 변환하세요.
+    prompt = f"""You are a stock screener query parser.
+Convert the user's natural-language filter request into structured JSON, using the
+column information below.
 
 {_COLUMN_METADATA}
 
 {_NL_FILTER_SCHEMA}
 
-사용자 입력: "{nl_query}"
+User input: "{nl_query}"
 """
 
     try:

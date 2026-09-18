@@ -1,5 +1,5 @@
 """
-tests/test_assets_calc.py — 환율 캐시, safe_float, 입력 유효성 검사 테스트
+tests/test_assets_calc.py — FX rate cache, safe_float, and input validation tests
 """
 import unittest
 import datetime as _dt
@@ -58,7 +58,7 @@ class TestSafeFloat(unittest.TestCase):
 
 
 class TestValidateDateStr(unittest.TestCase):
-    """_validate_date_str 로직을 직접 인라인으로 검증합니다."""
+    """Verifies _validate_date_str's logic directly, inline."""
 
     def _validate_date_str(self, text):
         text = text.strip()

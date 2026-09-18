@@ -1,5 +1,5 @@
 """
-tests/strategy/rebalance/test_factors.py — strategy/rebalance/factors.py 검증 (rebalance.md 11-3)
+tests/strategy/rebalance/test_factors.py — strategy/rebalance/factors.py verification (rebalance.md 11-3)
 """
 import unittest
 

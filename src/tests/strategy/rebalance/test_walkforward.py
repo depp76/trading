@@ -1,5 +1,5 @@
 """
-tests/strategy/rebalance/test_walkforward.py — strategy/rebalance/walkforward.py 거래비용 검증 (rebalance.md 11-3)
+tests/strategy/rebalance/test_walkforward.py — strategy/rebalance/walkforward.py transaction-cost verification (rebalance.md 11-3)
 """
 import math
 import unittest

@@ -1,5 +1,5 @@
 """
-tests/test_data_fetcher.py — LRU 캐시, yf_quote_batch (mock 기반) 테스트
+tests/test_data_fetcher.py — LRU cache and yf_quote_batch tests (mock-based)
 """
 import unittest
 from unittest.mock import patch, MagicMock

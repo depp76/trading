@@ -97,7 +97,7 @@ _NAVER_SESSION = requests.Session()
 _NAVER_SESSION.mount("https://", HTTPAdapter(pool_maxsize=100))
 _NAVER_SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
 
-# Shared session for the KIS (한국투자증권) Open API (data/collectors/kis.py).
+# Shared session for the KIS (Korea Investment & Securities) Open API (data/collectors/kis.py).
 _KIS_SESSION = requests.Session()
 
 

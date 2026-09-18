@@ -114,8 +114,12 @@ Dev tooling is in `requirements-dev.txt`
   back into the record.
 - **`tools/register_secret.py`**: standalone CLI for pushing secrets to Google Cloud Secret
   Manager; unrelated to the app runtime. **`docs/history/`**: dated one-off documents.
-- **`src/gemini_helper.py`**: Gemini calls for the AI filter and diagnosis features
-  (`GOOGLE_API_KEY` in `.env`; the prompts are intentionally Korean).
+- **`src/gemini_helper.py`**: Gemini calls for the AI filter, portfolio diagnosis, and
+  per-stock report features (`GOOGLE_API_KEY` in `.env`). Prompts were rewritten from
+  Korean to English in the 2026-09-18 source-code-wide English-only pass; none of them
+  pin a response language anymore, so Gemini's replies are no longer guaranteed Korean
+  (previously they explicitly were, for the app's Korean-speaking end user) — revisit if
+  that regresses the UX.
 
 ### External dependencies / credentials
 
@@ -141,8 +145,14 @@ not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
 
 ## Conventions
 
-- New or edited menus, labels, and comments are written in English (user direction,
-  2026-08-29). Existing Korean strings stay unless asked.
+- All comments, docstrings, log/exception messages, and test code are written in English
+  (user direction, 2026-08-29 for new/edited code; extended 2026-09-18 to a one-time sweep
+  converting the remaining Korean comments/strings across `src/` to English). The exceptions
+  are literal values that must match real external data verbatim, which would silently break
+  if translated: Naver/KRX API field names and Korean-formatted numbers
+  (`data/collectors/naver.py`, `data/collectors/krx.py`), and the `'맑은 고딕 Semilight'`
+  font-family fallback name (`ui/common.py`). `gemini_helper.py`'s prompts were included in
+  the sweep — see the note on that file above for the response-language consequence.
 - Fonts go through `create_font()`; inline stylesheets splice `FONT_FAMILY_CSS` instead of
   repeating the font-family list.
 - Bulk table repaints are wrapped in `setUpdatesEnabled(False)` / `finally:

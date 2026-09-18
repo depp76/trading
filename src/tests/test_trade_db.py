@@ -1,6 +1,6 @@
 """
-tests/test_trade_db.py — SQLite CRUD, 인덱스, 배치 upsert 테스트
-실제 portfolio.db를 건드리지 않도록 임시 DB를 사용합니다.
+tests/test_trade_db.py — SQLite CRUD, index, and batch upsert tests
+Uses a temporary DB so the real portfolio.db is never touched.
 """
 import os
 import sqlite3
@@ -11,22 +11,22 @@ import trade_db
 
 
 class TempDBMixin:
-    """각 테스트가 격리된 임시 DB를 사용합니다.
+    """Each test uses an isolated temporary DB.
 
-    _CUSTOM_JSON / _OVERRIDES_JSON 경로도 존재하지 않는 경로로 교체해
-    _migrate_legacy_json이 실제 프로젝트 JSON을 읽지 못하도록 막습니다.
+    Also points _CUSTOM_JSON / _OVERRIDES_JSON at nonexistent paths so
+    _migrate_legacy_json can't read the real project JSON files.
     """
 
     def setUp(self):
         self._tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self._tmp.close()
-        # DB 경로 격리
+        # Isolate DB path
         self._orig_db        = trade_db._DB_FILE
         self._orig_custom    = trade_db._CUSTOM_JSON
         self._orig_overrides = trade_db._OVERRIDES_JSON
         trade_db._DB_FILE       = self._tmp.name
-        trade_db._CUSTOM_JSON   = self._tmp.name + ".custom.json"     # 존재하지 않음
-        trade_db._OVERRIDES_JSON = self._tmp.name + ".overrides.json" # 존재하지 않음
+        trade_db._CUSTOM_JSON   = self._tmp.name + ".custom.json"     # does not exist
+        trade_db._OVERRIDES_JSON = self._tmp.name + ".overrides.json" # does not exist
         trade_db.init_db()
 
     def tearDown(self):
@@ -38,7 +38,7 @@ class TempDBMixin:
 
 def _make_record(**kwargs) -> dict:
     base = {
-        "company":     "테스트종목",
+        "company":     "Test Stock",
         "market":      "KOSPI",
         "ticker":      "005930",
         "buy_date":    "2024-01-10",
@@ -93,11 +93,11 @@ class TestUpsertAndGet(TempDBMixin, unittest.TestCase):
         self.assertTrue(len(key) > 0)
 
     def test_insert_and_retrieve(self):
-        rec = _make_record(company="삼성전자", buy_date="2024-02-01", qty=5.0)
+        rec = _make_record(company="Samsung Electronics", buy_date="2024-02-01", qty=5.0)
         key = trade_db.upsert_trade(rec)
         fetched = trade_db.get_trade(key)
         self.assertIsNotNone(fetched)
-        self.assertEqual(fetched["company"], "삼성전자")
+        self.assertEqual(fetched["company"], "Samsung Electronics")
         self.assertEqual(fetched["buy_date"], "2024-02-01")
         self.assertAlmostEqual(fetched["qty"], 5.0)
 
@@ -107,18 +107,18 @@ class TestUpsertAndGet(TempDBMixin, unittest.TestCase):
         self.assertAlmostEqual(trade_db.get_trade(key)["buy_price"], 80000.0)
 
     def test_get_nonexistent_returns_none(self):
-        self.assertIsNone(trade_db.get_trade("없는키_9999"))
+        self.assertIsNone(trade_db.get_trade("nonexistent_key_9999"))
 
     def test_orig_key_auto_generated(self):
-        key = trade_db.upsert_trade(_make_record(company="현대차", buy_date="2024-03-01", qty=3.0))
-        self.assertIn("현대차", key)
+        key = trade_db.upsert_trade(_make_record(company="Hyundai Motor", buy_date="2024-03-01", qty=3.0))
+        self.assertIn("Hyundai Motor", key)
         self.assertIn("2024-03-01", key)
 
     def test_orig_key_collision_avoidance_on_new_insert(self):
         # When two records with the exact same natural parameters are inserted without orig_key,
         # the second record must not overwrite the first one.
-        key1 = trade_db.upsert_trade(_make_record(company="현대차", buy_date="2024-03-01", qty=3.0, buy_price=100000.0))
-        key2 = trade_db.upsert_trade(_make_record(company="현대차", buy_date="2024-03-01", qty=3.0, buy_price=150000.0))
+        key1 = trade_db.upsert_trade(_make_record(company="Hyundai Motor", buy_date="2024-03-01", qty=3.0, buy_price=100000.0))
+        key2 = trade_db.upsert_trade(_make_record(company="Hyundai Motor", buy_date="2024-03-01", qty=3.0, buy_price=150000.0))
         self.assertNotEqual(key1, key2)
         all_trades = trade_db.load_all_trades()
         self.assertEqual(len(all_trades), 2)
@@ -137,7 +137,7 @@ class TestUpsertAndGet(TempDBMixin, unittest.TestCase):
 class TestBatchUpsert(TempDBMixin, unittest.TestCase):
 
     def _make_batch(self, n):
-        return [_make_record(company=f"종목{i}", buy_date=f"2024-01-{i+1:02d}", qty=float(i+1)) for i in range(n)]
+        return [_make_record(company=f"Stock{i}", buy_date=f"2024-01-{i+1:02d}", qty=float(i+1)) for i in range(n)]
 
     def test_batch_insert_returns_keys(self):
         self.assertEqual(len(trade_db.upsert_trades(self._make_batch(5))), 5)
@@ -161,8 +161,8 @@ class TestBatchUpsert(TempDBMixin, unittest.TestCase):
         self.assertAlmostEqual(trade_db.get_trade(keys[0])["buy_price"], 99999.0)
 
     def test_batch_upsert_collision_avoidance(self):
-        rec1 = _make_record(company="동일종목", buy_date="2024-05-01", qty=10.0, buy_price=50000.0)
-        rec2 = _make_record(company="동일종목", buy_date="2024-05-01", qty=10.0, buy_price=52000.0)
+        rec1 = _make_record(company="Same Stock", buy_date="2024-05-01", qty=10.0, buy_price=50000.0)
+        rec2 = _make_record(company="Same Stock", buy_date="2024-05-01", qty=10.0, buy_price=52000.0)
         keys = trade_db.upsert_trades([rec1, rec2])
         self.assertEqual(len(keys), 2)
         self.assertNotEqual(keys[0], keys[1])
@@ -174,9 +174,9 @@ class TestQueries(TempDBMixin, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        trade_db.upsert_trade(_make_record(company="오픈A", buy_date="2024-01-01", qty=1.0))
-        trade_db.upsert_trade(_make_record(company="오픈B", buy_date="2024-01-02", qty=2.0))
-        trade_db.upsert_trade(_make_record(company="청산C", buy_date="2023-06-01", qty=3.0,
+        trade_db.upsert_trade(_make_record(company="OpenA", buy_date="2024-01-01", qty=1.0))
+        trade_db.upsert_trade(_make_record(company="OpenB", buy_date="2024-01-02", qty=2.0))
+        trade_db.upsert_trade(_make_record(company="ClosedC", buy_date="2023-06-01", qty=3.0,
             sell_date="2024-01-15", sell_price=75000.0, sell_qty=3.0, sell_amount=225000.0))
 
     def test_load_all_trades_count(self):
@@ -190,7 +190,7 @@ class TestQueries(TempDBMixin, unittest.TestCase):
     def test_get_open_trades(self):
         open_trades = trade_db.get_open_trades()
         self.assertEqual(len(open_trades), 2)
-        self.assertIn("오픈A", {t["company"] for t in open_trades})
+        self.assertIn("OpenA", {t["company"] for t in open_trades})
 
     def test_get_closed_trades(self):
         closed = trade_db.get_closed_trades()
@@ -206,7 +206,7 @@ class TestDeleteTrade(TempDBMixin, unittest.TestCase):
         self.assertIsNone(trade_db.get_trade(key))
 
     def test_delete_nonexistent(self):
-        self.assertFalse(trade_db.delete_trade("없는키_xyz"))
+        self.assertFalse(trade_db.delete_trade("nonexistent_key_xyz"))
 
     def test_delete_does_not_affect_others(self):
         k1 = trade_db.upsert_trade(_make_record(company="A", buy_date="2024-01-01", qty=1.0))

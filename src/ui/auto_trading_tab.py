@@ -1,7 +1,7 @@
 """ui/auto_trading_tab.py — AutoTradingTab (rebalance.md section 3-1 implementation)
 
 Weekly rebalance signal tab: factor-scores and ranks the Trading Universe
-(rebalance.md 3-1: "팩터 스코어링 + 순위 리밸런싱"), classifying stocks into buy/
+(rebalance.md 3-1: "factor scoring + rank rebalancing"), classifying stocks into buy/
 sell/hold candidates against the account's currently open positions.
 
 Signal generation only — this tab never places orders (rebalance.md section 1
