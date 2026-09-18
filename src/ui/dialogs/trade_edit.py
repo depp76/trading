@@ -22,6 +22,7 @@ from ui.common import (
     _validate_positive_number,
     _mk_field_validator,
 )
+from threads.fetch_threads import TickerValidateThread
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +245,7 @@ class TradeEntryDialog(QDialog):
         self.setWindowTitle("Add New Trade")
         self.setMinimumWidth(300)
         self.result_data = None
+        self._validate_thread = None
 
         layout = QFormLayout(self)
 
@@ -288,14 +290,14 @@ class TradeEntryDialog(QDialog):
         self._val_date(); self._val_price(); self._val_qty()
 
         btn_box = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(self.on_save)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
+        self.save_btn = QPushButton("Save")
+        self.save_btn.clicked.connect(self.on_save)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
 
-        save_btn.setStyleSheet("background-color: #0078d4; color: white; padding: 5px;")
-        btn_box.addWidget(save_btn)
-        btn_box.addWidget(cancel_btn)
+        self.save_btn.setStyleSheet("background-color: #0078d4; color: white; padding: 5px;")
+        btn_box.addWidget(self.save_btn)
+        btn_box.addWidget(self.cancel_btn)
 
         layout.addRow(btn_box)
 
@@ -313,56 +315,32 @@ class TradeEntryDialog(QDialog):
             QMessageBox.warning(self, "Input Error", "Please check the highlighted fields (shown with a red border).")
             return
 
+        # Ticker validation hits the network (fetch_single_stock -> yahooquery ->
+        # Naver fallback chain), so it runs on TickerValidateThread instead of
+        # blocking the UI thread here. Buttons stay disabled and closeEvent()
+        # ignores close requests until _on_ticker_validated() fires, so the
+        # dialog can't be destroyed while the thread still holds a connection to it.
+        self.save_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            from data_fetcher import fetch_single_stock
-            res, err = fetch_single_stock(market, ticker)
 
-            is_valid = False
-            company = ticker
+        thread = TickerValidateThread(market, ticker)
+        thread.finished.connect(self._on_ticker_validated)
+        self._validate_thread = thread
+        thread.start()
 
-            if res is not None:
-                is_valid = True
-                company = res.get("name", ticker)
+    def _on_ticker_validated(self, is_valid: bool, company: str, err: str):
+        QApplication.restoreOverrideCursor()
+        self.save_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(True)
 
-            if not is_valid or company == ticker or company.upper() == ticker.upper():
-                try:
-                    from yahooquery import Ticker as YQTicker
-                    yf_sym = ticker
-                    if market == "KOSPI": yf_sym = f"{ticker}.KS"
-                    elif market == "KOSDAQ": yf_sym = f"{ticker}.KQ"
-                    elif "." in ticker: yf_sym = ticker.replace(".", "-")
-
-                    qt = YQTicker(yf_sym).quote_type
-                    if qt and isinstance(qt, dict) and yf_sym in qt and isinstance(qt[yf_sym], dict):
-                        fetched = qt[yf_sym].get('longName') or qt[yf_sym].get('shortName')
-                        if fetched:
-                            company = fetched
-                            is_valid = True
-                except Exception:
-                    logger.debug("yahooquery company-name lookup failed for ticker=%s", ticker, exc_info=True)
-
-            if (not is_valid or company == ticker or company.upper() == ticker.upper()) and market in ("KOSPI", "KOSDAQ"):
-                try:
-                    from data_fetcher import _fetch_naver_info
-                    n_nv, _ = _fetch_naver_info(ticker)
-                    if n_nv:
-                        company = n_nv
-                        is_valid = True
-                except Exception:
-                    logger.debug("Naver company-name lookup failed for ticker=%s", ticker, exc_info=True)
-
-            if not is_valid:
-                QApplication.restoreOverrideCursor()
-                QMessageBox.warning(self, "Input Error", f"Ticker is not valid (Could not find stock information):\n{ticker}\n\nDetails: {err or ''}")
-                return
-
-        except Exception as e:
-            QApplication.restoreOverrideCursor()
-            QMessageBox.warning(self, "Error", f"Error checking ticker:\n{e}")
+        if not is_valid:
+            ticker = self.ticker_edit.text().strip().upper()
+            QMessageBox.warning(
+                self, "Input Error",
+                f"Ticker is not valid (Could not find stock information):\n{ticker}\n\nDetails: {err or ''}",
+            )
             return
-        finally:
-            QApplication.restoreOverrideCursor()
 
         def to_f(val):
             try: return float(val.replace(',', '').replace('%', '').strip())
@@ -373,8 +351,8 @@ class TradeEntryDialog(QDialog):
         b_amt = to_f(self.buy_amount_edit.text())
 
         self.result_data = {
-            "market": market,
-            "ticker": ticker,
+            "market": self.market_combo.currentText(),
+            "ticker": self.ticker_edit.text().strip().upper(),
             "company": company,
             "buy_date": _normalize_date_str(self.buy_date_edit.text()),
             "buy_price": b_price,
@@ -386,3 +364,11 @@ class TradeEntryDialog(QDialog):
             "sell_amount": 0.0,
         }
         self.accept()
+
+    def closeEvent(self, event):
+        """Block window-close (title-bar X, Alt+F4, ...) while a validation
+        thread is still running -- see the comment in on_save()."""
+        if self._validate_thread is not None and self._validate_thread.isRunning():
+            event.ignore()
+            return
+        super().closeEvent(event)

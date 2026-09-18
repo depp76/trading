@@ -23,6 +23,7 @@ from data_fetcher import (
     fetch_single_stock,
     fetch_all_indices_mas,
     fetch_stock_ma_multi,
+    _fetch_naver_info,
     INDEX_TICKERS,
 )
 
@@ -102,6 +103,68 @@ class SingleStockFetchThread(QThread):
     def run(self):
         result, error = fetch_single_stock(self.market, self.ticker)
         self.finished.emit(result, error or "")
+
+
+# ---------------------------------------------------------------------------
+# Ticker validation thread (TradeEntryDialog)
+# ---------------------------------------------------------------------------
+class TickerValidateThread(QThread):
+    """Resolve a ticker's display name for TradeEntryDialog without blocking the UI.
+
+    Tries fetch_single_stock first, then falls back to yahooquery, then (for
+    KOSPI/KOSDAQ) Naver — the same three-source chain TradeEntryDialog.on_save()
+    used to run synchronously on the UI thread.
+    """
+    finished = pyqtSignal(bool, str, str)  # is_valid, company, error
+
+    def __init__(self, market, ticker):
+        super().__init__()
+        self.market = market
+        self.ticker = ticker
+
+    def run(self):
+        market, ticker = self.market, self.ticker
+        is_valid = False
+        company = ticker
+        err = ""
+        try:
+            res, err = fetch_single_stock(market, ticker)
+            if res is not None:
+                is_valid = True
+                company = res.get("name", ticker)
+
+            if not is_valid or company == ticker or company.upper() == ticker.upper():
+                try:
+                    from yahooquery import Ticker as YQTicker
+                    yf_sym = ticker
+                    if market == "KOSPI":
+                        yf_sym = f"{ticker}.KS"
+                    elif market == "KOSDAQ":
+                        yf_sym = f"{ticker}.KQ"
+                    elif "." in ticker:
+                        yf_sym = ticker.replace(".", "-")
+
+                    qt = YQTicker(yf_sym).quote_type
+                    if qt and isinstance(qt, dict) and yf_sym in qt and isinstance(qt[yf_sym], dict):
+                        fetched = qt[yf_sym].get('longName') or qt[yf_sym].get('shortName')
+                        if fetched:
+                            company = fetched
+                            is_valid = True
+                except Exception:
+                    logger.debug("yahooquery company-name lookup failed for ticker=%s", ticker, exc_info=True)
+
+            if (not is_valid or company == ticker or company.upper() == ticker.upper()) and market in ("KOSPI", "KOSDAQ"):
+                try:
+                    n_nv, _ = _fetch_naver_info(ticker)
+                    if n_nv:
+                        company = n_nv
+                        is_valid = True
+                except Exception:
+                    logger.debug("Naver company-name lookup failed for ticker=%s", ticker, exc_info=True)
+        except Exception as e:
+            err = str(e)
+
+        self.finished.emit(is_valid, company, err or "")
 
 
 # ---------------------------------------------------------------------------

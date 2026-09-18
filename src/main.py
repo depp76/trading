@@ -214,9 +214,9 @@ class MainWindow(QMainWindow):
         # Collect every QThread this window may have started
         threads_to_stop = []
 
-        bt = getattr(self, '_backtest_thread', None)
-        if bt is not None:
-            threads_to_stop.append(bt)
+        abt = getattr(self, '_auto_backup_thread', None)
+        if abt is not None:
+            threads_to_stop.append(abt)
 
         if hasattr(self, 'universe_tab'):
             threads_to_stop.extend(self.universe_tab.collect_threads_to_stop())
