@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
     QPushButton, QMessageBox, QFrame,
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 
 from paths import UNIVERSE_CACHE_FILE, CUSTOM_SETTINGS_FILE
@@ -79,6 +79,13 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         self.all_data = []
         self.market_status = {}
         self._market_filter = "ALL"
+        # User-added tickers re-fetched after a full refresh (on_finished_all)
+        # each arrive on their own thread; rendering once, a beat after the
+        # last one lands, instead of a full table+rail rebuild per ticker.
+        self._startup_render_timer = QTimer(self)
+        self._startup_render_timer.setSingleShot(True)
+        self._startup_render_timer.setInterval(150)
+        self._startup_render_timer.timeout.connect(self._render_startup_batch)
         self._build_ui()
         self.load_custom_settings()
         self._apply_column_group_and_density_settings()
@@ -453,18 +460,33 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
             self.save_custom_settings()
 
         self.all_data.append(result)
-        self.all_data.sort(key=lambda x: (
-            0 if x.get('is_index') else 1,
-            x.get('index_order', 99) if x.get('is_index') else _MARKET_ORDER.get(x.get('market', ''), 99),
-            -float(x.get('market_cap', 0) or 0)
-        ))
+        if is_startup:
+            self._startup_render_timer.start()   # (re)arms: one render after the last arrival
+            return
+
+        self._sort_all_data()
         self._reload_table_and_rail()
         self.filter_table()  # restore filter state
+        self.ticker_input.clear()
+        self.update_total_status(prefix=f"Added '{result.get('name', ticker)}' ({ticker}).")
 
-        if not is_startup:
-            self.ticker_input.clear()
-            msg = f"Added '{result.get('name', ticker)}' ({ticker})."
-            self.update_total_status(prefix=msg)
+    def _render_startup_batch(self):
+        self._sort_all_data()
+        self._reload_table_and_rail()
+        self.filter_table()
+
+    @staticmethod
+    def _sort_key(item):
+        return (
+            0 if item.get('is_index') else 1,
+            item.get('index_order', 99) if item.get('is_index') else _MARKET_ORDER.get(item.get('market', ''), 99),
+            -float(item.get('market_cap', 0) or 0),
+        )
+
+    def _sort_all_data(self):
+        """Index rows first (in their fixed order), then each market by
+        market cap descending."""
+        self.all_data.sort(key=self._sort_key)
 
     def filter_table(self, text=None):
         if text is None:
@@ -618,14 +640,7 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
 
             filtered_data = [x for x in all_data if x.get("ticker", "") not in deleted]
 
-            self.all_data = sorted(
-                filtered_data,
-                key=lambda x: (
-                    0 if x.get('is_index') else 1,
-                    x.get('index_order', 99) if x.get('is_index') else _MARKET_ORDER.get(x.get('market', ''), 99),
-                    -float(x.get('market_cap', 0) or 0)
-                )
-            )
+            self.all_data = sorted(filtered_data, key=self._sort_key)
             self._reload_table_and_rail()
             self.filter_table(self.search_input.text())
             self.update_total_status()
