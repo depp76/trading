@@ -26,6 +26,23 @@ def is_kr_code(ticker) -> bool:
     return len(t) == 6 and "." not in t and any(c.isdigit() for c in t)
 
 
+# Market labels that denote a US-listed position. "US" is the generic label
+# PositionPriceFetchThread assigns after a Yahoo lookup; the exchange names are
+# what TradeEntryDialog's combo offers; "NASDAQ 100" / "S&P500" are the
+# universe labels used while the US universe paths were active.
+_US_MARKETS = frozenset({"US", "NASDAQ", "NYSE", "AMEX", "NASDAQ 100", "S&P500", "S&P 500"})
+
+
+def is_us_market(market) -> bool:
+    """True when a trade record's `market` label refers to a US listing.
+
+    Single source of truth for the KR/US split of Trading History positions;
+    PositionPriceFetchThread (price routing) and TradingHistoryTab (KR/US
+    P/L aggregation) used to carry their own, slightly different, tuples.
+    """
+    return str(market or "").strip() in _US_MARKETS
+
+
 _TD_PERIODS = {"3d": 3, "5d": 5, "10d": 10, "20d": 20, "60d": 60, "120d": 120}
 _CHANGE_KEYS = tuple(_TD_PERIODS.keys())
 

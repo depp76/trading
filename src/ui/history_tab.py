@@ -18,7 +18,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 
 import trade_db
-from data_fetcher import is_kr_code
+from data_fetcher import is_kr_code, is_us_market
 
 from threads.fetch_threads import (
     PositionPriceFetchThread,
@@ -967,7 +967,7 @@ class TradingHistoryTab(QWidget):
             price     = r.get("curr_price", 0.0)
             market    = r.get("market", "")
             
-            is_us = market in ("US", "NASDAQ", "NYSE", "AMEX", "NASDAQ 100", "S&P500")
+            is_us = is_us_market(market)
 
             if price > 0 and qty > 0:
                 eval_val         = price * qty          # Evaluation Amount = Current Price * Quantity

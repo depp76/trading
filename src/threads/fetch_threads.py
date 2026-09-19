@@ -366,7 +366,10 @@ class PositionPriceFetchThread(QThread):
 
     def run(self):
         import re
-        from data_fetcher import fetch_naver_realtime_prices, get_usd_krw_rate, fetch_historical_changes, _get_listing_with_norm
+        from data_fetcher import (
+            fetch_naver_realtime_prices, get_usd_krw_rate, fetch_historical_changes,
+            _get_listing_with_norm, is_us_market,
+        )
 
         # ---Build name - KRX code mapping ---
         name_to_info: dict = {}
@@ -385,11 +388,11 @@ class PositionPriceFetchThread(QThread):
                 ticker = self._tickers[i]
                 market = self._markets[i]
 
-                if ticker and market and market not in ("US", "NASDAQ", "NYSE", "AMEX", "NASDAQ 100"):
+                if ticker and market and not is_us_market(market):
                     name_to_info[name] = {"code": ticker, "market": market, "name": name}
                     continue
 
-                if market in ("US", "NASDAQ", "NYSE", "AMEX", "NASDAQ 100"):
+                if is_us_market(market):
                     continue
 
                 search_term = re.sub(r'[\s_]+', '', name.upper())
@@ -494,18 +497,18 @@ class PositionPriceFetchThread(QThread):
             wk2 = 0.0
             mth1 = 0.0
 
-            is_us_market = market in ("US", "NASDAQ", "NYSE", "AMEX", "NASDAQ 100")
+            is_us = is_us_market(market)
 
             # ---Current price (KRW for display) ---
-            if info and not is_us_market:
+            if info and not is_us:
                 curr_price = price_map.get(code, 0.0)
-            elif info and is_us_market:
+            elif info and is_us:
                 curr_price = us_price_map.get(name, 0.0)
 
             # ---Raw USD price for historical comparison ---
             # fetch_historical_changes uses the ticker's historical Close (USD)
             # so we must pass the USD price, not the KRW-converted one.
-            if is_us_market:
+            if is_us:
                 curr_price_for_hist = us_price_map_usd.get(name, 0.0)
             else:
                 curr_price_for_hist = curr_price
