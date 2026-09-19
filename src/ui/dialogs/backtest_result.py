@@ -12,6 +12,8 @@ from PyQt6.QtGui import QColor
 
 import matplotlib.dates as mdates
 import mplcursors
+
+from ui.theme import TEXT_MUTED
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
@@ -177,7 +179,7 @@ class BacktestResultDialog(QDialog):
             "Includes 0.015% brokerage commission + 0.18% sell tax. Research tool, not investment advice \u2014 "
             "see rebalance.md section 6."
         )
-        disclaimer.setStyleSheet("color:#888; font-size:9pt;")
+        disclaimer.setStyleSheet(f"color:{TEXT_MUTED}; font-size:9pt;")
         disclaimer.setWordWrap(True)
         layout.addWidget(disclaimer)
 

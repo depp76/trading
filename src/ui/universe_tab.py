@@ -28,22 +28,23 @@ from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
-    QPushButton, QMessageBox,
+    QPushButton, QMessageBox, QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtGui import QFont
 
 from paths import UNIVERSE_CACHE_FILE, CUSTOM_SETTINGS_FILE
 from threads.fetch_threads import (
     SingleStockFetchThread,
     AllDataFetchThread,
     UniverseLightweightFetchThread,
-    StockMaThread,
     GeminiStockReportThread,
 )
-from ui.widgets import StockTable
-from ui.dialogs import StockMaDialog
+from ui.widgets import StockTable, TOGGLE_GROUPS
 from ui.dialogs.stock_report import show_stock_report_result
+from ui.ma_chart import StockMaLauncherMixin
+from ui.colors import PROFIT, LOSS, FLAT
+from ui.theme import SURFACE, LINE, TEXT_MUTED
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,15 @@ from ui.common import (
     ThreadOwnerMixin,
 )
 
+# docs/ui.md 2.4: index/bond/commodity rows move out of the main table into
+# small "Market rail" cards -- their prices aren't comparable to equities
+# (points, bp, $ vs won) and previously forced Market Cap/tPER/fPER to show
+# "-" for every one of these rows.
+def _is_rail_row(item: dict) -> bool:
+    return bool(item.get('is_index') or item.get('is_bond') or item.get('change_mode') in ('bp', 'abs'))
 
-class UniverseTab(ThreadOwnerMixin, QWidget):
+
+class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
     """Trading Universe tab: watchlist table + ticker add/search controls."""
 
     status_text_changed = pyqtSignal(str)  # -> MainWindow's shared status_label
@@ -70,16 +78,16 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         super().__init__(parent)
         self.all_data = []
         self.market_status = {}
-        self._open_dialogs: list = []
+        self._market_filter = "ALL"
         self._build_ui()
         self.load_custom_settings()
+        self._apply_column_group_and_density_settings()
 
         # Try to load cached universe data to make startup instant, but always refresh to latest afterwards.
         cached = safe_load_json(UNIVERSE_CACHE_FILE, default=None)
         if cached:
             self.all_data = cached
-            self.table.load_data(self.all_data, self.custom_settings.get("highlights", {}))
-            self._populate_action_buttons()
+            self._reload_table_and_rail()
             self.filter_table()
             self.update_total_status(prefix="Loaded cached universe. Refreshing data...")
 
@@ -129,13 +137,26 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         self.search_input.textChanged.connect(self.filter_table)
         add_layout.addWidget(self.search_input)
 
+        # Market filter (docs/ui.md 2.1): ALL/KOSPI/KOSDAQ toolbar buttons,
+        # replacing the old Excel-style dropdown on a Market table column
+        # (Market isn't a column anymore -- see the identity cell's meta text).
+        add_layout.addSpacing(8)
+        self._market_buttons = {}
+        for m in ("ALL", "KOSPI", "KOSDAQ"):
+            btn = QPushButton(m)
+            btn.setFont(create_font(9, style_name="Semilight"))
+            btn.setCheckable(True)
+            btn.setFixedWidth(64)
+            btn.setChecked(m == "ALL")
+            btn.clicked.connect(lambda checked, mk=m: self._on_market_filter_changed(mk))
+            add_layout.addWidget(btn)
+            self._market_buttons[m] = btn
+
+        add_layout.addSpacing(8)
         self.tg_filter_btn = QPushButton("Target List")
         self.tg_filter_btn.setFont(create_font(10, style_name="Semilight"))
-        self.tg_filter_btn.setCheckable(True)
+        self.tg_filter_btn.setCheckable(True)  # checked state: ui/theme.py's QPushButton:checked rule
         self.tg_filter_btn.setFixedWidth(100)
-        self.tg_filter_btn.setStyleSheet(
-            "QPushButton:checked { background-color: #87CEEB; font-weight: bold; color: black; }"
-        )
         self.tg_filter_btn.clicked.connect(lambda: self.filter_table())
         add_layout.addWidget(self.tg_filter_btn)
 
@@ -152,7 +173,83 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         self.table = StockTable()
         self.table.col_filter_changed.connect(self.filter_table)
         self.table.ai_report_requested.connect(self._on_ai_report_requested)
+        self.table.ma_chart_requested.connect(self._on_ma_chart_requested)
+        self.table.delete_requested.connect(self.delete_stock)
+        self.table.toggle_requested.connect(self.toggle_stock)
+
+        # Column-group toggle + density toggle (docs/ui.md 1.4, 2.5)
+        toolbar2 = QHBoxLayout()
+
+        lbl_cols = QLabel("Columns:")
+        lbl_cols.setFont(create_font(10, style_name="Semilight"))
+        toolbar2.addWidget(lbl_cols)
+
+        self._group_buttons = {}
+        for group_key, group_label in TOGGLE_GROUPS:
+            btn = QPushButton(group_label)
+            btn.setFont(create_font(9, style_name="Semilight"))
+            btn.setCheckable(True)  # checked state: ui/theme.py's QPushButton:checked rule
+            btn.setFixedWidth(80)
+            btn.clicked.connect(lambda checked, g=group_key: self._on_column_group_toggled(g, checked))
+            toolbar2.addWidget(btn)
+            self._group_buttons[group_key] = btn
+
+        toolbar2.addSpacing(16)
+
+        lbl_density = QLabel("Density:")
+        lbl_density.setFont(create_font(10, style_name="Semilight"))
+        toolbar2.addWidget(lbl_density)
+
+        self.density_combo = QComboBox()
+        self.density_combo.setFont(create_font(9, style_name="Semilight"))
+        self.density_combo.addItems(["Compact", "Normal", "Spacious"])
+        self.density_combo.setFixedWidth(100)
+        self.density_combo.currentTextChanged.connect(self._on_density_changed)
+        toolbar2.addWidget(self.density_combo)
+
+        toolbar2.addStretch()
+        universe_layout.addLayout(toolbar2)
+
+        # Market rail (docs/ui.md 2.4): index/bond/commodity cards, separated
+        # out of the main table entirely. Populated by _refresh_market_rail().
+        self._rail_layout = QHBoxLayout()
+        self._rail_layout.setSpacing(8)
+        universe_layout.addLayout(self._rail_layout)
+
         universe_layout.addWidget(self.table)
+
+    def _on_market_filter_changed(self, market):
+        self._market_filter = market
+        for m, btn in self._market_buttons.items():
+            btn.setChecked(m == market)
+        self.filter_table()
+
+    def _on_column_group_toggled(self, group, checked):
+        self.table.set_column_group_visible(group, checked)
+        groups = self.custom_settings.setdefault("column_groups", {})
+        groups[group] = checked
+        self.save_custom_settings()
+
+    def _on_density_changed(self, label):
+        level = label.lower()
+        self.table.set_density(level)
+        self.custom_settings["density"] = level
+        self.save_custom_settings()
+
+    def _apply_column_group_and_density_settings(self):
+        groups = self.custom_settings.setdefault(
+            "column_groups", {"price": True, "value": True, "momentum": True}
+        )
+        for group_key, _label in TOGGLE_GROUPS:
+            enabled = groups.get(group_key, True)
+            self._group_buttons[group_key].setChecked(enabled)
+            self.table.set_column_group_visible(group_key, enabled)
+
+        density = self.custom_settings.setdefault("density", "compact")
+        idx = self.density_combo.findText(density.capitalize())
+        if idx >= 0:
+            self.density_combo.setCurrentIndex(idx)
+        self.table.set_density(density)
 
     def load_custom_settings(self):
         self.custom_settings = {"added": [], "deleted": [], "highlights": {}}
@@ -173,6 +270,81 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         except Exception:
             logger.warning("Failed to save custom_settings.json", exc_info=True)
 
+    # ---Table / Market rail split (docs/ui.md 2.4) ---
+    def _reload_table_and_rail(self):
+        """Rebuild both the main table and the Market rail from self.all_data.
+        Call after anything that replaces all_data wholesale (cache load,
+        add, delete, full refresh) -- the incremental lightweight-refresh
+        path has its own leaner version in _on_universe_lightweight_loaded."""
+        main_rows = [x for x in self.all_data if not _is_rail_row(x)]
+        rail_rows = [x for x in self.all_data if _is_rail_row(x)]
+        self.table.load_data(main_rows, self.custom_settings.get("highlights", {}))
+        self._refresh_market_rail(rail_rows)
+
+    def _refresh_market_rail(self, rail_rows):
+        while self._rail_layout.count():
+            child = self._rail_layout.takeAt(0)
+            w = child.widget()
+            if w:
+                w.deleteLater()
+        for it in rail_rows:
+            self._rail_layout.addWidget(self._make_rail_card(it))
+        self._rail_layout.addStretch()
+
+    @staticmethod
+    def _make_rail_card(item: dict) -> QFrame:
+        mode = item.get('change_mode', 'pct')
+        currency = item.get('currency', '')
+        price = float(item.get('price', 0.0) or 0.0)
+        chg = float(item.get('changes', {}).get('1d', 0.0) or 0.0)
+
+        if item.get('is_bond') or mode == 'bp':
+            value_text = f"{price:.2f}%"
+            chg_text = f"{chg:+.0f}bp"
+            tone = PROFIT if chg > 0 else LOSS if chg < 0 else FLAT
+        elif mode == 'abs':
+            # data/indicators.py's abs-mode period-change branch stores the
+            # old price itself rather than a delta (a pre-existing quirk in
+            # fetch_historical_changes), so there's no reliable day-over-day
+            # figure to show here yet -- leave it blank rather than show a
+            # misleading number.
+            value_text = f"${price:,.2f}" if currency == '$' else f"{price:,.2f}"
+            chg_text = "-"
+            tone = FLAT
+        else:
+            value_text = f"${price:,.2f}" if currency == '$' else f"{price:,.0f}"
+            chg_text = f"{chg:+.1f}%"
+            tone = PROFIT if chg > 0 else LOSS if chg < 0 else FLAT
+
+        card = QFrame()
+        card.setObjectName("RailCard")
+        # Qt QSS has no four-corner border-radius shorthand (its Radius type
+        # is one or two lengths), so the right-hand corners are set one by one.
+        card.setStyleSheet(
+            f"QFrame#RailCard {{ background:{SURFACE}; border-left:2px solid {tone}; "
+            f"border-top:1px solid {LINE}; border-bottom:1px solid {LINE}; border-right:1px solid {LINE}; "
+            "border-top-right-radius:6px; border-bottom-right-radius:6px; }"
+        )
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(2)
+
+        lbl = QLabel(item.get('name', item.get('ticker', '')))
+        lbl.setFont(create_font(9, style_name="Semilight"))
+        lbl.setStyleSheet(f"color: {TEXT_MUTED};")
+        layout.addWidget(lbl)
+
+        val_lbl = QLabel(value_text)
+        val_lbl.setFont(create_font(11, QFont.Weight.Bold))
+        layout.addWidget(val_lbl)
+
+        chg_lbl = QLabel(chg_text)
+        chg_lbl.setFont(create_font(9, style_name="Semilight"))
+        chg_lbl.setStyleSheet(f"color: {tone};")
+        layout.addWidget(chg_lbl)
+
+        return card
+
     def delete_stock(self, ticker):
         reply = QMessageBox.question(
             self, 'Confirm Delete',
@@ -192,13 +364,14 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         self.save_custom_settings()
 
         self.all_data = [x for x in self.all_data if x.get("ticker", "") != ticker]
-        self.table.load_data(self.all_data, self.custom_settings.get("highlights", {}))
-        self._populate_action_buttons()
+        self._reload_table_and_rail()
         self.filter_table()
         self.update_total_status(prefix=f"Deleted '{ticker}'.")
 
     def toggle_stock(self, ticker):
-        # Use in-memory settings without redundant disk reload
+        """Cycles a ticker's highlight state -/On/Tg (docs/ui.md 1.7: shown
+        as a Watch/Target badge in the identity cell now, toggled from the
+        table's context menu instead of a persistent per-row button)."""
         highlights = self.custom_settings.setdefault("highlights", {})
         current = highlights.get(ticker, "-")
 
@@ -210,37 +383,7 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
             highlights.pop(ticker, None)
 
         self.save_custom_settings()
-
-        new_state = highlights.get(ticker, "-")
-
-        # O(1) row lookup via ticker-ow map built from all_data order
-        ticker_to_row = {self.table.item(r, 3).text(): r
-                         for r in range(self.table.rowCount())
-                         if self.table.item(r, 3)}
-        row = ticker_to_row.get(ticker)
-        if row is None:
-            return
-
-        name_item = self.table.item(row, 0)
-        if name_item:
-            if new_state == "On":
-                name_item.setBackground(QColor("yellow"))
-            elif new_state == "Tg":
-                name_item.setBackground(QColor(135, 206, 235))
-            else:
-                name_item.setData(Qt.ItemDataRole.BackgroundRole, None)
-
-        item_data = next((x for x in self.all_data if x.get("ticker", "") == ticker), None)
-        if item_data:
-            name   = item_data.get('name', ticker)
-            market = item_data.get('market', '')
-            cm     = item_data.get('change_mode', 'pct')
-            self.table.add_action_buttons(
-                row, new_state,
-                lambda checked=False, t=ticker: self.toggle_stock(t),
-                lambda checked=False, t=ticker, n=name, m=market, c=cm: self.show_stock_ma(t, n, m, c),
-                lambda checked=False, t=ticker: self.delete_stock(t),
-            )
+        self.table.update_row_status(ticker, highlights.get(ticker, "-"))
 
     def add_ticker(self):
         ticker = self.ticker_input.text().strip().upper()
@@ -315,8 +458,7 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
             x.get('index_order', 99) if x.get('is_index') else _MARKET_ORDER.get(x.get('market', ''), 99),
             -float(x.get('market_cap', 0) or 0)
         ))
-        self.table.load_data(self.all_data, self.custom_settings.get("highlights", {}))
-        self._populate_action_buttons()
+        self._reload_table_and_rail()
         self.filter_table()  # restore filter state
 
         if not is_startup:
@@ -328,52 +470,21 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         if text is None:
             text = self.search_input.text()
         tg_only = getattr(self, 'tg_filter_btn', None) is not None and self.tg_filter_btn.isChecked()
-        self.table.apply_col_filters(text, tg_only=tg_only)
+        self.table.apply_col_filters(text, tg_only=tg_only, market=self._market_filter)
 
     # ---Per-stock MA (20 + 60) ---
-    def _populate_action_buttons(self):
-        """Add Tg, MA, and Delete buttons to every row of the table."""
-        highlights = self.custom_settings.get("highlights", {})
-        row_data = self.all_data
-        for row in range(min(self.table.rowCount(), len(row_data))):
-            item = row_data[row]
-            ticker  = item.get('ticker', '')
-            name    = item.get('name', ticker)
-            market  = item.get('market', '')
-            cm      = item.get('change_mode', 'pct')
-            h_state = highlights.get(ticker, "-")
-            self.table.add_action_buttons(
-                row, h_state,
-                lambda checked=False, t=ticker: self.toggle_stock(t),
-                lambda checked=False, t=ticker, n=name, m=market, c=cm: self.show_stock_ma(t, n, m, c),
-                lambda checked=False, t=ticker: self.delete_stock(t),
-            )
-
-    def show_stock_ma(self, ticker, name, market, change_mode='pct'):
-        self.status_text_changed.emit(f"Loading MA20 & MA50 for {name} ({ticker})...")
-        thread = self._track_thread(StockMaThread(ticker, name, market, change_mode))
-        thread.finished.connect(self.on_stock_ma_loaded)
-        thread.start()
-
-    def on_stock_ma_loaded(self, ticker, name, df, error, investor_data, market, change_mode):
-        self.status_text_changed.emit(f"MA chart loaded for {name} ({ticker}).")
-        if error and df is None:
-            QMessageBox.warning(self, "Error", f"Failed to load data for {ticker}:\n{error}")
+    def _on_ma_chart_requested(self, ticker: str):
+        """StockTable.ma_chart_requested (double-click/Enter/context menu on
+        a row) -- replaces the old per-row 📈 button, which carried its own
+        name/market/change_mode via the callback closure; those are looked
+        up from all_data instead now."""
+        item = next((d for d in self.all_data if d.get('ticker') == ticker), None)
+        if item is None:
             return
-        if not market:
-            market = next((d.get('market', '') for d in self.all_data if d.get('ticker') == ticker), "")
-        dlg = StockMaDialog(ticker, name, market, df, investor_data=investor_data, parent=None, change_mode=change_mode)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        active_dialogs = []
-        for d in self._open_dialogs:
-            try:
-                if d.isVisible():
-                    active_dialogs.append(d)
-            except RuntimeError:
-                pass
-        self._open_dialogs = active_dialogs
-        self._open_dialogs.append(dlg)
-        dlg.show()
+        self._show_stock_ma(ticker, item.get('name', ticker), item.get('market', ''), item.get('change_mode', 'pct'))
+
+    def _on_stock_ma_status(self, msg: str):
+        self.status_text_changed.emit(msg)
 
     # ---AI Stock Report (roadmap 2-1, review.md 2-1) ---
     def _on_ai_report_requested(self, ticker: str):
@@ -430,14 +541,21 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
             self.refresh_data()
 
     def _on_universe_lightweight_loaded(self, updated_data):
-        # UniverseLightweightFetchThread only reassigns item["changes"] (to a
-        # freshly-fetched dict) for tickers whose price actually moved -- every
-        # unchanged item keeps the exact same "changes" dict object it had
-        # before the thread ran. That lets us tell which rows actually need a
-        # UI refresh by object identity, without a value-by-value diff.
-        old_data = self.all_data
+        # UniverseLightweightFetchThread preserves all_data's order/length
+        # and only reassigns item["changes"] (to a freshly-fetched dict) for
+        # tickers whose price actually moved -- every unchanged item keeps
+        # the exact same "changes" dict object it had before the thread ran.
+        # That lets us tell which rows actually need a UI refresh by object
+        # identity, without a value-by-value diff.
+        #
+        # changed_rows must index into main_rows (what the table actually
+        # holds, docs/ui.md 2.4), not all_data -- so old/new are filtered
+        # the same way before comparing, not compared first and filtered
+        # after.
+        old_main = [x for x in self.all_data if not _is_rail_row(x)]
+        new_main = [x for x in updated_data if not _is_rail_row(x)]
         changed_rows = {
-            i for i, (old_item, new_item) in enumerate(zip(old_data, updated_data))
+            i for i, (old_item, new_item) in enumerate(zip(old_main, new_main))
             if old_item.get("changes") is not new_item.get("changes")
         }
 
@@ -448,10 +566,11 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         v_scroll = self.table.verticalScrollBar().value()
 
         # Incremental update: only the rows whose price/changes actually
-        # changed get their cells rebuilt (name/market/ticker/marcap/PER and
-        # the Tg/MA/Del action-button widgets never change on this path, so
-        # there's no need to touch them at all, unlike a full load_data()).
-        self.table.update_changed_rows(self.all_data, changed_rows, highlights)
+        # changed get their cells rebuilt (identity/cap/PER never change on
+        # this path, so there's no need to touch them at all, unlike a full
+        # load_data()).
+        self.table.update_changed_rows(new_main, changed_rows, highlights)
+        self._refresh_market_rail([x for x in updated_data if _is_rail_row(x)])
         if changed_rows:
             self.filter_table(self.search_input.text())
 
@@ -507,8 +626,7 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
                     -float(x.get('market_cap', 0) or 0)
                 )
             )
-            self.table.load_data(self.all_data, self.custom_settings.get("highlights", {}))
-            self._populate_action_buttons()
+            self._reload_table_and_rail()
             self.filter_table(self.search_input.text())
             self.update_total_status()
             self.update_last_sync_time()

@@ -13,10 +13,11 @@ from PyQt6.QtGui import QFont, QShortcut, QKeySequence
 from paths import ENV_FILE, APP_LOG_FILE
 from ui.common import (
     create_font,
-    _ACCENT_COLOR,
-    _ACCENT_HOVER_COLOR,
+    apply_matplotlib_font,
     FONT_FAMILY_CSS,
+    FONT_TITLE,
 )
+from ui.theme import app_qss, ACCENT_TEXT
 
 load_dotenv(ENV_FILE)
 
@@ -71,7 +72,7 @@ class MainWindow(QMainWindow):
         # Header
         header_layout = QHBoxLayout()
         title_label = QLabel("Portfolio Management")
-        title_label.setFont(create_font(18, QFont.Weight.Bold))
+        title_label.setFont(create_font(FONT_TITLE, QFont.Weight.Bold))
         header_layout.addWidget(title_label)
         
         header_layout.addStretch()
@@ -84,7 +85,7 @@ class MainWindow(QMainWindow):
         # Add Auto Refresh Checkbox
         self.auto_refresh_cb = QCheckBox("Auto Update (1 min)")
         self.auto_refresh_cb.setFont(create_font(10, QFont.Weight.Bold))
-        self.auto_refresh_cb.setStyleSheet(f"QCheckBox {{ color: {_ACCENT_COLOR}; margin-right: 15px; }}")
+        self.auto_refresh_cb.setStyleSheet(f"QCheckBox {{ color: {ACCENT_TEXT}; margin-right: 15px; }}")
         self.auto_refresh_cb.toggled.connect(self._toggle_global_auto_timer)
         header_layout.addWidget(self.auto_refresh_cb)
         
@@ -163,7 +164,7 @@ class MainWindow(QMainWindow):
         sc_prev.setContext(Qt.ShortcutContext.WindowShortcut)
         sc_prev.activated.connect(self._tab_prev)
 
-        # Automatic backup of portfolio.db + custom_settings.json (roadmap 2-4).
+        # Automatic backup of portfolio.db + custom_settings.json + trading_record.json (roadmap 2-4).
         # Runs in the background so it never blocks startup.
         self._auto_backup_thread = AutoBackupThread()
         self._auto_backup_thread.backup_done.connect(self._on_thread_status_message)
@@ -241,65 +242,14 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     print("Starting Portfolio Management...")
     app = QApplication(sys.argv)
-    app_font = create_font(10, style_name="Semilight")
+    # Windows' native style silently ignores parts of the stylesheet below
+    # (notably QTabBar and QHeaderView theming); Fusion renders every rule
+    # (docs/ui.md 6.4).
+    app.setStyle("Fusion")
+    app_font = create_font(style_name="Semilight")
     app.setFont(app_font)
-    app.setStyleSheet(f"""
-        QMainWindow {{ background-color: #f0f0f0; }}
-        QTableWidget {{
-            background-color: white;
-            alternate-background-color: #f9f9f9;
-            gridline-color: #d0d0d0;
-            {FONT_FAMILY_CSS}
-        }}
-        QHeaderView::section {{
-            background-color: #e0e0e0;
-            padding: 4px;
-            border: 1px solid #d0d0d0;
-            font-weight: bold;
-            {FONT_FAMILY_CSS}
-        }}
-        QLineEdit {{
-            padding: 5px;
-            border: 1px solid #c0c0c0;
-            border-radius: 4px;
-            {FONT_FAMILY_CSS}
-        }}
-        QComboBox {{
-            padding: 5px;
-            border: 1px solid #c0c0c0;
-            border-radius: 4px;
-            {FONT_FAMILY_CSS}
-        }}
-        QPushButton {{
-            padding: 8px 16px;
-            background-color: {_ACCENT_COLOR};
-            color: white;
-            border: none;
-            border-radius: 4px;
-            font-weight: bold;
-            {FONT_FAMILY_CSS}
-        }}
-        QPushButton:hover {{ background-color: {_ACCENT_HOVER_COLOR}; }}
-        QPushButton:disabled {{ background-color: #cccccc; }}
-        QPushButton:checked {{ background-color: {_ACCENT_HOVER_COLOR}; border: 2px solid #003f7f; }}
-
-        QTabWidget::pane {{
-            border: 1px solid #d0d0d0;
-            background: white;
-            border-radius: 4px;
-        }}
-        QTabBar::tab {{
-            background: #e0e0e0;
-            border: 1px solid #d0d0d0;
-            padding: 10px 30px;
-            font-weight: bold;
-            {FONT_FAMILY_CSS}
-        }}
-        QTabBar::tab:selected {{
-            background: white;
-            border-bottom: 2px solid {_ACCENT_COLOR};
-        }}
-    """)
+    apply_matplotlib_font()
+    app.setStyleSheet(app_qss(FONT_FAMILY_CSS))
 
     window = MainWindow()
     window.showMaximized()

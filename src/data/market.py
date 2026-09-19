@@ -497,7 +497,7 @@ def fetch_indice_as_stock(label_ticker):
                 if rt_val is not None and rt_val > 0:
                     current_price = float(rt_val)
             except Exception:
-                pass
+                logger.debug("Realtime index quote for %s failed; keeping last close", label, exc_info=True)
 
         if is_bond:
             chg_mode = 'bp'

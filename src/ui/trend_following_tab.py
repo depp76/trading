@@ -21,10 +21,7 @@ from strategy.trend_following import TrendFollowingConfig
 from threads.fetch_threads import TrendFollowingBacktestThread, TrendFollowingPortfolioThread
 from ui.common import (
     create_font, _validate_date_str, _normalize_date_str, _set_field_error, ThreadOwnerMixin,
-    action_button_style, _ACTION_BACKTEST_COLOR, _ACTION_BACKTEST_HOVER_COLOR,
-    _ACTION_PORTFOLIO_COLOR, _ACTION_PORTFOLIO_HOVER_COLOR,
-    _ACTION_VALIDATE_COLOR, _ACTION_VALIDATE_HOVER_COLOR,
-    _SECONDARY_BUTTON_STYLE, _STATUS_SUCCESS_COLOR, _STATUS_FAIL_COLOR,
+    _STATUS_SUCCESS_COLOR, _STATUS_FAIL_COLOR,
 )
 from ui.dialogs.trend_following_chart import TrendFollowingChartDialog
 from ui.dialogs.trend_following_portfolio import TrendFollowingPortfolioDialog, TrendFollowingValidationDialog
@@ -70,7 +67,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
             "prior exit_n-day low; long only, single position, applied from the next day (trend_following.md 3)."
         )
         subtitle.setFont(create_font(9, style_name="Semilight"))
-        subtitle.setStyleSheet("color:#7f8c8d;")
+        subtitle.setObjectName("muted")
         subtitle.setWordWrap(True)
         root.addWidget(subtitle)
 
@@ -124,7 +121,11 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._run_btn = QPushButton("▶ Run Backtest")
         self._run_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._run_btn.setFixedHeight(32)
-        self._run_btn.setStyleSheet(action_button_style(_ACTION_BACKTEST_COLOR, _ACTION_BACKTEST_HOVER_COLOR))
+        # docs/ui.md 1.6: the tab's one accented action; every other button
+        # here (Chart, Use Universe, Run Portfolio, Validate) is the neutral
+        # outline from ui/theme.py -- they used to carry four different
+        # solid fills from the pre-theme action_button_style() helper.
+        self._run_btn.setObjectName("primary")
         self._run_btn.clicked.connect(self._on_run_clicked)
         row2.addWidget(self._run_btn)
 
@@ -132,13 +133,12 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._chart_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._chart_btn.setFixedHeight(32)
         self._chart_btn.setEnabled(False)
-        self._chart_btn.setStyleSheet(_SECONDARY_BUTTON_STYLE)
         self._chart_btn.clicked.connect(self._on_chart_clicked)
         row2.addWidget(self._chart_btn)
 
         self._status_lbl = QLabel("")
         self._status_lbl.setFont(create_font(9, style_name="Semilight"))
-        self._status_lbl.setStyleSheet("color:#7f8c8d;")
+        self._status_lbl.setObjectName("muted")
         row2.addWidget(self._status_lbl)
         row2.addStretch()
         root.addLayout(row2)
@@ -208,14 +208,12 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
 
         self._use_universe_btn = QPushButton("Use Universe")
         self._use_universe_btn.setToolTip("Fill the ticker list with the top-N Trading Universe stocks by market cap")
-        self._use_universe_btn.setStyleSheet(_SECONDARY_BUTTON_STYLE)
         self._use_universe_btn.clicked.connect(self._on_use_universe)
         row4.addWidget(self._use_universe_btn)
 
         self._portfolio_btn = QPushButton("\u25b6 Run Portfolio")
         self._portfolio_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._portfolio_btn.setFixedHeight(32)
-        self._portfolio_btn.setStyleSheet(action_button_style(_ACTION_PORTFOLIO_COLOR, _ACTION_PORTFOLIO_HOVER_COLOR))
         self._portfolio_btn.setToolTip("Equal-sleeve portfolio backtest with the parameters above")
         self._portfolio_btn.clicked.connect(lambda: self._on_portfolio_clicked("portfolio"))
         row4.addWidget(self._portfolio_btn)
@@ -231,7 +229,6 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._validate_btn = QPushButton("\u2696 Validate (IS/OOS)")
         self._validate_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._validate_btn.setFixedHeight(32)
-        self._validate_btn.setStyleSheet(action_button_style(_ACTION_VALIDATE_COLOR, _ACTION_VALIDATE_HOVER_COLOR))
         self._validate_btn.setToolTip("Holdout + anchored yearly walk-forward over the 12-config default grid "
                                       "(entry/exit x vol target x ATR stop); the parameters above are the base config. "
                                       "Use a Start date well before the OOS years.")
@@ -269,7 +266,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
             "see trend_following.md section 5 for the preliminary real-data sweep and its caveats."
         )
         disclaimer.setFont(create_font(8, style_name="Semilight"))
-        disclaimer.setStyleSheet("color:#888;")
+        disclaimer.setObjectName("muted")
         disclaimer.setWordWrap(True)
         root.addWidget(disclaimer)
 

@@ -16,8 +16,9 @@ The strategy sub-tabs are signal generation and research only; nothing places or
 
 The repo is a git repository (branch `master`). Commit or branch as usual; the old
 `archive/backup_<timestamp>/` copy-before-editing convention is no longer needed.
-`AutoBackupThread` still writes `archive/auto_<timestamp>/` snapshots of `portfolio.db` and
-`custom_settings.json` on every start (last 7 kept); `archive/` is gitignored.
+`AutoBackupThread` still writes `archive/auto_<timestamp>/` snapshots of `portfolio.db`,
+`custom_settings.json` and `trading_record.json` on every start (last 7 kept); `archive/` is
+gitignored.
 
 ## Running
 
@@ -63,7 +64,13 @@ Dev tooling is in `requirements-dev.txt`
   "Strategy" top-level tab: a `QTabWidget` hosting `auto_trading_tab.py` (`AutoTradingTab`),
   `trend_following_tab.py` (`TrendFollowingTab`), and a `MA Cross` placeholder, behind a
   "Today's Signals" summary bar driven by `threads.fetch_threads.StrategySummaryThread`),
-  `widgets.py` (`StockTable`, `FilterPopup`, `GroupedHeaderView`), `dialogs/` (one module per
+  `widgets.py` (`StockTable`, `NumericItem`, `FilterPopup`, `GroupedHeaderView`), `delegates.py`
+  (every custom-painted table cell: `CellDelegate` base + the Universe/History/Strategy
+  delegates), `ma_chart.py` (`StockMaLauncherMixin`, the shared MA-chart dialog launcher),
+  `colors.py` / `theme.py` (PROFIT/LOSS color rule, design tokens and the global QSS —
+  buttons get their look from the `#primary`/`#danger` objectName roles, secondary labels
+  from `#muted`/`#faint`; never a hardcoded hex for something `theme.py` has a rule for),
+  `dialogs/` (one module per
   dialog group: `index_ma`, `stock_ma`, `trade_edit`, `trade_history`, `assets_graph`,
   `backtest_result`, `trend_following_chart`, `trend_following_portfolio`, `holdings_summary`,
   `stock_report`; import from
@@ -71,7 +78,8 @@ Dev tooling is in `requirements-dev.txt`
   `history_table.py` (cell factories, `fill_table_rows`, `SectionTable` + the column
   `SECTIONS` for the history grid), `history_calc.py` (pure P/L maths, no Qt:
   `compute_pl_fields`, `build_monthly_rows`, `summarize_positions`), `common.py`
-  (`create_font`, `FONT_FAMILY_CSS`, `action_button_style` + role/status color constants,
+  (`create_font` + the `FONT_*` point-size scale, `FONT_FAMILIES` / `FONT_FAMILY_CSS`,
+  `apply_matplotlib_font`, status color constants,
   input validators, `atomic_save_json` /
   `safe_load_json`, `retire_thread`, `ThreadOwnerMixin`). Tabs never
   reference each other
@@ -173,8 +181,12 @@ not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
   (`data/collectors/naver.py`, `data/collectors/krx.py`), and the `'맑은 고딕 Semilight'`
   font-family fallback name (`ui/common.py`). `gemini_helper.py`'s prompts were included in
   the sweep — see the note on that file above for the response-language consequence.
-- Fonts go through `create_font()`; inline stylesheets splice `FONT_FAMILY_CSS` instead of
-  repeating the font-family list.
+- UI 변경은 `docs/ui.md` 의 전역 규칙을 따른다.
+- One font family app-wide, Malgun Gothic Semilight (user direction, 2026-09-19): every
+  widget goes through `create_font()` (sizes from the `FONT_*` scale in `ui/common.py`),
+  numeric cells included — there is no separate monospace/tabular face — and matplotlib
+  charts get the same family from `apply_matplotlib_font()` at startup. Inline stylesheets
+  splice `FONT_FAMILY_CSS` instead of repeating the family list, and size in `pt`, not `px`.
 - Bulk table repaints are wrapped in `setUpdatesEnabled(False)` / `finally:
   setUpdatesEnabled(True)`.
 - Every tab mixes in `ui.common.ThreadOwnerMixin` and registers each worker it starts with

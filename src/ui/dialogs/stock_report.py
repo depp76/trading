@@ -3,7 +3,8 @@ review.md 2-1)."""
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit
 from PyQt6.QtGui import QFont
 
-from ui.common import create_font
+from ui.common import create_font, FONT_HEADING
+from ui.theme import ACCENT_TEXT, TEXT_MUTED
 
 
 def show_stock_report_result(parent, ticker: str, name: str, result_text: str):
@@ -16,8 +17,8 @@ def show_stock_report_result(parent, ticker: str, name: str, result_text: str):
     v.setSpacing(10)
 
     title_lbl = QLabel(f"📊 {name} ({ticker})")
-    title_lbl.setFont(create_font(12, QFont.Weight.Bold))
-    title_lbl.setStyleSheet("color:#0a3d62; margin-bottom:4px;")
+    title_lbl.setFont(create_font(FONT_HEADING, QFont.Weight.Bold))
+    title_lbl.setStyleSheet(f"color:{ACCENT_TEXT}; margin-bottom:4px;")
     v.addWidget(title_lbl)
 
     text_edit = QTextEdit()
@@ -34,7 +35,7 @@ def show_stock_report_result(parent, ticker: str, name: str, result_text: str):
 
     disclaimer_lbl = QLabel("※ This analysis is for reference only and does not constitute investment advice.")
     disclaimer_lbl.setFont(create_font(8, style_name="Semilight"))
-    disclaimer_lbl.setStyleSheet("color:#888;")
+    disclaimer_lbl.setStyleSheet(f"color:{TEXT_MUTED};")
     v.addWidget(disclaimer_lbl)
 
     close_btn = QPushButton("Close")

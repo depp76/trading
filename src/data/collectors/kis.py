@@ -490,7 +490,7 @@ def fetch_kis_realtime_prices(tickers: list, timeout: float = 6.0) -> dict:
                     if msg.get("header", {}).get("tr_id") == "PINGPONG":
                         ws.send(frame)
                 except Exception:
-                    pass
+                    logger.debug("[fetch_kis_realtime_prices] ignoring unparseable control frame", exc_info=True)
                 continue
 
             # Pipe-delimited real-time data frame: "0|H0STCNT0|<count>|field^field^..."
@@ -519,11 +519,11 @@ def fetch_kis_realtime_prices(tickers: list, timeout: float = 6.0) -> dict:
                 }
                 ws.send(json.dumps(unsub))
         except Exception:
-            pass
+            logger.debug("[fetch_kis_realtime_prices] unsubscribe failed (connection likely gone)", exc_info=True)
         try:
             ws.close()
         except Exception:
-            pass
+            logger.debug("[fetch_kis_realtime_prices] ws.close() failed", exc_info=True)
 
     missing = [t for t in tickers if t not in prices]
     if missing:
@@ -564,5 +564,5 @@ def _kis_rest_price_fallback(tickers: list, existing: dict) -> dict:
                 if p is not None:
                     out[c] = p
             except Exception:
-                pass
+                logger.debug("[fetch_kis_realtime_prices] REST fallback worker for %s raised", futures[future], exc_info=True)
     return out

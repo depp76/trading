@@ -64,7 +64,7 @@ def _fast_kr_history(ticker: str, start: str) -> pl.DataFrame:
                         "Volume": float(row[5])
                     })
                 except Exception:
-                    pass
+                    logger.debug("Skipping malformed Naver OHLCV row %r", row, exc_info=True)
             if rows:
                 df = pl.DataFrame(rows)
                 return df.unique(subset=["Date"], keep="last").sort("Date")
@@ -200,7 +200,7 @@ def fetch_naver_per_batch(codes: list, max_workers: int = 30) -> tuple:
                 if fper is not None:
                     fper_map[code] = fper
             except Exception:
-                pass
+                logger.debug("Naver PER fetch failed for %s", futures[fut], exc_info=True)
     return tper_map, fper_map
 
 
