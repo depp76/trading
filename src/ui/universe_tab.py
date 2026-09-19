@@ -320,10 +320,12 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
 
         card = QFrame()
         card.setObjectName("RailCard")
+        # Qt QSS has no four-corner border-radius shorthand (its Radius type
+        # is one or two lengths), so the right-hand corners are set one by one.
         card.setStyleSheet(
             f"QFrame#RailCard {{ background:{SURFACE}; border-left:2px solid {tone}; "
             f"border-top:1px solid {LINE}; border-bottom:1px solid {LINE}; border-right:1px solid {LINE}; "
-            "border-radius:0 6px 6px 0; }}"
+            "border-top-right-radius:6px; border-bottom-right-radius:6px; }"
         )
         layout = QVBoxLayout(card)
         layout.setContentsMargins(10, 8, 10, 8)

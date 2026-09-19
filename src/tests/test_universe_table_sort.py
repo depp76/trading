@@ -126,5 +126,34 @@ class TestNumericSortIsNumericNotLexicographic(unittest.TestCase):
         self.assertEqual(_tickers(table), ["000003", "000001", "000002"])
 
 
+class TestFrozenColumnTracksIdentityWidth(unittest.TestCase):
+    """The frozen Name overlay is a second QTableWidget whose own column
+    used to stay at Qt's 100px default while its widget was resized to
+    column 0's full width -- the overlay painted the identity cell at 100px
+    and blank viewport for the rest, which showed up on screen as an empty
+    gap between Name and Price."""
+
+    def test_frozen_column_width_matches_column_0_after_stretch(self):
+        table = StockTable()
+        table.resize(1400, 600)
+        table.show()
+        table.load_data([_mk("000001", "A", 100), _mk("000002", "B", 200)])
+        app.processEvents()
+        self.assertGreater(table.columnWidth(COL_IDENTITY), 100)
+        self.assertEqual(table._frozen.columnWidth(0), table.columnWidth(COL_IDENTITY))
+        self.assertEqual(table._frozen.width(), table.columnWidth(COL_IDENTITY))
+
+    def test_frozen_column_follows_a_manual_header_resize(self):
+        table = StockTable()
+        table.resize(1400, 600)
+        table.show()
+        table.load_data([_mk("000001", "A", 100)])
+        app.processEvents()
+        table.setColumnWidth(COL_IDENTITY, 333)
+        app.processEvents()
+        self.assertEqual(table._frozen.columnWidth(0), 333)
+        self.assertEqual(table._frozen.width(), 333)
+
+
 if __name__ == "__main__":
     unittest.main()

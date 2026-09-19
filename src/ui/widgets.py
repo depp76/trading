@@ -547,6 +547,9 @@ class StockTable(QTableWidget):
         self.doubleClicked.connect(self._on_row_activated)
 
         self._build_frozen_column()
+        # A manual header drag on column 0 bypasses _stretch_columns, so the
+        # overlay needs its own hook to stay the same width as the column.
+        self._filter_header.sectionResized.connect(self._on_section_resized)
         self.set_density("compact")
 
     def _build_frozen_column(self):
@@ -589,13 +592,23 @@ class StockTable(QTableWidget):
 
     def _reposition_frozen(self):
         header_h = self.horizontalHeader().height()
+        col_w = self.columnWidth(0)
         self._frozen.setGeometry(
             self.frameWidth(),
             header_h + self.frameWidth(),
-            self.columnWidth(0),
+            col_w,
             self.viewport().height(),
         )
+        # The overlay's own column must track the main table's column 0
+        # width too; left at QTableWidget's 100px default, the overlay paints
+        # the identity cell at 100px and blank viewport for the rest of its
+        # width -- which reads as a gap between Name and Price.
+        self._frozen.setColumnWidth(0, col_w)
         self._frozen.raise_()
+
+    def _on_section_resized(self, logical, _old, _new):
+        if logical == 0:
+            self._reposition_frozen()
 
     def _sync_frozen_column(self):
         """Mirror column 0's cell content and row-hidden state into the
