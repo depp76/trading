@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
     QPushButton, QMessageBox, QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont
 
 from paths import UNIVERSE_CACHE_FILE, CUSTOM_SETTINGS_FILE
@@ -38,12 +38,11 @@ from threads.fetch_threads import (
     SingleStockFetchThread,
     AllDataFetchThread,
     UniverseLightweightFetchThread,
-    StockMaThread,
     GeminiStockReportThread,
 )
 from ui.widgets import StockTable, TOGGLE_GROUPS
-from ui.dialogs import StockMaDialog
 from ui.dialogs.stock_report import show_stock_report_result
+from ui.ma_chart import StockMaLauncherMixin
 from ui.colors import PROFIT, LOSS, FLAT
 from ui.theme import SURFACE, LINE, TEXT_MUTED
 
@@ -66,7 +65,7 @@ def _is_rail_row(item: dict) -> bool:
     return bool(item.get('is_index') or item.get('is_bond') or item.get('change_mode') in ('bp', 'abs'))
 
 
-class UniverseTab(ThreadOwnerMixin, QWidget):
+class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
     """Trading Universe tab: watchlist table + ticker add/search controls."""
 
     status_text_changed = pyqtSignal(str)  # -> MainWindow's shared status_label
@@ -80,7 +79,6 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         self.all_data = []
         self.market_status = {}
         self._market_filter = "ALL"
-        self._open_dialogs: list = []
         self._build_ui()
         self.load_custom_settings()
         self._apply_column_group_and_density_settings()
@@ -483,33 +481,10 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         item = next((d for d in self.all_data if d.get('ticker') == ticker), None)
         if item is None:
             return
-        self.show_stock_ma(ticker, item.get('name', ticker), item.get('market', ''), item.get('change_mode', 'pct'))
+        self._show_stock_ma(ticker, item.get('name', ticker), item.get('market', ''), item.get('change_mode', 'pct'))
 
-    def show_stock_ma(self, ticker, name, market, change_mode='pct'):
-        self.status_text_changed.emit(f"Loading MA20 & MA50 for {name} ({ticker})...")
-        thread = self._track_thread(StockMaThread(ticker, name, market, change_mode))
-        thread.finished.connect(self.on_stock_ma_loaded)
-        thread.start()
-
-    def on_stock_ma_loaded(self, ticker, name, df, error, investor_data, market, change_mode):
-        self.status_text_changed.emit(f"MA chart loaded for {name} ({ticker}).")
-        if error and df is None:
-            QMessageBox.warning(self, "Error", f"Failed to load data for {ticker}:\n{error}")
-            return
-        if not market:
-            market = next((d.get('market', '') for d in self.all_data if d.get('ticker') == ticker), "")
-        dlg = StockMaDialog(ticker, name, market, df, investor_data=investor_data, parent=None, change_mode=change_mode)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        active_dialogs = []
-        for d in self._open_dialogs:
-            try:
-                if d.isVisible():
-                    active_dialogs.append(d)
-            except RuntimeError:
-                pass
-        self._open_dialogs = active_dialogs
-        self._open_dialogs.append(dlg)
-        dlg.show()
+    def _on_stock_ma_status(self, msg: str):
+        self.status_text_changed.emit(msg)
 
     # ---AI Stock Report (roadmap 2-1, review.md 2-1) ---
     def _on_ai_report_requested(self, ticker: str):

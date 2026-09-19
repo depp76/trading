@@ -27,7 +27,7 @@ from threads.fetch_threads import AssetMetricsPreloadThread
 from ui.widgets import GroupedHeaderView, ColSpec, NumericItem
 from ui.dialogs import TotalAssetsGraphDialog
 from ui.colors import PROFIT, LOSS
-from ui.theme import ACCENT, TEXT_MUTED
+from ui.theme import ACCENT, TEXT, TEXT_MUTED
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         self.live_asset_lbl = QLabel("-")
         self.live_asset_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.live_asset_lbl.setFont(create_font(10, QFont.Weight.Bold))
-        self.live_asset_lbl.setStyleSheet("color:#2c3e50;")
+        self.live_asset_lbl.setStyleSheet(f"color:{TEXT};")
         self.live_asset_lbl.setFixedWidth(120)
 
         live_diff_title = QLabel("Weekly P/L:")
@@ -212,7 +212,7 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         self.live_diff_lbl = QLabel("-")
         self.live_diff_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.live_diff_lbl.setFont(create_font(10, QFont.Weight.Bold))
-        self.live_diff_lbl.setStyleSheet("color:#2c3e50;")
+        self.live_diff_lbl.setStyleSheet(f"color:{TEXT};")
         self.live_diff_lbl.setFixedWidth(150)
 
         ctrl.addWidget(lbl_date)
@@ -502,6 +502,14 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
     def _show_graph(self):
         if len(self._records) == 0:
             QMessageBox.information(self, "Graph", "No data to plot.")
+            return
+        # Same guard as _refresh_table_impl: until AssetMetricsPreloadThread
+        # has warmed the USD/KRW and KOSPI caches, _rate_kospi_for_date()
+        # would do its first-call network fetch right here on the UI thread.
+        if not self._metrics_ready:
+            QMessageBox.information(
+                self, "Graph", "USD/KRW and KOSPI history are still loading — try again in a moment.",
+            )
             return
 
         dates = []
@@ -950,7 +958,7 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
                 self.live_diff_lbl.setStyleSheet(f"color: {color};")
             else:
                 self.live_diff_lbl.setText("-")
-                self.live_diff_lbl.setStyleSheet("color: #2c3e50;")
+                self.live_diff_lbl.setStyleSheet(f"color:{TEXT};")
         else:
             self.live_diff_lbl.setText("-")
-            self.live_diff_lbl.setStyleSheet("color: #2c3e50;")
+            self.live_diff_lbl.setStyleSheet(f"color:{TEXT};")

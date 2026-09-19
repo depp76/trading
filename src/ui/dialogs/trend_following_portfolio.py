@@ -15,6 +15,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
 import matplotlib.dates as mdates
+
+from ui.theme import TEXT_MUTED
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
@@ -148,7 +150,7 @@ class TrendFollowingPortfolioDialog(QDialog):
 
         note = QLabel("⚠️ Constant-mix equal sleeves; inter-sleeve rebalancing cost not modelled. "
                       "Single in-sample period — use Validate (IS/OOS) for out-of-sample numbers. Research tool, not investment advice.")
-        note.setStyleSheet("color:#888; font-size:9pt;")
+        note.setStyleSheet(f"color:{TEXT_MUTED}; font-size:9pt;")
         note.setWordWrap(True)
         layout.addWidget(note)
         close_btn = QPushButton("Close")
@@ -228,7 +230,7 @@ class TrendFollowingValidationDialog(QDialog):
 
         note = QLabel("⚠️ Signals use the full history (backward-looking only); only the evaluation window is cut. "
                       "Quote the stitched walk-forward OOS numbers. Research tool, not investment advice — trend_following.md section 5.")
-        note.setStyleSheet("color:#888; font-size:9pt;")
+        note.setStyleSheet(f"color:{TEXT_MUTED}; font-size:9pt;")
         note.setWordWrap(True)
         layout.addWidget(note)
         close_btn = QPushButton("Close")

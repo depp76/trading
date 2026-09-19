@@ -36,11 +36,15 @@ from ui.dialogs import (
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, create_numeric_font, _fmt_num_edit, FONT_FAMILY_CSS, ThreadOwnerMixin
+from ui.common import (
+    create_font, _fmt_num_edit, FONT_FAMILY_CSS, ThreadOwnerMixin,
+    _STATUS_SUCCESS_COLOR, FONT_KPI, FONT_CAPTION,
+)
 from ui.colors import PROFIT, LOSS
 from ui.theme import ACCENT_TEXT, TEXT_FAINT
 from ui.history_calc import compute_pl_fields, build_monthly_rows, summarize_positions
-from ui.history_table import fill_table_rows, SectionTable, SECTIONS, COLUMNS, TradeStateDelegate
+from ui.history_table import fill_table_rows, SectionTable, SECTIONS, COLUMNS
+from ui.delegates import TradeStateDelegate
 from ui.dialogs.holdings_summary import show_holdings_summary
 
 
@@ -203,20 +207,20 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
             box = QVBoxLayout()
             box.setSpacing(2)
             lbl = QLabel(label.upper())
-            lbl.setFont(create_font(8, style_name="Semilight"))
+            lbl.setFont(create_font(FONT_CAPTION, style_name="Semilight"))
             lbl.setStyleSheet(f"color:{TEXT_FAINT}; letter-spacing:.05em;")
             box.addWidget(lbl)
             value_lbl = None
             if editable_widget is not None:
-                editable_widget.setFont(create_numeric_font(13))
+                editable_widget.setFont(create_font(FONT_KPI, style_name="Semilight"))
                 editable_widget.setStyleSheet("border:none; padding:0px; background:transparent;")
                 box.addWidget(editable_widget)
             else:
                 value_lbl = QLabel("-")
-                value_lbl.setFont(create_numeric_font(13))
+                value_lbl.setFont(create_font(FONT_KPI, style_name="Semilight"))
                 box.addWidget(value_lbl)
             sub_lbl = QLabel(sub_text)
-            sub_lbl.setFont(create_font(7, style_name="Semilight"))
+            sub_lbl.setFont(create_font(FONT_CAPTION, style_name="Semilight"))
             sub_lbl.setStyleSheet(f"color:{TEXT_FAINT};")
             box.addWidget(sub_lbl)
             self._kpi_labels[key] = (value_lbl, sub_lbl)
@@ -277,7 +281,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         reload_btn = _styled_button("🔄 Reload", None, self._reload_current)
         add_btn = _styled_button("➕ Add Trade", "primary", self._show_add_trade_dialog)
         self._deposit_status_lbl = QLabel("")
-        self._deposit_status_lbl.setStyleSheet("font-size:9pt; color:#107c10; font-weight:bold;")
+        self._deposit_status_lbl.setStyleSheet(f"font-size:9pt; color:{_STATUS_SUCCESS_COLOR}; font-weight:bold;")
         self._deposit_status_lbl.setFixedHeight(_BTN_H)
 
         buttons = QHBoxLayout()
@@ -289,7 +293,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         layout.addLayout(buttons)
 
         self._path_label = QLabel("")
-        self._path_label.setStyleSheet("color:#777; font-size:9px; border:none;")
+        self._path_label.setStyleSheet(f"color:{TEXT_FAINT}; font-size:{FONT_CAPTION}pt; border:none;")
         self._path_label.setFixedHeight(12)
         layout.addWidget(self._path_label)
         return card
@@ -498,16 +502,16 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
     def _show_holdings_summary(self):
         show_holdings_summary(self, self._closed_data, self._open_data)
 
-    def _save_overrides(self):
-        """Persist all currently edited/overridden records back to the DB."""
+    def _save_overrides(self, records: list):
+        """Persist just the given edited records back to the DB.
+
+        Used to re-upsert every closed/overridden/custom trade on each edit
+        (one cell change -> N rows rewritten, growing with the trade log);
+        every call site knows exactly which record(s) it changed, so it
+        passes those instead."""
         try:
-            to_save = [
-                rec for rec in self._closed_data + self._open_data
-                if rec.get("is_overridden") or rec.get("is_custom") or
-                   rec.get("sell_date") or rec.get("sell_price")
-            ]
-            if to_save:
-                trade_db.upsert_trades(to_save)
+            if records:
+                trade_db.upsert_trades(records)
         except Exception as e:
             logger.error("Failed to save overrides to DB: %s", e, exc_info=True)
             QMessageBox.warning(
@@ -751,7 +755,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         if self._deposit_thread is not None and self._deposit_thread.isRunning():
             return
         self._fetch_dep_btn.setEnabled(False)
-        self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#0078d4; font-weight:bold;")
+        self._deposit_status_lbl.setStyleSheet(f"font-size:10pt; color:{ACCENT_TEXT}; font-weight:bold;")
         self._deposit_status_lbl.setText("⏳ Fetching deposit...")
         self.status_message.emit("Fetching account deposit from KIS...")
         self._track_thread(AccountDepositThread(), '_deposit_thread')
@@ -761,7 +765,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
     def _on_account_deposit_fetched(self, val: float, err: str):
         self._fetch_dep_btn.setEnabled(True)
         if err:
-            self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#d32f2f; font-weight:bold;")
+            self._deposit_status_lbl.setStyleSheet(f"font-size:10pt; color:{PROFIT}; font-weight:bold;")
             self._deposit_status_lbl.setText("❌ Failed to fetch")
             QTimer.singleShot(5000, lambda: self._deposit_status_lbl.setText(""))
             QMessageBox.critical(self, "Error", f"Failed to fetch data:\n{err}")
@@ -769,7 +773,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         self._deposit_edit.setText(f"{int(val):,}")
         self._on_deposit_changed()
         # Inline status display (instead of QMessageBox) - immediate edit possible
-        self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#107c10; font-weight:bold;")
+        self._deposit_status_lbl.setStyleSheet(f"font-size:10pt; color:{_STATUS_SUCCESS_COLOR}; font-weight:bold;")
         self._deposit_status_lbl.setText(f"💰 {int(val):,} KRW (Est.)")
         QTimer.singleShot(4000, lambda: self._deposit_status_lbl.setText(""))
         self._deposit_edit.selectAll()
@@ -1028,7 +1032,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
             if ok and new_str.strip():
                 rec["company"] = new_str.strip()
                 rec["is_overridden"] = True
-                self._save_overrides()
+                self._save_overrides([rec])
                 self._refresh_summary()
                 self._apply_filter()
             return
@@ -1040,7 +1044,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
                 new_ticker = new_str.strip()
                 rec["ticker"] = new_ticker
                 rec["is_overridden"] = True
-                self._save_overrides()
+                self._save_overrides([rec])
 
                 self._start_price_fetch()
                 self._refresh_summary()
@@ -1066,7 +1070,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
                 self._compute_pl_fields(rec)
                 self._refresh_summary()
                 self._apply_filter()
-                self._save_overrides()
+                self._save_overrides([rec])
             return
 
         if col in {7, 9, 10, 11}:
@@ -1076,7 +1080,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
                 rec["sell_date"]   = res["sell_date"]
                 rec["sell_price"]  = res["sell_price"]
                 rec["sell_qty"]    = res["sell_qty"]
-                rec["sell_amount"] = res["sell_amount"] if res["sell_amount"] > 0 else res["sell_price"] * res["sell_qty"]
+                rec["sell_amount"] = res["sell_amount"]  # dialog already fills price*qty when blank
                 rec["is_overridden"] = True
                 self._compute_pl_fields(rec)
 
@@ -1092,7 +1096,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
 
                 self._refresh_summary()
                 self._apply_filter()
-                self._save_overrides()
+                self._save_overrides([rec])
             return
 
     def _on_ticker_name_resolved(self, result, error: str, ticker: str):
@@ -1101,15 +1105,15 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         name = (result or {}).get("name")
         if not name:
             return
-        changed = False
+        changed = []
         for rec in self._open_data + self._closed_data:
             if rec.get("ticker") == ticker and rec.get("company") != name:
                 rec["company"] = name
                 rec["is_overridden"] = True
-                changed = True
+                changed.append(rec)
         if not changed:
             return
-        self._save_overrides()
+        self._save_overrides(changed)
         self._refresh_summary()
         self._apply_filter()
 
@@ -1120,11 +1124,11 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
             res = dlg.result_data
             buy_price = res["buy_price"]
             qty = res["qty"]
-            buy_amount = res["buy_amount"] or (buy_price * qty)
+            buy_amount = res["buy_amount"]  # dialog already fills price*qty when blank
             
             sell_price = res["sell_price"]
             sell_qty = res["sell_qty"]
-            sell_amount = res["sell_amount"] or (sell_price * sell_qty)
+            sell_amount = res["sell_amount"]
             
             pl = sell_amount - buy_amount if (sell_amount > 0 and buy_amount > 0) else 0.0
             pl_pct = (pl / buy_amount * 100) if buy_amount > 0 else 0.0

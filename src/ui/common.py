@@ -21,14 +21,30 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Font creation & typography
 # ---------------------------------------------------------------------------
+# One family for the whole app -- every widget, numeric table cells included,
+# and matplotlib charts (apply_matplotlib_font). The three names are the same
+# face under Qt's English/Korean family names plus the plain family as a
+# fallback (user direction 2026-09-19; the docs/ui.md 1.3 "numbers in a
+# monospace face" rule was dropped for this).
+FONT_FAMILIES = ["Malgun Gothic Semilight", "맑은 고딕 Semilight", "Malgun Gothic"]
+
+# Point-size scale. Anything not on it is a one-off to justify.
+FONT_TITLE = 16     # tab titles
+FONT_KPI = 13       # KPI-card values
+FONT_HEADING = 11   # section headings
+FONT_BODY = 10      # default (QApplication font)
+FONT_SMALL = 9      # table cells, status lines
+FONT_CAPTION = 8    # sub-labels, footnotes
+
+
 def create_font(
-    size: int = 10,
+    size: int = FONT_BODY,
     weight: QFont.Weight = QFont.Weight.Normal,
     style_name: str = None,
 ) -> QFont:
-    """Create a unified Malgun Gothic Semilight font instance."""
+    """The app font at `size`: Malgun Gothic Semilight, or its Bold face."""
     font = QFont()
-    font.setFamilies(["Malgun Gothic Semilight", "맑은 고딕 Semilight", "Malgun Gothic"])
+    font.setFamilies(FONT_FAMILIES)
     font.setPointSize(size)
     if weight == QFont.Weight.Bold:
         font.setWeight(QFont.Weight.Bold)
@@ -38,23 +54,19 @@ def create_font(
     return font
 
 
-def create_numeric_font(size: int = 9) -> QFont:
-    """Monospace-digit font for numeric table cells (docs/ui.md 1.3: tabular
-    numerals, so digits line up vertically down a column). Consolas ships
-    with Windows and its digits are fixed-width; the app's Korean UI font
-    (Malgun Gothic Semilight) is proportional, so numeric cells deliberately
-    use a different family than text cells."""
-    font = QFont()
-    font.setFamilies(["Consolas", "Cascadia Mono", "Malgun Gothic Semilight"])
-    font.setPointSize(size)
-    return font
+def apply_matplotlib_font() -> None:
+    """Point matplotlib at the same family as the Qt widgets. Without this
+    every chart (MA dialogs, backtest results, the Total Assets trend) drew
+    in matplotlib's bundled DejaVu Sans, which has no Hangul -- a stock name
+    in a chart title rendered as boxes. Called once at startup."""
+    from matplotlib import rcParams
+    rcParams["font.family"] = FONT_FAMILIES + ["sans-serif"]
+    rcParams["axes.unicode_minus"] = False  # DejaVu's U+2212 minus is not in Malgun Gothic
 
 
 # ---------------------------------------------------------------------------
 # Styling constants
 # ---------------------------------------------------------------------------
-_ACCENT_COLOR = "#0078d4"
-_ACCENT_HOVER_COLOR = "#005a9e"
 _HIST_KEYS = ["3d", "5d", "10d", "20d", "60d", "120d"]
 _MARKET_ORDER = {"KOSPI": 0, "KOSDAQ": 1, "NASDAQ 100": 2, "S&P500": 3}
 _FIELD_ERROR_STYLE = "border: 1px solid #e74c3c; background-color: #fdecea;"
@@ -62,48 +74,18 @@ _FIELD_ERROR_STYLE = "border: 1px solid #e74c3c; background-color: #fdecea;"
 # Shared font-family declaration for inline stylesheets (roadmap 6-2e); the
 # same three-family fallback list create_font() uses. Splice it into a
 # stylesheet string: "QLabel { " + FONT_FAMILY_CSS + " font-size: 9pt; }"
-FONT_FAMILY_CSS = "font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';"
-
-# ---------------------------------------------------------------------------
-# Role-based action button colors (roadmap 7-2a) — Auto Trading and Trend
-# Following each hardcoded their own palette for the same three roles (run a
-# single-instrument backtest, run a portfolio backtest, run walk-forward
-# validation); centralised here so the same role gets the same hue in every
-# tab that has it, and a future tab can pick a role instead of a new hex.
-# ---------------------------------------------------------------------------
-_ACTION_BACKTEST_COLOR = "#8e44ad"
-_ACTION_BACKTEST_HOVER_COLOR = "#732d91"
-_ACTION_PORTFOLIO_COLOR = "#1a5276"
-_ACTION_PORTFOLIO_HOVER_COLOR = "#21618c"
-_ACTION_VALIDATE_COLOR = "#6c3483"
-_ACTION_VALIDATE_HOVER_COLOR = "#9b59b6"
+FONT_FAMILY_CSS = "font-family: " + ", ".join(f"'{f}'" for f in FONT_FAMILIES) + ";"
 
 # Status text colors (roadmap 7-2c) — e.g. a risk-gate PASS/FAIL cell. Reserved
 # for status display only (roadmap 7-4d): an action button must not reuse these,
 # even one whose action happens to succeed/fail, so status color always means
 # "this is a status", never "this is a runnable action that turned out fine".
+# (Button chrome itself comes from ui/theme.py's QPushButton rules and the
+# #primary/#danger objectName roles; the per-role solid-fill helpers that used
+# to live here -- action_button_style(), _ACTION_*_COLOR, _SECONDARY_BUTTON_STYLE
+# -- are gone with docs/ui.md 1.6.)
 _STATUS_SUCCESS_COLOR = "#107c10"
 _STATUS_FAIL_COLOR = "#c0392b"
-
-# Secondary/neutral action button (roadmap 7-2b) — for buttons like "Chart" or
-# "Use Universe" that previously had no style at all and stood out against the
-# tab's other, colored buttons. Grey matches the grey Trading History/Total
-# Assets already used for Export/search (roadmap 7-4f: one grey, not two).
-_SECONDARY_BUTTON_STYLE = (
-    "QPushButton { background:#6c757d; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
-    "QPushButton:hover { background:#5a6268; }"
-    "QPushButton:disabled { background:#bbb; }"
-)
-
-
-def action_button_style(color: str, hover_color: str) -> str:
-    """QPushButton stylesheet for a role-colored primary action button (roadmap
-    7-2a) — the template Auto Trading/Trend Following's "Run ..." buttons share."""
-    return (
-        f"QPushButton {{ background:{color}; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }}"
-        f"QPushButton:hover {{ background:{hover_color}; }}"
-        "QPushButton:disabled { background:#bbb; }"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +277,7 @@ def atomic_save_json(file_path: str, data: Any, indent: int = 2) -> None:
             try:
                 os.remove(temp_path)
             except Exception:
-                pass
+                logger.debug("Could not remove temp file %s after a failed save", temp_path, exc_info=True)
         logger.error("Failed to atomically save JSON to %s: %s", file_path, e, exc_info=True)
         raise
 

@@ -12,11 +12,41 @@ app = QApplication.instance() or QApplication([])
 
 from ui.common import (
     create_font,
+    apply_matplotlib_font,
+    FONT_FAMILIES,
+    FONT_FAMILY_CSS,
+    FONT_BODY,
     _validate_date_str,
     _validate_positive_number,
     atomic_save_json,
     safe_load_json,
 )
+
+
+class TestOneAppFont(unittest.TestCase):
+    """User direction 2026-09-19: one family everywhere -- widgets, numeric
+    cells and matplotlib charts all resolve to Malgun Gothic Semilight."""
+
+    def test_create_font_defaults_to_the_app_family_and_body_size(self):
+        f = create_font()
+        self.assertEqual(f.families(), FONT_FAMILIES)
+        self.assertEqual(f.pointSize(), FONT_BODY)
+        self.assertEqual(f.styleName(), "Semilight")
+
+    def test_numeric_cells_use_the_same_family(self):
+        from ui.history_table import ni, pi, wi
+        for item in (ni(1_234_567), pi(3.2), wi(12.0)):
+            self.assertEqual(item.font().families(), FONT_FAMILIES)
+
+    def test_stylesheet_family_list_matches(self):
+        for fam in FONT_FAMILIES:
+            self.assertIn(f"'{fam}'", FONT_FAMILY_CSS)
+
+    def test_matplotlib_gets_the_same_family(self):
+        from matplotlib import rcParams
+        apply_matplotlib_font()
+        self.assertEqual(rcParams["font.family"][:len(FONT_FAMILIES)], FONT_FAMILIES)
+        self.assertFalse(rcParams["axes.unicode_minus"])
 
 
 class TestUiCommonValidators(unittest.TestCase):

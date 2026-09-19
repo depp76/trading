@@ -113,7 +113,15 @@ def app_qss(font_css: str) -> str:
         background-color: {SURFACE}; border: 1px solid {LINE}; border-radius: 8px;
     }}
 
-    QLabel#kpiLabel {{ color: {TEXT_FAINT}; font-size: 10px; font-weight: 600; }}
-    QLabel#kpiValue {{ color: {TEXT}; font-size: 17px; }}
-    QLabel#kpiSub   {{ color: {TEXT_FAINT}; font-size: 10px; }}
+    /* Sizes in pt so they scale with DPI like every create_font() call
+       (docs/ui.md 6.4: mockup px x 0.75); the ui.common FONT_* scale. */
+    QLabel#kpiLabel {{ color: {TEXT_FAINT}; font-size: 8pt; font-weight: 600; }}
+    QLabel#kpiValue {{ color: {TEXT}; font-size: 13pt; }}
+    QLabel#kpiSub   {{ color: {TEXT_FAINT}; font-size: 8pt; }}
+
+    /* Secondary text: subtitles, status lines, footnotes. Tabs used to set
+       these with per-label hex (#7f8c8d / #888 / #777) -- an objectName
+       keeps them on one token. */
+    QLabel#muted {{ color: {TEXT_MUTED}; }}
+    QLabel#faint {{ color: {TEXT_FAINT}; }}
     """

@@ -88,6 +88,52 @@ class TestSignalSlotArity(unittest.TestCase):
         self.assertEqual((ticker, name, df, err, inv, market, cm),
                          ("AAPL", "Apple", None, "boom", [], "NASDAQ 100", "pct"))
 
+    def test_strategy_summary_counts_trend_following_outcomes_in_parallel(self):
+        import polars as pl
+        from threads.fetch_threads import StrategySummaryThread
+
+        def fake_tf(ticker, _start):
+            if ticker == "ERR":
+                return {"error": "no data"}
+            pos = [0, 1] if ticker == "IN" else [1, 0]
+            return {"error": None, "signals": pl.DataFrame({"position": pos})}
+
+        fake_rebalance = {"buy_candidates": [1, 2], "sell_candidates": [3]}
+        got = []
+        t = StrategySummaryThread([], set(), {"KOSPI": 10}, 1.5, ["IN", "FLAT", "ERR"], "2025-01-01")
+        t.finished.connect(lambda r, e: got.append((r, e)))
+        with patch("strategy.trend_following.run_backtest_for_ticker", side_effect=fake_tf), \
+             patch("strategy.rebalance.compute_weekly_rebalance_signals", return_value=fake_rebalance):
+            t.run()
+        (result, err), = got
+        self.assertEqual(err, "")
+        self.assertEqual(
+            {k: result[k] for k in ("buy_count", "sell_count", "tf_in_position", "tf_flat", "tf_errors", "tf_total")},
+            {"buy_count": 2, "sell_count": 1, "tf_in_position": 1, "tf_flat": 1, "tf_errors": 1, "tf_total": 3},
+        )
+
+    def test_auto_backup_covers_every_hand_entered_state_file(self):
+        # trading_record.json (Total Assets weekly snapshots) is typed in by
+        # hand and cannot be rebuilt from any API, so it must be in the list.
+        from threads.fetch_threads import _AUTO_BACKUP_FILES
+        from paths import DB_FILE, CUSTOM_SETTINGS_FILE, TRADING_RECORD_FILE
+        self.assertEqual(set(_AUTO_BACKUP_FILES), {DB_FILE, CUSTOM_SETTINGS_FILE, TRADING_RECORD_FILE})
+
+    def test_history_tab_save_overrides_upserts_only_the_given_records(self):
+        from ui.history_tab import TradingHistoryTab
+        tab = TradingHistoryTab()
+        edited = {"ticker": "005930", "company": "A", "buy_date": "2026-01-01", "orig_key": "k1"}
+        untouched = {"ticker": "000660", "company": "B", "buy_date": "2026-02-01", "orig_key": "k2",
+                     "sell_date": "2026-03-01"}
+        tab._open_data = [edited]
+        tab._closed_data = [untouched]
+        with patch("ui.history_tab.trade_db.upsert_trades") as upsert:
+            tab._save_overrides([edited])
+            upsert.assert_called_once_with([edited])
+            tab._save_overrides([])
+            upsert.assert_called_once()
+        tab._settings_save_timer.stop()
+
     def test_history_tab_renames_every_record_with_that_ticker(self):
         from ui.history_tab import TradingHistoryTab
         tab = TradingHistoryTab()

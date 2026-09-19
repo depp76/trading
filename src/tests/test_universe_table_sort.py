@@ -143,6 +143,17 @@ class TestFrozenColumnTracksIdentityWidth(unittest.TestCase):
         self.assertEqual(table._frozen.columnWidth(0), table.columnWidth(COL_IDENTITY))
         self.assertEqual(table._frozen.width(), table.columnWidth(COL_IDENTITY))
 
+    def test_columns_fill_the_whole_viewport(self):
+        # The old 0.99 viewport factor left a ~1% blank strip at the right
+        # edge (14px on a 1398px viewport).
+        table = StockTable()
+        table.resize(1400, 600)
+        table.show()
+        table.load_data([_mk("000001", "A", 100)])
+        app.processEvents()
+        total = sum(table.columnWidth(c) for c in range(table.columnCount()) if not table.isColumnHidden(c))
+        self.assertEqual(total, table.viewport().width())
+
     def test_frozen_column_follows_a_manual_header_resize(self):
         table = StockTable()
         table.resize(1400, 600)

@@ -45,22 +45,23 @@ import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QComboBox, QFrame,
-    QStyledItemDelegate, QStyle,
 )
-from PyQt6.QtCore import Qt, QRect
-from PyQt6.QtGui import QFont, QColor, QPen, QFontMetrics
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QColor
 
 import trade_db
 from strategy.rebalance import compute_weekly_rebalance_signals, RebalanceConfig
-from threads.fetch_threads import RebalanceBacktestThread, StockMaThread
-from ui.dialogs import BacktestResultDialog, StockMaDialog
+from threads.fetch_threads import RebalanceBacktestThread
+from ui.dialogs import BacktestResultDialog
+from ui.delegates import RankStockDelegate, ActionBadgeDelegate, ScoreBarDelegate
+from ui.ma_chart import StockMaLauncherMixin
 from ui.colors import ACTION_BUY, ACTION_SELL, PROFIT
-from ui.theme import ACCENT, ACCENT_TEXT, ACCENT_BG, TEXT_FAINT, LINE, LINE_SOFT
+from ui.theme import ACCENT, TEXT_FAINT, LINE
 
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, ThreadOwnerMixin, action_button_style, _ACTION_BACKTEST_COLOR, _ACTION_BACKTEST_HOVER_COLOR
+from ui.common import create_font, ThreadOwnerMixin
 
 
 # ---------------------------------------------------------------------------
@@ -90,147 +91,6 @@ _SIGNAL_COLUMNS = [
 COL_STOCK, COL_ACTION, COL_SCORE, COL_PER, COL_MA20DIV, COL_MA50DIV, \
     COL_HI52, COL_RET20, COL_RET60, COL_SLOPE, COL_HELD = range(len(_SIGNAL_COLUMNS))
 
-_ACTION_STYLE = {
-    "Buy":  (ACTION_BUY, "#eef8f2", "#b8dfcb"),
-    "Sell": (ACTION_SELL, "#fdf3e6", "#f0dcb8"),
-    "Hold": (ACCENT_TEXT, ACCENT_BG, ACCENT),
-    "-":    (TEXT_FAINT, "transparent", LINE),
-}
-
-
-class RankStockDelegate(QStyledItemDelegate):
-    """Column 0: rank number + an action-colored left marker + name +
-    "ticker · market" meta (docs/ui.md 2.2's identity-cell pattern, reused
-    here so a candidate's rank and identity read as one row instead of two
-    separate table lookups -- issue #4)."""
-
-    def paint(self, painter, option, index):
-        painter.save()
-        rect = option.rect
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(rect, QColor(ACCENT_BG))
-        elif option.features & option.ViewItemFeature.Alternate:
-            painter.fillRect(rect, option.palette.alternateBase())
-        else:
-            painter.fillRect(rect, option.palette.base())
-
-        data = index.data(Qt.ItemDataRole.UserRole) or {}
-        rank_text = data.get("rank", "-")
-        name = data.get("name", "")
-        meta = data.get("meta", "")
-        color = QColor(data.get("color", LINE))
-
-        rank_font = QFont(option.font)
-        rank_font.setPointSize(max(6, option.font.pointSize() - 1))
-        painter.setFont(rank_font)
-        painter.setPen(QColor(TEXT_FAINT))
-        rank_w = 22
-        painter.drawText(
-            QRect(rect.x() + 4, rect.y(), rank_w, rect.height()),
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(rank_text),
-        )
-
-        marker_x = rect.x() + 4 + rank_w + 6
-        marker_h = 18
-        painter.fillRect(marker_x, rect.y() + (rect.height() - marker_h) // 2, 3, marker_h, color)
-
-        text_x = marker_x + 3 + 8
-        text_w = max(10, rect.right() - text_x - 4)
-        name_font = QFont(option.font)
-        painter.setFont(name_font)
-        painter.setPen(QColor("#1c1e2c"))
-        fm = QFontMetrics(name_font)
-        elided = fm.elidedText(name, Qt.TextElideMode.ElideRight, text_w)
-        name_rect = QRect(text_x, rect.y(), text_w, rect.height() // 2 + (rect.height() % 2))
-        painter.drawText(name_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, elided)
-
-        meta_font = QFont(option.font)
-        meta_font.setPointSize(max(6, option.font.pointSize() - 1))
-        painter.setFont(meta_font)
-        painter.setPen(QColor(TEXT_FAINT))
-        meta_rect = QRect(text_x, rect.y() + rect.height() // 2, text_w, rect.height() // 2)
-        painter.drawText(meta_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, meta)
-
-        painter.restore()
-
-
-class ActionBadgeDelegate(QStyledItemDelegate):
-    """Column 1: a centered Buy/Sell/Hold text badge (docs/ui.md Strategy
-    Redesign issue #5 -- replaces the old emoji section headers, "🟢 Buy
-    Candidates" / "🔴 Sell Candidates"). Colors come from ui.colors.ACTION_BUY/
-    ACTION_SELL/theme.ACCENT, a deliberately different axis from the
-    PROFIT/LOSS price-direction colors used elsewhere in the app."""
-
-    def paint(self, painter, option, index):
-        painter.save()
-        rect = option.rect
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(rect, QColor(ACCENT_BG))
-        elif option.features & option.ViewItemFeature.Alternate:
-            painter.fillRect(rect, option.palette.alternateBase())
-        else:
-            painter.fillRect(rect, option.palette.base())
-
-        action = (index.data(Qt.ItemDataRole.UserRole) or {}).get("action", "-")
-        if action != "-":
-            fg, bg, border = _ACTION_STYLE[action]
-            badge_font = QFont(option.font)
-            badge_font.setPointSize(max(6, option.font.pointSize() - 1))
-            badge_font.setBold(True)
-            bw = QFontMetrics(badge_font).horizontalAdvance(action) + 14
-            bh = 17
-            bx = rect.x() + (rect.width() - bw) // 2
-            by = rect.y() + (rect.height() - bh) // 2
-            painter.setPen(QPen(QColor(border)))
-            painter.setBrush(QColor(bg))
-            painter.drawRoundedRect(bx, by, bw, bh, 4, 4)
-            painter.setPen(QColor(fg))
-            painter.setFont(badge_font)
-            painter.drawText(QRect(bx, by, bw, bh), Qt.AlignmentFlag.AlignCenter, action)
-
-        painter.restore()
-
-
-class ScoreBarDelegate(QStyledItemDelegate):
-    """Column 2: a small filled bar (normalized within the current ranking's
-    min/max) plus the raw score, so relative standing reads at a glance
-    instead of needing to compare raw z-score numbers row to row."""
-
-    def paint(self, painter, option, index):
-        painter.save()
-        rect = option.rect
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(rect, QColor(ACCENT_BG))
-        elif option.features & option.ViewItemFeature.Alternate:
-            painter.fillRect(rect, option.palette.alternateBase())
-        else:
-            painter.fillRect(rect, option.palette.base())
-
-        data = index.data(Qt.ItemDataRole.UserRole)
-        if data:
-            pad = 6
-            track_y = rect.y() + rect.height() // 2 - 3
-            track_h = 6
-            track_x = rect.x() + pad
-            track_w = max(1, rect.width() - 2 * pad - 34)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(LINE_SOFT))
-            painter.drawRoundedRect(track_x, track_y, track_w, track_h, 3, 3)
-
-            pct = max(0.0, min(1.0, data["pct"]))
-            fill_color = ACCENT if pct >= 0.4 else LINE
-            painter.setBrush(QColor(fill_color))
-            painter.drawRoundedRect(track_x, track_y, max(2, int(track_w * pct)), track_h, 3, 3)
-
-            num_font = QFont(option.font)
-            painter.setFont(num_font)
-            painter.setPen(QColor("#1c1e2c"))
-            num_rect = QRect(track_x + track_w + 4, rect.y(), 30, rect.height())
-            painter.drawText(num_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, data["text"])
-
-        painter.restore()
-
-
 def _contribution_bg(z):
     """Background tint for a factor cell: alpha scales with the factor's
     already sign-flipped z-score (higher = more favorable to the score,
@@ -247,7 +107,7 @@ def _contribution_bg(z):
     return color
 
 
-class AutoTradingTab(ThreadOwnerMixin, QWidget):
+class AutoTradingTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
     """Weekly rebalance signal tab (rebalance.md 3-1: factor scoring + rank rebalancing).
 
     rebalance.md decisions this implementation follows:
@@ -276,7 +136,6 @@ class AutoTradingTab(ThreadOwnerMixin, QWidget):
         self._signal_rows = []       # every merged row (dict), unfiltered
         self._action_filter = "All"
         self._backtest_thread = None
-        self._open_dialogs: list = []
         self._build_ui()
 
     # ---UI construction ---
@@ -295,23 +154,22 @@ class AutoTradingTab(ThreadOwnerMixin, QWidget):
             f"sell band at per-market rank > {int(next(iter(self.TOP_N_BY_MARKET.values())) * self.BAND_MULTIPLIER)}"
         )
         subtitle.setFont(create_font(9, style_name="Semilight"))
-        subtitle.setStyleSheet("color:#7f8c8d;")
+        subtitle.setObjectName("muted")
         root.addWidget(subtitle)
 
         ctrl_row = QHBoxLayout()
+        # docs/ui.md 1.6: this tab's one accented action; Run Backtest below
+        # is the neutral outline button.
         self._compute_btn = QPushButton("🔄 Compute This Week's Signals")
         self._compute_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._compute_btn.setFixedHeight(32)
-        self._compute_btn.setStyleSheet(
-            "QPushButton { background:#0078d4; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
-            "QPushButton:hover { background:#005a9e; }"
-        )
+        self._compute_btn.setObjectName("primary")
         self._compute_btn.clicked.connect(self._on_compute_clicked)
         ctrl_row.addWidget(self._compute_btn)
 
         self._as_of_label = QLabel("Not yet computed")
         self._as_of_label.setFont(create_font(9, style_name="Semilight"))
-        self._as_of_label.setStyleSheet("color:#7f8c8d;")
+        self._as_of_label.setObjectName("muted")
         ctrl_row.addWidget(self._as_of_label)
         ctrl_row.addStretch()
         root.addLayout(ctrl_row)
@@ -333,13 +191,12 @@ class AutoTradingTab(ThreadOwnerMixin, QWidget):
         self._backtest_btn = QPushButton("▶ Run Backtest")
         self._backtest_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._backtest_btn.setFixedHeight(32)
-        self._backtest_btn.setStyleSheet(action_button_style(_ACTION_BACKTEST_COLOR, _ACTION_BACKTEST_HOVER_COLOR))
         self._backtest_btn.clicked.connect(self._on_backtest_clicked)
         backtest_row.addWidget(self._backtest_btn)
 
         self._backtest_status_label = QLabel("")
         self._backtest_status_label.setFont(create_font(9, style_name="Semilight"))
-        self._backtest_status_label.setStyleSheet("color:#7f8c8d;")
+        self._backtest_status_label.setObjectName("muted")
         backtest_row.addWidget(self._backtest_status_label)
         backtest_row.addStretch()
         root.addLayout(backtest_row)
@@ -593,33 +450,6 @@ class AutoTradingTab(ThreadOwnerMixin, QWidget):
         if self._action_filter == "All":
             return self._signal_rows
         return [r for r in self._signal_rows if r["action"] == self._action_filter]
-
-    def _show_stock_ma(self, ticker, name, market):
-        if not ticker:
-            return
-        # The thread echoes `market` back in its finished signal, so the dialog
-        # gets the market this specific double-click was for even when several
-        # lookups are in flight.
-        thread = self._track_thread(StockMaThread(ticker, name, market))
-        thread.finished.connect(self._on_stock_ma_loaded)
-        thread.start()
-
-    def _on_stock_ma_loaded(self, ticker, name, df, error, investor_data, market, _change_mode):
-        if error and df is None:
-            QMessageBox.warning(self, "Error", f"Failed to load data for {ticker}:\n{error}")
-            return
-        dlg = StockMaDialog(ticker, name, market, df, investor_data=investor_data, parent=None)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self._open_dialogs = [d for d in self._open_dialogs if self._dialog_is_visible(d)]
-        self._open_dialogs.append(dlg)
-        dlg.show()
-
-    @staticmethod
-    def _dialog_is_visible(dlg):
-        try:
-            return dlg.isVisible()
-        except RuntimeError:
-            return False
 
     # ---Backtest (rebalance.md section 6) ---
     def _on_backtest_clicked(self):

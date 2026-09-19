@@ -13,10 +13,11 @@ from PyQt6.QtGui import QFont, QShortcut, QKeySequence
 from paths import ENV_FILE, APP_LOG_FILE
 from ui.common import (
     create_font,
-    _ACCENT_COLOR,
+    apply_matplotlib_font,
     FONT_FAMILY_CSS,
+    FONT_TITLE,
 )
-from ui.theme import app_qss
+from ui.theme import app_qss, ACCENT_TEXT
 
 load_dotenv(ENV_FILE)
 
@@ -71,7 +72,7 @@ class MainWindow(QMainWindow):
         # Header
         header_layout = QHBoxLayout()
         title_label = QLabel("Portfolio Management")
-        title_label.setFont(create_font(18, QFont.Weight.Bold))
+        title_label.setFont(create_font(FONT_TITLE, QFont.Weight.Bold))
         header_layout.addWidget(title_label)
         
         header_layout.addStretch()
@@ -84,7 +85,7 @@ class MainWindow(QMainWindow):
         # Add Auto Refresh Checkbox
         self.auto_refresh_cb = QCheckBox("Auto Update (1 min)")
         self.auto_refresh_cb.setFont(create_font(10, QFont.Weight.Bold))
-        self.auto_refresh_cb.setStyleSheet(f"QCheckBox {{ color: {_ACCENT_COLOR}; margin-right: 15px; }}")
+        self.auto_refresh_cb.setStyleSheet(f"QCheckBox {{ color: {ACCENT_TEXT}; margin-right: 15px; }}")
         self.auto_refresh_cb.toggled.connect(self._toggle_global_auto_timer)
         header_layout.addWidget(self.auto_refresh_cb)
         
@@ -163,7 +164,7 @@ class MainWindow(QMainWindow):
         sc_prev.setContext(Qt.ShortcutContext.WindowShortcut)
         sc_prev.activated.connect(self._tab_prev)
 
-        # Automatic backup of portfolio.db + custom_settings.json (roadmap 2-4).
+        # Automatic backup of portfolio.db + custom_settings.json + trading_record.json (roadmap 2-4).
         # Runs in the background so it never blocks startup.
         self._auto_backup_thread = AutoBackupThread()
         self._auto_backup_thread.backup_done.connect(self._on_thread_status_message)
@@ -245,8 +246,9 @@ if __name__ == "__main__":
     # (notably QTabBar and QHeaderView theming); Fusion renders every rule
     # (docs/ui.md 6.4).
     app.setStyle("Fusion")
-    app_font = create_font(10, style_name="Semilight")
+    app_font = create_font(style_name="Semilight")
     app.setFont(app_font)
+    apply_matplotlib_font()
     app.setStyleSheet(app_qss(FONT_FAMILY_CSS))
 
     window = MainWindow()

@@ -43,7 +43,10 @@ FLAT   = "#75798c"   # 0, 미해당
 
 ### 1.3 숫자
 
-- 숫자 셀은 전부 **tabular numerals**(또는 monospace). 자릿수가 세로로 맞아야 한다.
+- ~~숫자 셀은 전부 **tabular numerals**(또는 monospace). 자릿수가 세로로 맞아야 한다.~~
+  **2026-09-19 사용자 결정으로 폐기**: 앱 전체를 맑은 고딕 Semilight 한 글꼴로 통일한다
+  (숫자 셀·KPI 값·matplotlib 차트 포함, `ui/common.py` `FONT_FAMILIES`/`apply_matplotlib_font()`).
+  숫자 셀에 별도 등폭 글꼴(Consolas)을 쓰지 않는다.
 - 우측 정렬. 소수 자릿수는 컬럼별로 고정.
 - 통화 기호·단위는 셀이 아니라 **헤더**에 (`억원`, `원`, `%`, `배`).
 

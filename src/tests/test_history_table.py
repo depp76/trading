@@ -31,10 +31,15 @@ class TestCellFactories(unittest.TestCase):
     def test_numeric_item_formats_with_thousands_separator(self):
         self.assertEqual(ni(1234.5678).text(), "1,235")
         self.assertEqual(ni(0.1234, "{:.2f}").text(), "0.12")
-        # Note: QTableWidgetItem treats DisplayRole and EditRole as one value, so
-        # the float written via setData is replaced by the text. The history grid
-        # has sorting disabled, so nothing relies on the numeric EditRole.
-        self.assertEqual(ni(1234.5678).data(Qt.ItemDataRole.EditRole), "1,235")
+
+    def test_numeric_cells_sort_by_value_not_display_text(self):
+        # QTableWidgetItem aliases EditRole onto DisplayRole, so the old
+        # setData(EditRole)+setText() pair sorted comma-formatted numbers as
+        # strings ("1,849,000" < "999,000"). ni/pi/wi are NumericItems now.
+        self.assertLess(ni(999_000), ni(1_849_000))
+        self.assertLess(pi(-2.0), pi(10.0))
+        self.assertLess(wi(9.5), wi(12.0))
+        self.assertFalse(ni(1_849_000) < ni(999_000))
 
     def test_pct_item_colour_by_sign(self):
         self.assertEqual(pi(3.14).text(), "+3.1%")

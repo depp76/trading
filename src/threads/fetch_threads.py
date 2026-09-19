@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from paths import BASE_DIR, DB_FILE, CUSTOM_SETTINGS_FILE, ARCHIVE_DIR
+from paths import BASE_DIR, DB_FILE, CUSTOM_SETTINGS_FILE, TRADING_RECORD_FILE, ARCHIVE_DIR
 from data_fetcher import (
     fetch_market_data,
     fetch_single_stock,
@@ -32,7 +32,9 @@ from data_fetcher import (
 
 logger = logging.getLogger(__name__)
 
-_AUTO_BACKUP_FILES = [DB_FILE, CUSTOM_SETTINGS_FILE]
+# trading_record.json (Total Assets' weekly snapshots) is the one file here that
+# cannot be rebuilt from an external API if lost -- it is typed in by hand.
+_AUTO_BACKUP_FILES = [DB_FILE, CUSTOM_SETTINGS_FILE, TRADING_RECORD_FILE]
 _AUTO_BACKUP_MAX_KEEP = 7  # keep only the most recent N automatic backups
 
 
@@ -585,8 +587,9 @@ class AccountDepositThread(QThread):
 # Auto-backup thread (runs on app start)
 # ---------------------------------------------------------------------------
 class AutoBackupThread(QThread):
-    """Copies portfolio.db + custom_settings.json into archive/auto_<timestamp>/ on
-    every app start, then prunes old automatic backups beyond _AUTO_BACKUP_MAX_KEEP.
+    """Copies portfolio.db + custom_settings.json + trading_record.json into
+    archive/auto_<timestamp>/ on every app start, then prunes old automatic
+    backups beyond _AUTO_BACKUP_MAX_KEEP.
 
     Runs off the UI thread so startup is never blocked by disk I/O. This does not
     replace the manual archive/backup_<timestamp>/ convention used before editing
@@ -812,23 +815,32 @@ class StrategySummaryThread(QThread):
                 top_n_by_market=self.top_n_by_market,
                 band_multiplier=self.band_multiplier,
             )
-            in_position = flat = errors = 0
-            for ticker in self.tf_tickers:
+            def _check(ticker):
+                # None = error; the per-ticker history fetch inside
+                # run_backtest_for_ticker is I/O bound, so these run in a
+                # pool (same shape as strategy/rebalance/backtest.py) --
+                # sequentially, "All" coverage on a 300-ticker universe
+                # took minutes.
                 try:
                     res = run_backtest_for_ticker(ticker, self.tf_start)
                     if res.get("error"):
-                        errors += 1
-                        continue
+                        return None
                     sig = res["signals"]
-                    is_in_position = bool(sig["position"][-1]) if sig.height else False
+                    return bool(sig["position"][-1]) if sig.height else False
                 except Exception:
                     logger.warning("Strategy summary: trend-following check failed for %s", ticker, exc_info=True)
-                    errors += 1
-                    continue
-                if is_in_position:
-                    in_position += 1
-                else:
-                    flat += 1
+                    return None
+
+            in_position = flat = errors = 0
+            if self.tf_tickers:
+                with ThreadPoolExecutor(max_workers=min(8, len(self.tf_tickers))) as exe:
+                    for outcome in exe.map(_check, self.tf_tickers):
+                        if outcome is None:
+                            errors += 1
+                        elif outcome:
+                            in_position += 1
+                        else:
+                            flat += 1
             result = {
                 "buy_count": len(rebalance.get("buy_candidates", [])),
                 "sell_count": len(rebalance.get("sell_candidates", [])),

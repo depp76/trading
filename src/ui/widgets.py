@@ -3,21 +3,22 @@
 Split out from: main.py (2026-08-29 feat/3-1-modularize)
 Contains:
   FilterPopup, FilterableHeader, StockTable, GroupedHeaderView
+(the custom cell painters StockTable installs live in ui/delegates.py)
 """
 from collections import namedtuple
 
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLineEdit, QCheckBox, QScrollArea,
     QWidget, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QStyleOptionHeader, QMenu, QStyledItemDelegate, QStyle, QApplication,
+    QStyleOptionHeader, QMenu, QApplication,
     QAbstractItemView,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QTimer, QSize
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPolygon, QKeySequence
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QTimer
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon, QKeySequence
 
-from ui.common import create_font, create_numeric_font, FONT_FAMILY_CSS
+from ui.common import create_font, FONT_FAMILY_CSS, FONT_SMALL
+from ui.delegates import IdentityDelegate, RangeBarDelegate, TrendDelegate
 from ui.colors import fg_for, heatmap_bg, PROFIT, LOSS, FLAT
-from ui.theme import ACCENT, ACCENT_TEXT, ACCENT_BG, TEXT_FAINT, LINE, LINE_SOFT
 
 
 # ---------------------------------------------------------------------------
@@ -86,17 +87,6 @@ TOGGLE_GROUPS = [
 # Momentum columns paired with the changes{} dict key each one reads.
 _MOMENTUM_COLS = [(COL_D3, "3d"), (COL_D20, "20d"), (COL_D60, "60d"), (COL_D120, "120d")]
 
-# docs/ui.md 1.7: one badge/marker vocabulary for the highlight states
-# custom_settings.json stores as "On"/"Tg" (kept as-is; only the two places
-# that display it -- this badge and the toolbar's "Target List" filter --
-# now agree on wording, rather than a "Pf" header + "On"/"Tg" button label +
-# yellow/sky-blue background all naming the same thing differently).
-_STATUS_BADGE = {
-    "On": ("Watch", ACCENT_TEXT, ACCENT, ACCENT_BG),
-    "Tg": ("Target", "#ffffff", ACCENT, ACCENT),
-}
-_STATUS_MARKER = {"On": ACCENT, "Tg": ACCENT}
-
 
 class NumericItem(QTableWidgetItem):
     """QTableWidgetItem with a numeric sort key independent of its display
@@ -125,180 +115,6 @@ class NumericItem(QTableWidgetItem):
         if other_key is None:
             return super().__lt__(other)
         return self._sort_key < other_key
-
-
-# ---------------------------------------------------------------------------
-# Cell-paint delegates (docs/ui.md 6.3: mini bars / range bars / sparklines
-# need QStyledItemDelegate + QPainter -- Qt has no CSS-grid/minmax or
-# cell-level border-radius equivalent, and a QWidget per cell for 300+ rows
-# is exactly the "per-row cellWidget" pattern the mockup's own issue #7
-# flags as a performance/visual-noise problem). All three delegates read
-# their content from Qt.ItemDataRole.UserRole (a plain dict) rather than the
-# item's display text, since none of these cells are single-line text.
-# ---------------------------------------------------------------------------
-class IdentityDelegate(QStyledItemDelegate):
-    """Column 0: status marker + name + "ticker · market" meta + status
-    badge, replacing the old separate Name/Market/Ticker columns and the
-    per-row Pf button (docs/ui.md 2.2, 1.7)."""
-
-    def paint(self, painter, option, index):
-        painter.save()
-        rect = option.rect
-        self._paint_background(painter, option)
-
-        data = index.data(Qt.ItemDataRole.UserRole) or {}
-        name = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        meta = data.get("meta", "")
-        status = data.get("status", "-")
-
-        marker_color = QColor(_STATUS_MARKER.get(status, LINE))
-        marker_h = 18
-        painter.fillRect(rect.x() + 4, rect.y() + (rect.height() - marker_h) // 2, 3, marker_h, marker_color)
-
-        badge = _STATUS_BADGE.get(status)
-        badge_font = self._badge_font(option.font)
-        badge_w = 0
-        if badge:
-            badge_w = QFontMetrics(badge_font).horizontalAdvance(badge[0]) + 14 + 6
-
-        text_x = rect.x() + 4 + 3 + 8
-        text_w = max(10, rect.width() - (text_x - rect.x()) - badge_w - 6)
-
-        name_font = QFont(option.font)
-        painter.setFont(name_font)
-        painter.setPen(QColor("#1c1e2c"))
-        fm = QFontMetrics(name_font)
-        elided = fm.elidedText(name, Qt.TextElideMode.ElideRight, text_w)
-        name_rect = QRect(text_x, rect.y(), text_w, rect.height() // 2 + (2 if meta else 0) + (rect.height() % 2))
-        painter.drawText(name_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom if meta else Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
-
-        if meta:
-            meta_font = QFont(option.font)
-            meta_font.setPointSize(max(6, option.font.pointSize() - 1))
-            painter.setFont(meta_font)
-            painter.setPen(QColor(TEXT_FAINT))
-            meta_rect = QRect(text_x, rect.y() + rect.height() // 2, text_w, rect.height() // 2)
-            painter.drawText(meta_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, meta)
-
-        if badge:
-            label, fg, border, bg = badge
-            bw = QFontMetrics(badge_font).horizontalAdvance(label) + 14
-            bh = 16
-            bx = rect.right() - bw - 6
-            by = rect.y() + (rect.height() - bh) // 2
-            painter.setPen(QPen(QColor(border)))
-            painter.setBrush(QColor(bg))
-            painter.drawRoundedRect(bx, by, bw, bh, 4, 4)
-            painter.setPen(QColor(fg))
-            painter.setFont(badge_font)
-            painter.drawText(QRect(bx, by, bw, bh), Qt.AlignmentFlag.AlignCenter, label)
-
-        painter.restore()
-
-    @staticmethod
-    def _badge_font(base):
-        f = QFont(base)
-        f.setPointSize(max(6, base.pointSize() - 2))
-        f.setBold(True)
-        return f
-
-    @staticmethod
-    def _paint_background(painter, option):
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(option.rect, QColor(ACCENT_BG))
-        elif option.features & option.ViewItemFeature.Alternate:
-            painter.fillRect(option.rect, option.palette.alternateBase())
-        else:
-            painter.fillRect(option.rect, option.palette.base())
-
-    def sizeHint(self, option, index):
-        return QSize(super().sizeHint(option, index).width(), option.rect.height())
-
-
-class RangeBarDelegate(QStyledItemDelegate):
-    """52W Range column: a thin track with a position marker, plus
-    low/position%/high labels underneath (docs/ui.md 2.3), replacing the
-    four separate 52W High/High Diff/Low/Low Diff columns."""
-
-    def paint(self, painter, option, index):
-        painter.save()
-        rect = option.rect
-        IdentityDelegate._paint_background(painter, option)
-
-        data = index.data(Qt.ItemDataRole.UserRole)
-        if not data:
-            painter.restore()
-            return
-
-        pad = 10
-        track_y = rect.y() + 6
-        track_h = 5
-        track_x = rect.x() + pad
-        track_w = max(1, rect.width() - 2 * pad)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(LINE_SOFT))
-        painter.drawRoundedRect(track_x, track_y, track_w, track_h, 2, 2)
-
-        pos = max(0.0, min(1.0, data["pos"]))
-        marker_x = track_x + int(pos * track_w) - 1
-        painter.setBrush(QColor(data["color"]))
-        painter.drawRoundedRect(marker_x, track_y - 1, 2, track_h + 2, 1, 1)
-
-        label_font = QFont(option.font)
-        label_font.setPointSize(max(6, option.font.pointSize() - 2))
-        painter.setFont(label_font)
-        label_y = track_y + track_h + 3
-        label_rect = QRect(track_x, label_y, track_w, rect.bottom() - label_y)
-        fm = QFontMetrics(label_font)
-
-        painter.setPen(QColor(TEXT_FAINT))
-        painter.drawText(label_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, data["low"])
-        painter.drawText(label_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop, data["high"])
-        painter.setPen(QColor(data["color"]))
-        pct_text = data["pos_label"]
-        pct_w = fm.horizontalAdvance(pct_text)
-        painter.drawText(track_x + (track_w - pct_w) // 2, label_rect.y() + fm.ascent(), pct_text)
-
-        painter.restore()
-
-
-class TrendDelegate(QStyledItemDelegate):
-    """Trend column: a small polyline of the 3D/20D/60D/120D momentum
-    readings (docs/ui.md 2.2's "1Y" sparkline) -- honest about what data
-    backs it (four real change-% points, not a year of daily closes, which
-    this app doesn't fetch per watchlist row), rather than faking a smooth
-    year-long chart."""
-
-    def paint(self, painter, option, index):
-        painter.save()
-        IdentityDelegate._paint_background(painter, option)
-        data = index.data(Qt.ItemDataRole.UserRole)
-        if not data or len(data["points"]) < 2:
-            painter.restore()
-            return
-
-        rect = option.rect
-        pad_x, pad_y = 8, 5
-        x0, y0 = rect.x() + pad_x, rect.y() + pad_y
-        w = max(1, rect.width() - 2 * pad_x)
-        h = max(1, rect.height() - 2 * pad_y)
-
-        pts = data["points"]
-        lo, hi = min(pts), max(pts)
-        span = (hi - lo) or 1.0
-        n = len(pts)
-        coords = [
-            (x0 + w * i / (n - 1), y0 + h - (v - lo) / span * h)
-            for i, v in enumerate(pts)
-        ]
-
-        pen = QPen(QColor(data["color"]))
-        pen.setWidthF(1.4)
-        pen.setCosmetic(True)
-        painter.setPen(pen)
-        for (x1, y1), (x2, y2) in zip(coords, coords[1:]):
-            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
-        painter.restore()
 
 
 # ---------------------------------------------------------------------------
@@ -504,9 +320,9 @@ class StockTable(QTableWidget):
         self.setHorizontalHeaderLabels([c.label for c in COLUMNS])
         # Table font: Malgun Gothic Semilight 9pt (set appropriate size to prevent text cutoff)
         self.setFont(create_font(9, style_name="Semilight"))
-        # Tabular-numerals font for numeric cells (docs/ui.md 1.3); built once
-        # per table instance rather than per cell.
-        self._numeric_font = create_numeric_font(9)
+        # Same family as text cells (one app font); built once per table
+        # instance rather than per cell.
+        self._numeric_font = create_font(FONT_SMALL, style_name="Semilight")
         self.setStyleSheet(
             "QTableWidget { gridline-color: #d0d0d0; " + FONT_FAMILY_CSS + " font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
@@ -762,7 +578,10 @@ class StockTable(QTableWidget):
         if self.rowCount() == 0:
             return
 
-        vp_w = int(self.viewport().width() * 0.99)
+        # Full viewport width: the old 0.99 factor left a ~1% empty strip at
+        # the right edge on every width. The re-entrancy guards (_resizing,
+        # _last_col_widths) are what actually stop resize feedback loops.
+        vp_w = self.viewport().width()
         if vp_w <= 0:
             return
 

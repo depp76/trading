@@ -1,16 +1,16 @@
 """ui/history_table.py — Cell factories and row rendering for the Trading History
 table (split out of TradingHistoryTab on 2026-09-17)."""
-from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QLabel, QStyledItemDelegate, QStyle
-from PyQt6.QtCore import Qt, QEvent, QRect
-from PyQt6.QtGui import QColor, QPainter, QPen, QFont, QFontMetrics
+from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QLabel
+from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtGui import QColor, QPainter, QPen
 
 from ui.colors import PROFIT, LOSS, FLAT, QC_PROFIT, QC_LOSS
-from ui.common import create_numeric_font
-from ui.theme import ACCENT, ACCENT_TEXT, ACCENT_BG, SURFACE, ZEBRA, GRP_BG, TEXT_MUTED, TEXT_FAINT
-from ui.widgets import ColSpec
+from ui.common import create_font, FONT_SMALL
+from ui.theme import ACCENT, ACCENT_TEXT, SURFACE, ZEBRA, GRP_BG, TEXT_MUTED
+from ui.widgets import ColSpec, NumericItem
 
-# Tabular-numerals font for numeric cells (docs/ui.md 1.3), built once.
-_NUMERIC_FONT = create_numeric_font(9)
+# Numeric cells use the one app font too (right-aligned; see ui.common), built once.
+_NUMERIC_FONT = create_font(FONT_SMALL, style_name="Semilight")
 
 # "-" -> a thin, muted em dash (docs/ui.md 3.3): closed rows' empty Position
 # section and open rows' empty Sell section used to render as a bold "-",
@@ -123,87 +123,25 @@ class SectionTable(QTableWidget):
         painter.restore()
 
 
-class TradeStateDelegate(QStyledItemDelegate):
-    """Company column: a left status marker + a Open/Closed badge painted at
-    the cell's right edge (docs/ui.md 1.7, issue #5) -- replaces the old
-    bg_open mint background, which shared its color channel with the zebra
-    stripe and disappeared under print/color-blind conditions. Reads
-    Qt.ItemDataRole.UserRole = {"state": "Open"|"Closed"} set by
-    fill_table_rows(); paints plain text (via the base class) when absent,
-    e.g. for the position-summary mini table elsewhere that doesn't use this
-    delegate at all -- this only ever installs on the main history grid."""
-
-    _BADGE = {
-        "Open":   ("Open", ACCENT_TEXT, ACCENT, ACCENT_BG),
-        "Closed": ("Closed", TEXT_FAINT, "#e4e7f5", "transparent"),
-    }
-    _MARKER = {"Open": ACCENT, "Closed": "#e4e7f5"}
-
-    def paint(self, painter, option, index):
-        data = index.data(Qt.ItemDataRole.UserRole)
-        if not data:
-            super().paint(painter, option, index)
-            return
-
-        painter.save()
-        rect = option.rect
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(rect, QColor(ACCENT_BG))
-        else:
-            bg = index.data(Qt.ItemDataRole.BackgroundRole)
-            painter.fillRect(rect, bg if bg else option.palette.base())
-
-        state = data.get("state", "Closed")
-        painter.fillRect(rect.x() + 4, rect.y() + (rect.height() - 16) // 2, 3, 16, QColor(self._MARKER[state]))
-
-        badge = self._BADGE[state]
-        label, fg, border, bg_hex = badge
-        badge_font = QFont(option.font)
-        badge_font.setPointSize(max(6, option.font.pointSize() - 2))
-        badge_font.setBold(True)
-        bw = QFontMetrics(badge_font).horizontalAdvance(label) + 14
-        bh = 15
-        bx = rect.right() - bw - 6
-        by = rect.y() + (rect.height() - bh) // 2
-
-        text_x = rect.x() + 4 + 3 + 8
-        text_w = max(10, bx - text_x - 4)
-        painter.setPen(QColor("#1c1e2c"))
-        painter.setFont(option.font)
-        fm = QFontMetrics(option.font)
-        elided = fm.elidedText(index.data(Qt.ItemDataRole.DisplayRole) or "", Qt.TextElideMode.ElideRight, text_w)
-        painter.drawText(QRect(text_x, rect.y(), text_w, rect.height()),
-                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
-
-        painter.setPen(QPen(QColor(border)))
-        painter.setBrush(QColor(bg_hex))
-        painter.drawRoundedRect(bx, by, bw, bh, 4, 4)
-        painter.setPen(QColor(fg))
-        painter.setFont(badge_font)
-        painter.drawText(QRect(bx, by, bw, bh), Qt.AlignmentFlag.AlignCenter, label)
-
-        painter.restore()
-
-
 def si(text, align=Qt.AlignmentFlag.AlignCenter):
     it = QTableWidgetItem(text)
     it.setTextAlignment(align)
     return it
 
 
+# Numeric cells are NumericItems: a plain QTableWidgetItem aliases EditRole
+# onto DisplayRole, so the old setData(EditRole, num) + setText(formatted)
+# pair left the formatted string as the sort key -- harmless only while this
+# grid keeps sorting off (see NumericItem's docstring in ui/widgets.py).
 def ni(val, fmt="{:,.0f}"):
-    it = QTableWidgetItem()
-    it.setData(Qt.ItemDataRole.EditRole, round(float(val), 4))
-    it.setText(fmt.format(val))
+    it = NumericItem(fmt.format(val), float(val))
     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     it.setFont(_NUMERIC_FONT)
     return it
 
 
 def pi(val: float):
-    it = QTableWidgetItem()
-    it.setData(Qt.ItemDataRole.EditRole, round(val, 4))
-    it.setText(f"{val:+.1f}%")
+    it = NumericItem(f"{val:+.1f}%", float(val))
     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     it.setFont(_NUMERIC_FONT)
     if val > 0:
@@ -214,9 +152,7 @@ def pi(val: float):
 
 
 def wi(val: float):
-    it = QTableWidgetItem()
-    it.setData(Qt.ItemDataRole.EditRole, round(val, 4))
-    it.setText(f"{val:.1f}%")
+    it = NumericItem(f"{val:.1f}%", float(val))
     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     it.setFont(_NUMERIC_FONT)
     return it

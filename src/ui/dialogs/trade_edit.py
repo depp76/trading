@@ -62,7 +62,7 @@ class BuyEditDialog(QDialog):
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
 
-        save_btn.setStyleSheet("background-color: #1a6b3c; color: white; padding: 5px;")
+        save_btn.setObjectName("primary")
         btn_box.addWidget(save_btn)
         btn_box.addWidget(cancel_btn)
 
@@ -152,7 +152,7 @@ class SellEditDialog(QDialog):
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
 
-        save_btn.setStyleSheet("background-color: #d35400; color: white; padding: 5px;")
+        save_btn.setObjectName("primary")
         btn_box.addWidget(save_btn)
         btn_box.addWidget(cancel_btn)
 
@@ -230,7 +230,7 @@ class SellEditDialog(QDialog):
             "sell_date": sell_date_str,
             "sell_price": s_price,
             "sell_qty": s_qty,
-            "sell_amount": s_amt,
+            "sell_amount": s_amt if s_amt > 0 else s_price * s_qty,
         }
         self.accept()
 
@@ -295,7 +295,7 @@ class TradeEntryDialog(QDialog):
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
 
-        self.save_btn.setStyleSheet("background-color: #0078d4; color: white; padding: 5px;")
+        self.save_btn.setObjectName("primary")
         btn_box.addWidget(self.save_btn)
         btn_box.addWidget(self.cancel_btn)
 
@@ -357,7 +357,7 @@ class TradeEntryDialog(QDialog):
             "buy_date": _normalize_date_str(self.buy_date_edit.text()),
             "buy_price": b_price,
             "qty": qty,
-            "buy_amount": b_amt,
+            "buy_amount": b_amt if b_amt > 0 else b_price * qty,
             "sell_date": "",
             "sell_price": 0.0,
             "sell_qty": 0.0,

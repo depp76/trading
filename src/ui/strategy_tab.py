@@ -40,7 +40,7 @@ import trade_db
 from threads.fetch_threads import StrategySummaryThread
 from ui.auto_trading_tab import AutoTradingTab
 from ui.trend_following_tab import TrendFollowingTab
-from ui.common import create_font, create_numeric_font, ThreadOwnerMixin
+from ui.common import create_font, ThreadOwnerMixin, FONT_KPI
 from ui.theme import ACCENT_TEXT
 
 logger = logging.getLogger(__name__)
@@ -128,7 +128,7 @@ class StrategyTab(ThreadOwnerMixin, QWidget):
             box.addWidget(lbl)
             value_lbl = QLabel("—")
             value_lbl.setObjectName("kpiValue")
-            value_lbl.setFont(create_numeric_font(15))
+            value_lbl.setFont(create_font(FONT_KPI, style_name="Semilight"))
             box.addWidget(value_lbl)
             sub_lbl = QLabel(sub_text)
             sub_lbl.setObjectName("kpiSub")
