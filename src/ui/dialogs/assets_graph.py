@@ -14,6 +14,8 @@ import mplcursors
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
+from ui.theme import ACCENT, TEXT, TEXT_MUTED, TEXT_FAINT
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,11 +39,14 @@ class TotalAssetsGraphDialog(QDialog):
         dates_dt = [pd.to_datetime(d) for d in dates]
         x_dates = mdates.date2num(dates_dt)
 
-        line_kospi, = ax.plot(x_dates, kospi_returns, color="#8e44ad", linewidth=2, linestyle="-", marker=".", markersize=4, label="KOSPI")
-        line_asset, = ax.plot(x_dates, asset_returns, color="#c0392b", linewidth=2, linestyle="-", marker=".", markersize=4, label="Total Assets")
-        line_usd, = ax.plot(x_dates, usd_asset_returns, color="#2980b9", linewidth=2, linestyle="-", marker=".", markersize=4, label="Total Assets ($)")
+        # Series identity, not price direction: ink for the main series,
+        # accent for its USD view, muted dashed for the benchmark (red/blue
+        # stay reserved for gain/loss, docs/ui.md 1.1).
+        line_kospi, = ax.plot(x_dates, kospi_returns, color=TEXT_MUTED, linewidth=1.6, linestyle="--", marker=".", markersize=4, label="KOSPI")
+        line_asset, = ax.plot(x_dates, asset_returns, color=TEXT, linewidth=2, linestyle="-", marker=".", markersize=4, label="Total Assets")
+        line_usd, = ax.plot(x_dates, usd_asset_returns, color=ACCENT, linewidth=2, linestyle="-", marker=".", markersize=4, label="Total Assets ($)")
 
-        ax.axhline(0, color='gray', linestyle='--', linewidth=1)
+        ax.axhline(0, color=TEXT_FAINT, linestyle='--', linewidth=1)
 
         ax.set_xticks(x_dates)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%y.%m.%d"))
@@ -66,14 +71,14 @@ class TotalAssetsGraphDialog(QDialog):
 
             ax.annotate(f"{ret_krw:+.1f}%\n({krw_str})", (x_dates[i], ret_krw),
                         textcoords="offset points", xytext=(0, 10), ha='center',
-                        fontsize=8, color="#c0392b", fontweight="bold")
+                        fontsize=8, color=TEXT, fontweight="bold")
 
             # Total Assets (USD)
             amt_usd = usd_totals[i]
             ret_usd = usd_asset_returns[i]
             ax.annotate(f"{ret_usd:+.1f}%\n(${amt_usd:,.0f})", (x_dates[i], ret_usd),
                         textcoords="offset points", xytext=(0, -25), ha='center',
-                        fontsize=8, color="#2980b9", fontweight="bold")
+                        fontsize=8, color=ACCENT, fontweight="bold")
 
         # Create invisible scatter points to force cursor to snap only to actual data points
         sc_kospi = ax.scatter(x_dates, kospi_returns, alpha=0)

@@ -16,6 +16,8 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 logger = logging.getLogger(__name__)
 
 from data_fetcher import INDEX_TICKERS
+from ui.colors import MA_RAMP
+from ui.theme import TEXT, TEXT_MUTED
 
 
 # ---------------------------------------------------------------------------
@@ -40,19 +42,20 @@ class IndexMaDialog(QDialog):
         cols = 3 if len(labels) > 4 else 2
         for idx, label in enumerate(labels):
             ax = fig.add_subplot(2, cols, idx + 1)
-            color = INDEX_TICKERS[label][1]
             df, err = results.get(label, (None, "No data"))
 
             if df is not None and not df.is_empty() and "MA10" in df.columns and "MA20" in df.columns and "MA50" in df.columns:
                 dates = df.get_column("Date").to_numpy()
-                line_close, = ax.plot(dates, df.get_column("Close").to_numpy(), color=color,
-                        linewidth=1.2, marker=".", markersize=3, label="Close")
-                line_ma10, = ax.plot(dates, df.get_column("MA10").to_numpy(), color="#1abc9c",
-                        linewidth=1.6, linestyle="-", marker=".", markersize=3, label="10-Day MA")
-                line_ma20, = ax.plot(dates, df.get_column("MA20").to_numpy(), color="#e74c3c",
-                        linewidth=1.6, linestyle="-", marker=".", markersize=3, label="20-Day MA")
-                line_ma50, = ax.plot(dates, df.get_column("MA50").to_numpy(), color="#e67e22",
-                        linewidth=1.6, linestyle="-", marker=".", markersize=3, label="50-Day MA")
+                # Same vocabulary as StockMaDialog: ink close, one accent ramp
+                # for the MAs (shorter = darker), no per-point markers.
+                line_close, = ax.plot(dates, df.get_column("Close").to_numpy(), color=TEXT,
+                        linewidth=1.5, label="Close")
+                line_ma10, = ax.plot(dates, df.get_column("MA10").to_numpy(), color=MA_RAMP["MA10"],
+                        linewidth=1.3, label="10-Day MA")
+                line_ma20, = ax.plot(dates, df.get_column("MA20").to_numpy(), color=MA_RAMP["MA20"],
+                        linewidth=1.3, label="20-Day MA")
+                line_ma50, = ax.plot(dates, df.get_column("MA50").to_numpy(), color=MA_RAMP["MA50"],
+                        linewidth=1.3, label="50-Day MA")
                 ax.xaxis.set_major_formatter(mdates.DateFormatter("%y.%m"))
                 ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
                 fig.autofmt_xdate(rotation=25)
@@ -70,7 +73,7 @@ class IndexMaDialog(QDialog):
             else:
                 ax.text(0.5, 0.5, f"Failed to load\n{err or ''}",
                         ha="center", va="center", transform=ax.transAxes,
-                        color="gray", fontsize=10)
+                        color=TEXT_MUTED, fontsize=10)
 
             ax.set_title(label, fontsize=11, fontweight="bold")
 

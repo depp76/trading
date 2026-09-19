@@ -19,6 +19,7 @@ from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon, QKeySequence
 from ui.common import create_font, FONT_FAMILY_CSS, FONT_SMALL
 from ui.delegates import IdentityDelegate, RangeBarDelegate, TrendDelegate
 from ui.colors import fg_for, heatmap_bg, PROFIT, LOSS, FLAT
+from ui.theme import ACCENT, TEXT, TEXT_FAINT, TEXT_EMPTY, TEXT_SUB
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +264,7 @@ class FilterableHeader(QHeaderView):
             ix = rect.right() - icon_w - 4
             iy = rect.center().y() - icon_h // 2 + 1
             painter.save()
-            color = QColor("#0078d4") if is_active else QColor("#888888")
+            color = QColor(ACCENT) if is_active else QColor(TEXT_FAINT)
             painter.setPen(color)
             painter.setBrush(color)
             pts = QPolygon([
@@ -833,12 +834,12 @@ class StockTable(QTableWidget):
                 cell.setTextAlignment(right)
                 cell.setFont(numeric_font)
                 if col == COL_TPER:
-                    color = "#2e7d5b" if val < 12 else "#a32f26" if val > 60 else "#1c1e2c"
+                    color = "#2e7d5b" if val < 12 else "#a32f26" if val > 60 else TEXT
                     cell.setForeground(QColor(color))
             else:
                 cell = NumericItem("-", float('-inf'))
                 cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                cell.setForeground(QColor("#c3c6d4"))
+                cell.setForeground(QColor(TEXT_EMPTY))
             self.setItem(row, col, cell)
 
         # col 7: MA20 Div (Div(50) dropped -- the redesign doesn't carry it)
@@ -855,7 +856,7 @@ class StockTable(QTableWidget):
         else:
             ma_item = NumericItem("-", float('-inf'))
             ma_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            ma_item.setForeground(QColor("#c3c6d4"))
+            ma_item.setForeground(QColor(TEXT_EMPTY))
         self.setItem(row, COL_MA20DIV, ma_item)
 
         # cols 8-11: 3D / 20D / 60D / 120D momentum (5D/10D dropped)
@@ -1007,7 +1008,7 @@ class GroupedHeaderView(QHeaderView):
         opt = self._style_option(logical_index)
 
         # Find this column's group colour and section boundary flags
-        col_color = "#444444"
+        col_color = TEXT_SUB
         for _, start, span, color in self._sections:
             if start <= logical_index < start + span:
                 col_color = color

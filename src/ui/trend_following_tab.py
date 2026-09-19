@@ -18,6 +18,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor
 
 from strategy.trend_following import TrendFollowingConfig
+from ui.colors import PROFIT, LOSS, FLAT, WARN
 from threads.fetch_threads import TrendFollowingBacktestThread, TrendFollowingPortfolioThread
 from ui.common import (
     create_font, _validate_date_str, _normalize_date_str, _set_field_error, ThreadOwnerMixin,
@@ -510,7 +511,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
                 it = QTableWidgetItem(fmt.format(val))
                 it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if key in ("total_return_pct", "cagr_pct", "avg_trade_return_pct"):
-                    it.setForeground(QColor("#c0392b" if val > 0 else "#2980b9" if val < 0 else "#555"))
+                    it.setForeground(QColor(PROFIT if val > 0 else LOSS if val < 0 else FLAT))
                 tbl.setItem(0, c, it)
             gate = bool(s.get("passes_risk_gate"))
             gate_it = QTableWidgetItem("PASS" if gate else "FAIL")
@@ -545,9 +546,9 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
                     it.setTextAlignment(align)
                     if c in (6, 7):
                         v = px if c == 6 else ret
-                        it.setForeground(QColor("#c0392b" if v > 0 else "#2980b9" if v < 0 else "#555"))
+                        it.setForeground(QColor(PROFIT if v > 0 else LOSS if v < 0 else FLAT))
                     if c == 3 and reason == "stop":
-                        it.setForeground(QColor("#d35400"))
+                        it.setForeground(QColor(WARN))
                     tt.setItem(r, c, it)
         finally:
             tt.setUpdatesEnabled(True)

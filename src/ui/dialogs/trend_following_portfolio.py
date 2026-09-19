@@ -16,7 +16,9 @@ from PyQt6.QtGui import QColor
 
 import matplotlib.dates as mdates
 
-from ui.theme import TEXT_MUTED
+from ui.common import _STATUS_SUCCESS_COLOR, _STATUS_FAIL_COLOR
+from ui.colors import PROFIT, LOSS, FLAT, WARN
+from ui.theme import ACCENT, TEXT_MUTED, TEXT_FAINT
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
@@ -34,7 +36,7 @@ def _cell(text, align=Qt.AlignmentFlag.AlignCenter, color=None):
 
 
 def _signed_color(v):
-    return "#c0392b" if v > 0 else "#2980b9" if v < 0 else "#555"
+    return PROFIT if v > 0 else LOSS if v < 0 else FLAT
 
 
 def _metrics_html(label, m):
@@ -42,7 +44,7 @@ def _metrics_html(label, m):
     return (f"<b>{label}</b> {m.get('start_date') or ''} → {m.get('end_date') or ''} ({m.get('n_days', 0)}d): "
             f"CAGR <b style='color:{_signed_color(m['cagr_pct'])}'>{m['cagr_pct']:+.1f}%</b> | "
             f"vol {m['annual_vol_pct']:.1f}% | Sharpe <b>{m['sharpe']:.2f}</b> | MDD <b>{m['max_drawdown_pct']:.1f}%</b> | "
-            f"risk gate <b style='color:{'#107c10' if gate else '#c0392b'}'>{'PASS' if gate else 'FAIL'}</b>")
+            f"risk gate <b style='color:{_STATUS_SUCCESS_COLOR if gate else _STATUS_FAIL_COLOR}'>{'PASS' if gate else 'FAIL'}</b>")
 
 
 def _table(cols, rows, resize=QHeaderView.ResizeMode.ResizeToContents):
@@ -76,17 +78,17 @@ def _equity_figure(dates, values, title, exposure=None, extra=None):
         ax = fig.add_subplot(111)
         ax2 = None
     base = values[0] if values and values[0] else 1.0
-    ax.plot(x, [v / base for v in values], color="#c0392b", linewidth=1.8, label="Portfolio")
+    ax.plot(x, [v / base for v in values], color=ACCENT, linewidth=1.8, label="Portfolio")
     if extra:
         for lbl, series, style in extra:
-            ax.plot(x, series, linewidth=1.2, linestyle=style, label=lbl)
-    ax.axhline(1.0, color="#999", linewidth=0.8)
+            ax.plot(x, series, color=TEXT_MUTED, linewidth=1.2, linestyle=style, label=lbl)
+    ax.axhline(1.0, color=TEXT_FAINT, linewidth=0.8)
     ax.set_ylabel("Growth of 1")
     ax.set_title(title, fontsize=12, fontweight="bold")
     ax.grid(True, linestyle=":", alpha=0.5)
     ax.legend(fontsize=8, loc="upper left")
     if ax2 is not None:
-        ax2.fill_between(x, 0, exposure, color="#27ae60", alpha=0.3, linewidth=0)
+        ax2.fill_between(x, 0, exposure, color=ACCENT, alpha=0.3, linewidth=0)
         ax2.set_ylabel("Gross exposure")
         ax2.set_ylim(0, max(1.0, max(exposure) if exposure else 1.0))
         ax2.grid(True, linestyle=":", alpha=0.5)
@@ -197,9 +199,9 @@ class TrendFollowingValidationDialog(QDialog):
                     _cell(f["oos_start"][:4]),
                     _cell(f["best_label"], Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                     _cell(f"{f['is']['sharpe']:.2f}", _RIGHT),
-                    _cell(f"{o['sharpe']:.2f}", _RIGHT, "#107c10" if o["sharpe"] >= 1.5 else None),
+                    _cell(f"{o['sharpe']:.2f}", _RIGHT, _STATUS_SUCCESS_COLOR if o["sharpe"] >= 1.5 else None),
                     _cell(f"{o['cagr_pct']:+.1f}%", _RIGHT, _signed_color(o["cagr_pct"])),
-                    _cell(f"{o['max_drawdown_pct']:.1f}%", _RIGHT, "#c0392b" if o["max_drawdown_pct"] > 15 else None),
+                    _cell(f"{o['max_drawdown_pct']:.1f}%", _RIGHT, WARN if o["max_drawdown_pct"] > 15 else None),
                 ])
             tabs.addTab(_table(["OOS year", "Chosen on IS", "IS Sharpe", "OOS Sharpe", "OOS CAGR", "OOS MDD"], rows),
                         "Walk-forward folds")
@@ -221,7 +223,7 @@ class TrendFollowingValidationDialog(QDialog):
                     _cell(r["label"], Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                     _cell(f"{r['is']['sharpe']:.2f}", _RIGHT),
                     _cell(f"{r['is']['max_drawdown_pct']:.1f}%", _RIGHT),
-                    _cell(f"{r['oos']['sharpe']:.2f}", _RIGHT, "#107c10" if r["oos"]["sharpe"] >= 1.5 else None),
+                    _cell(f"{r['oos']['sharpe']:.2f}", _RIGHT, _STATUS_SUCCESS_COLOR if r["oos"]["sharpe"] >= 1.5 else None),
                     _cell(f"{r['oos']['max_drawdown_pct']:.1f}%", _RIGHT),
                     _cell(f"{r['oos']['cagr_pct']:+.1f}%", _RIGHT, _signed_color(r["oos"]["cagr_pct"])),
                 ])

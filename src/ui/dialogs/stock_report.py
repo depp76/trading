@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
 from PyQt6.QtGui import QFont
 
 from ui.common import create_font, FONT_HEADING
-from ui.theme import ACCENT_TEXT, TEXT_MUTED
+from ui.theme import ACCENT_TEXT, TEXT_MUTED, LINE, ZEBRA
 
 
 def show_stock_report_result(parent, ticker: str, name: str, result_text: str):
@@ -25,7 +25,7 @@ def show_stock_report_result(parent, ticker: str, name: str, result_text: str):
     text_edit.setReadOnly(True)
     text_edit.setFont(create_font(10, style_name="Semilight"))
     text_edit.setStyleSheet(
-        "QTextEdit { border:1px solid #d0d0d0; border-radius:6px; padding:8px; background:#fafafa; }"
+        f"QTextEdit {{ border:1px solid {LINE}; border-radius:6px; padding:8px; background:{ZEBRA}; }}"
     )
     import re
     html_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", result_text)

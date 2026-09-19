@@ -13,7 +13,8 @@ from PyQt6.QtGui import QColor
 import matplotlib.dates as mdates
 import mplcursors
 
-from ui.theme import TEXT_MUTED
+from ui.colors import PROFIT, LOSS, ACTION_BUY, ACTION_SELL, WARN
+from ui.theme import ACCENT, TEXT_MUTED
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
@@ -46,7 +47,7 @@ class BacktestResultDialog(QDialog):
         header = QLabel(
             f"<b>{result['start_date']} \u2192 {result['end_date']}</b> "
             f"({result['lookback_years']}y, top_n=[{top_n_str}], band\u00d7{result['band_multiplier']}) \u2014 "
-            f"Net Return: <b style='color:{'#c0392b' if s['total_return_pct'] >= 0 else '#2980b9'}'>"
+            f"Net Return: <b style='color:{PROFIT if s['total_return_pct'] >= 0 else LOSS}'>"
             f"{s['total_return_pct']:+.1f}%</b> vs benchmark {s['benchmark_return_pct']:+.1f}% | "
             f"CAGR {s['cagr_pct']:+.1f}% | Max Drawdown {s['max_drawdown_pct']:.1f}% | "
             f"Sharpe {s.get('sharpe', 0.0):.2f} | Annual Vol {s.get('annual_vol_pct', 0.0):.1f}% | "
@@ -63,7 +64,7 @@ class BacktestResultDialog(QDialog):
                 + ", ".join(result["skipped_tickers"][:15])
                 + (" ..." if len(result["skipped_tickers"]) > 15 else "")
             )
-            skipped.setStyleSheet("color:#d35400;")
+            skipped.setStyleSheet(f"color:{WARN};")
             skipped.setWordWrap(True)
             layout.addWidget(skipped)
 
@@ -85,13 +86,13 @@ class BacktestResultDialog(QDialog):
             eq_dates = [datetime.strptime(pt["date"], "%Y-%m-%d") for pt in equity]
             eq_x = mdates.date2num(eq_dates)
             eq_y = [pt["value"] for pt in equity]
-            ax.plot(eq_x, eq_y, color="#c0392b", linewidth=2, label="Strategy")
+            ax.plot(eq_x, eq_y, color=ACCENT, linewidth=2, label="Strategy")
 
         if bench:
             bn_dates = [datetime.strptime(pt["date"], "%Y-%m-%d") for pt in bench]
             bn_x = mdates.date2num(bn_dates)
             bn_y = [pt["value"] for pt in bench]
-            ax.plot(bn_x, bn_y, color="#8e44ad", linewidth=2, linestyle="--", label="Benchmark (KOSPI)")
+            ax.plot(bn_x, bn_y, color=TEXT_MUTED, linewidth=1.6, linestyle="--", label="Benchmark (KOSPI)")
 
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%y.%m"))
         fig.autofmt_xdate(rotation=25)
@@ -157,7 +158,7 @@ class BacktestResultDialog(QDialog):
                 ticker = tr.get("ticker", "")
                 action = tr.get("action", "")
                 action_it = _trade_cell(action.upper())
-                action_it.setForeground(QColor("#c0392b" if action == "buy" else "#2980b9"))
+                action_it.setForeground(QColor(ACTION_BUY if action == "buy" else ACTION_SELL))
                 right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 trades_tbl.setItem(r, 0, _trade_cell(tr.get("date", "")))
                 trades_tbl.setItem(r, 1, _trade_cell(ticker_name_map.get(ticker, "")))

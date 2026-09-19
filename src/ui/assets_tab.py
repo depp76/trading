@@ -27,7 +27,7 @@ from threads.fetch_threads import AssetMetricsPreloadThread
 from ui.widgets import GroupedHeaderView, ColSpec, NumericItem
 from ui.dialogs import TotalAssetsGraphDialog
 from ui.colors import PROFIT, LOSS
-from ui.theme import ACCENT, TEXT, TEXT_MUTED
+from ui.theme import ACCENT, TEXT, TEXT_SUB, TEXT_MUTED
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +68,9 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
     # ("KRW"/"USD") is relabeled live by _apply_currency_toggle(); the rest
     # are fixed.
     _GROUPS = [
-        ("Date", 0, 1, "#444444"),
-        ("KOSPI", 1, 3, "#444444"),
-        ("Total Assets", 4, 1, "#444444"),
+        ("Date", 0, 1, TEXT_SUB),
+        ("KOSPI", 1, 3, TEXT_SUB),
+        ("Total Assets", 4, 1, TEXT_SUB),
         ("Weekly P/L", 5, 2, "#1a6b3c"),
         ("Cumulative P/L", 7, 2, "#0078d4"),
         ("vs KOSPI", 9, 1, "#6d28d9"),
@@ -952,7 +952,7 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
             if last_total > 0:
                 diff = curr_val - last_total
                 ratio = (diff / last_total) * 100
-                color = PROFIT if diff > 0 else (LOSS if diff < 0 else "#2c3e50")
+                color = PROFIT if diff > 0 else (LOSS if diff < 0 else TEXT)
                 sign = "+" if diff > 0 else ""
                 self.live_diff_lbl.setText(f"{sign}{diff:,.0f} ({sign}{ratio:.2f}%)")
                 self.live_diff_lbl.setStyleSheet(f"color: {color};")

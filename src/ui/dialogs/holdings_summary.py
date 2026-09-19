@@ -5,14 +5,16 @@ from PyQt6.QtWidgets import (
     QMessageBox, QLabel, QPushButton,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
 
-from ui.common import create_font
+from ui.common import create_font, FONT_SMALL
+from ui.colors import PROFIT, LOSS, QC_PROFIT, QC_LOSS, QC_FLAT
+from ui.widgets import NumericItem
 
 
-def show_holdings_summary(parent, closed_data: list, open_data: list):
-    """Show a dialog with total P/L per company (closed realized + open unrealized),"
-    sorted by total P/L descending."""
+def build_holdings_summary(parent, closed_data: list, open_data: list):
+    """The Holdings Summary dialog (total P/L per company: closed realized +
+    open unrealized), or None when there is nothing to show. Sortable by any
+    column; numeric columns sort by value (NumericItem), default P/L desc."""
     # ---Accumulate per-company: buy amount, eval amount, P/L, days, buy_date ---
     pl_map:       dict[str, float] = {}   # company -> total P/L
     buy_map:      dict[str, float] = {}   # company -> total cost (buy amount)
@@ -56,10 +58,8 @@ def show_holdings_summary(parent, closed_data: list, open_data: list):
             buy_date_map[comp] = bd
 
     if not pl_map:
-        QMessageBox.information(parent, "Summary", "No trading data available.")
-        return
+        return None
 
-    # ---Sort by total P/L descending (default) ---
     rows = sorted(pl_map.items(), key=lambda x: x[1], reverse=True)
 
     # ---Build dialog ---
@@ -71,7 +71,7 @@ def show_holdings_summary(parent, closed_data: list, open_data: list):
     v.setContentsMargins(12, 10, 12, 10)
     v.setSpacing(8)
 
-    # 5 columns: Company | Total Buy | Total Amount | P/L(- | P/L(%)
+    # 5 columns: Company | Total Buy | Total Amount | P/L | P/L(%)
     tbl = QTableWidget(len(rows), 5)
     tbl.setHorizontalHeaderLabels(["Name", "Total Buy", "Total Amount", "P/L", "P/L (%)"])
     tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -79,57 +79,41 @@ def show_holdings_summary(parent, closed_data: list, open_data: list):
     tbl.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
     tbl.setAlternatingRowColors(True)
     tbl.verticalHeader().setVisible(False)
-    tbl.setShowGrid(True)
-    tbl.setStyleSheet(
-        "QTableWidget { border:1px solid #d0d0d0; border-radius:6px; }"
-        "QTableWidget::item { padding:2px 6px; }"
-        "QHeaderView::section { background:#f0f2f5; font-weight:bold; padding:4px; "
-        "border:none; border-right:1px solid #d0d0d0; border-bottom:1px solid #d0d0d0; }"
-    )
-    tbl_font = create_font(9, style_name="Semilight")
-    tbl.setFont(tbl_font)
+    tbl.setShowGrid(True)   # table/header chrome comes from ui/theme.py's global QSS
+    tbl.setFont(create_font(FONT_SMALL, style_name="Semilight"))
     tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
     for c in range(1, 5):
         tbl.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
     tbl.verticalHeader().setDefaultSectionSize(26)
+    dlg.table = tbl
 
-    col_red  = QColor("#c0392b")
-    col_blue = QColor("#2980b9")
-    col_gray = QColor("#888888")
+    right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
-    def _ri(text, align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, color=None):
-        it = QTableWidgetItem(text)
-        it.setTextAlignment(align)
+    def _ri(text, value, color=None):
+        it = NumericItem(text, value)
+        it.setTextAlignment(right)
         if color:
             it.setForeground(color)
         return it
 
-    def _fill_summary_table(row_data):
-        tbl.setRowCount(len(row_data))
-        for r, (comp, pl) in enumerate(row_data):
-            cost    = buy_map.get(comp, 0.0)
-            eval_v  = eval_map.get(comp, 0.0)
-            pct     = (pl / cost * 100) if cost > 0 else 0.0
-            pl_col  = col_red if pl > 0 else (col_blue if pl < 0 else col_gray)
+    tbl.setSortingEnabled(False)
+    for r, (comp, pl) in enumerate(rows):
+        cost    = buy_map.get(comp, 0.0)
+        eval_v  = eval_map.get(comp, 0.0)
+        pct     = (pl / cost * 100) if cost > 0 else 0.0
+        pl_col  = QC_PROFIT if pl > 0 else (QC_LOSS if pl < 0 else QC_FLAT)
 
-            # Col 0: Company name
-            comp_it = QTableWidgetItem(comp)
-            comp_it.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            tbl.setItem(r, 0, comp_it)
-
-            # Col 1: Buy amount
-            tbl.setItem(r, 1, _ri(f"{cost:,.0f}"))
-
-            # Col 2: Eval amount
-            tbl.setItem(r, 2, _ri(f"{eval_v:,.0f}"))
-
-            # Col 3: P/L amount
-            tbl.setItem(r, 3, _ri(f"{pl:+,.0f}", color=pl_col))
-
-            # Col 4: P/L %
-            tbl.setItem(r, 4, _ri(f"{pct:+.1f}%", color=pl_col))
-
-    _fill_summary_table(rows)
+        comp_it = QTableWidgetItem(comp)
+        comp_it.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        tbl.setItem(r, 0, comp_it)
+        tbl.setItem(r, 1, _ri(f"{cost:,.0f}", cost))
+        tbl.setItem(r, 2, _ri(f"{eval_v:,.0f}", eval_v))
+        tbl.setItem(r, 3, _ri(f"{pl:+,.0f}", pl, pl_col))
+        tbl.setItem(r, 4, _ri(f"{pct:+.1f}%", pct, pl_col))
+    # Indicator first, then enable: setSortingEnabled(True) sorts by whatever
+    # the header shows at that moment (same rule as the Total Assets table).
+    tbl.horizontalHeader().setSortIndicator(3, Qt.SortOrder.DescendingOrder)
+    tbl.setSortingEnabled(True)
     v.addWidget(tbl, 1)
 
     # ---Bottom summary panel ---
@@ -137,11 +121,10 @@ def show_holdings_summary(parent, closed_data: list, open_data: list):
     neg_pl = sum(v2 for v2 in pl_map.values() if v2 < 0)
 
     def _html_val(val, positive=True):
-        color = "#c0392b" if positive else "#2980b9"
+        color = PROFIT if positive else LOSS
         sign  = "+" if positive else ""
         return f"<b style='color:{color}'>{sign}{val:,.0f} KRW</b>"
 
-    # (+)/(-) subtotals in a horizontal row
     subtotal_html = (
         f"(+) Total Profit:  {_html_val(pos_pl, positive=True)}"
         f"&nbsp;&nbsp;&nbsp;&nbsp;"
@@ -150,7 +133,7 @@ def show_holdings_summary(parent, closed_data: list, open_data: list):
     subtotal_lbl = QLabel(subtotal_html)
     subtotal_lbl.setTextFormat(Qt.TextFormat.RichText)
     subtotal_lbl.setStyleSheet("padding:0px 4px 4px 4px;")
-    subtotal_lbl.setFont(create_font(9, style_name="Semilight"))
+    subtotal_lbl.setFont(create_font(FONT_SMALL, style_name="Semilight"))
     v.addWidget(subtotal_lbl)
 
     close_btn = QPushButton("Close")
@@ -160,5 +143,13 @@ def show_holdings_summary(parent, closed_data: list, open_data: list):
     btn_row.addStretch()
     btn_row.addWidget(close_btn)
     v.addLayout(btn_row)
+    return dlg
 
+
+def show_holdings_summary(parent, closed_data: list, open_data: list):
+    """Modal wrapper around build_holdings_summary()."""
+    dlg = build_holdings_summary(parent, closed_data, open_data)
+    if dlg is None:
+        QMessageBox.information(parent, "Summary", "No trading data available.")
+        return
     dlg.exec()

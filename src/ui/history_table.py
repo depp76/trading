@@ -6,7 +6,7 @@ from PyQt6.QtGui import QColor, QPainter, QPen
 
 from ui.colors import PROFIT, LOSS, FLAT, QC_PROFIT, QC_LOSS
 from ui.common import create_font, FONT_SMALL
-from ui.theme import ACCENT, ACCENT_TEXT, SURFACE, ZEBRA, GRP_BG, TEXT_MUTED
+from ui.theme import ACCENT, ACCENT_TEXT, SURFACE, ZEBRA, GRP_BG, TEXT, TEXT_MUTED, TEXT_FAINT, TEXT_EMPTY
 from ui.widgets import ColSpec, NumericItem
 
 # Numeric cells use the one app font too (right-aligned; see ui.common), built once.
@@ -16,7 +16,7 @@ _NUMERIC_FONT = create_font(FONT_SMALL, style_name="Semilight")
 # section and open rows' empty Sell section used to render as a bold "-",
 # the same visual weight as a real value.
 _DASH = "—"
-_DASH_COLOR = "#c3c6d4"
+_DASH_COLOR = TEXT_EMPTY
 
 # ---------------------------------------------------------------------------
 # Column spec (docs/ui.md issue #9 "섹션 구분선을 페인트 이벤트에서 직접
@@ -168,7 +168,7 @@ def dash():
 def loading_item():
     it = QTableWidgetItem("Total")
     it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-    it.setForeground(QColor("#999999"))
+    it.setForeground(QColor(TEXT_FAINT))
     return it
 
 
@@ -184,7 +184,7 @@ def _monthly_summary_label(rec: dict) -> QLabel:
     win_text = f"{win_pct:.0f}%" if win_pct is not None else "—"
     month_label = rec.get("buy_date", "")
 
-    def field(label, value, color="#1c1e2c"):
+    def field(label, value, color=TEXT):
         return (f'<span style="color:{TEXT_MUTED};">{label}</span> '
                 f'<b style="color:{color};">{value}</b>')
 

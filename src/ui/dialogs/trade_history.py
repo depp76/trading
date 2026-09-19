@@ -9,6 +9,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPen
 
+from ui.colors import QC_PROFIT, QC_LOSS
+from ui.theme import SURFACE, LINE, TEXT_MUTED, TEXT_FAINT
+
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,7 @@ class StockTradeHistoryDialog(QDialog):
             def paintSection(self, painter, rect, logical_index):
                 if logical_index in _footer_rows:
                     painter.save()
-                    painter.fillRect(rect, QColor("#ffffff"))
+                    painter.fillRect(rect, QColor(SURFACE))
                     painter.restore()
                 else:
                     super().paintSection(painter, rect, logical_index)
@@ -89,7 +92,7 @@ class StockTradeHistoryDialog(QDialog):
                 d = int(rec.get("days_held", 0) or 0)
                 days_it = QTableWidgetItem(str(d) if d > 0 else "-")
                 days_it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                days_it.setForeground(QColor("#888888"))
+                days_it.setForeground(QColor(TEXT_FAINT))
                 tbl.setItem(r, 4, days_it)
                 tbl.setItem(r, 5, _si(rec.get("sell_date", "")))
                 tbl.setItem(r, 6, _ni(rec.get("sell_price", 0)))
@@ -100,13 +103,13 @@ class StockTradeHistoryDialog(QDialog):
                 pl_pct_val = rec.get("pl_pct", 0.0)
 
             pl_it = _ni(pl_val)
-            if pl_val > 0: pl_it.setForeground(QColor("#c0392b"))
-            elif pl_val < 0: pl_it.setForeground(QColor("#2980b9"))
+            if pl_val > 0: pl_it.setForeground(QC_PROFIT)
+            elif pl_val < 0: pl_it.setForeground(QC_LOSS)
             tbl.setItem(r, pl_col, pl_it)
 
             pl_pct_it = _ni(pl_pct_val, "{:+.1f}%")
-            if pl_pct_val > 0: pl_pct_it.setForeground(QColor("#c0392b"))
-            elif pl_pct_val < 0: pl_pct_it.setForeground(QColor("#2980b9"))
+            if pl_pct_val > 0: pl_pct_it.setForeground(QC_PROFIT)
+            elif pl_pct_val < 0: pl_pct_it.setForeground(QC_LOSS)
             tbl.setItem(r, pct_col, pl_pct_it)
 
         # ---Total row (always present for both open and closed) ---
@@ -140,15 +143,15 @@ class StockTradeHistoryDialog(QDialog):
             tbl.setItem(total_row, 7, _bold_ni(total_sell))
             # P/L (col 8)
             pl_tot_it = _bold_ni(total_pl)
-            if total_pl > 0: pl_tot_it.setForeground(QColor("#c0392b"))
-            elif total_pl < 0: pl_tot_it.setForeground(QColor("#2980b9"))
+            if total_pl > 0: pl_tot_it.setForeground(QC_PROFIT)
+            elif total_pl < 0: pl_tot_it.setForeground(QC_LOSS)
             tbl.setItem(total_row, 8, pl_tot_it)
             # P/L % (col 9)
             if total_buy > 0:
                 total_pct = (total_pl / total_buy) * 100
                 pct_tot_it = _bold_ni(total_pct, "{:+.1f}%")
-                if total_pct > 0: pct_tot_it.setForeground(QColor("#c0392b"))
-                elif total_pct < 0: pct_tot_it.setForeground(QColor("#2980b9"))
+                if total_pct > 0: pct_tot_it.setForeground(QC_PROFIT)
+                elif total_pct < 0: pct_tot_it.setForeground(QC_LOSS)
             else:
                 pct_tot_it = QTableWidgetItem("")
                 pct_tot_it.setFont(bold_font)
@@ -163,14 +166,14 @@ class StockTradeHistoryDialog(QDialog):
             tbl.setItem(total_row, 5, QTableWidgetItem(""))
             tbl.setItem(total_row, 8, _bold_ni(total_sell))
             total_pl_it = _bold_ni(total_pl)
-            if total_pl > 0: total_pl_it.setForeground(QColor("#c0392b"))
-            elif total_pl < 0: total_pl_it.setForeground(QColor("#2980b9"))
+            if total_pl > 0: total_pl_it.setForeground(QC_PROFIT)
+            elif total_pl < 0: total_pl_it.setForeground(QC_LOSS)
             tbl.setItem(total_row, 9, total_pl_it)
             if total_buy > 0:
                 total_pct = (total_pl / total_buy) * 100
                 pct_it = _bold_ni(total_pct, "{:+.1f}%")
-                if total_pct > 0: pct_it.setForeground(QColor("#c0392b"))
-                elif total_pct < 0: pct_it.setForeground(QColor("#2980b9"))
+                if total_pct > 0: pct_it.setForeground(QC_PROFIT)
+                elif total_pct < 0: pct_it.setForeground(QC_LOSS)
             else:
                 pct_it = QTableWidgetItem("")
                 pct_it.setFont(bold_font)
@@ -183,7 +186,7 @@ class StockTradeHistoryDialog(QDialog):
             # Closed position: draw outline border around Total row via delegate.
             _closed_total_row = total_row
             _closed_n_cols = tbl.columnCount()
-            _closed_grid_clr = QColor("#d0d0d0")
+            _closed_grid_clr = QColor(LINE)
 
             class _ClosedDelegate(QStyledItemDelegate):
                 def paint(self, painter, option, index):
@@ -222,14 +225,14 @@ class StockTradeHistoryDialog(QDialog):
             for c in range(10):
                 tbl.setItem(weight_row, c, QTableWidgetItem(""))
             w_it = _bold_ni(total_w, "{:.1f}%")
-            w_it.setForeground(QColor("#555555"))
+            w_it.setForeground(QColor(TEXT_MUTED))
             tbl.setItem(weight_row, 7, w_it)
             tbl.setVerticalHeaderItem(weight_row, QTableWidgetItem(""))  # hide row number
 
             # Remove borders from footer rows (Total + Weight):
             # hide the built-in grid and re-draw only for data rows via delegate.
             _footer_rows = {total_row, weight_row}
-            _grid_clr = QColor("#d0d0d0")
+            _grid_clr = QColor(LINE)
             _n_cols = tbl.columnCount()
 
             class _PartialGridDelegate(QStyledItemDelegate):
@@ -267,17 +270,6 @@ class StockTradeHistoryDialog(QDialog):
         close_btn = QPushButton("Close")
         close_btn.setFixedHeight(30)
         close_btn.setFixedWidth(100)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #005a9e;
-            }
-        """)
         close_btn.clicked.connect(self.accept)
 
         btn_layout = QHBoxLayout()

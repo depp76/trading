@@ -24,6 +24,10 @@ FLAT = "#75798c"      # zero / not applicable
 ACTION_BUY = "#2e7d5b"   # rebalance buy candidate
 ACTION_SELL = "#b7791f"  # rebalance sell candidate
 
+# Caution text/marks that are neither a price direction nor a trade action:
+# skipped tickers in a backtest, an ATR-stop exit, a drawdown over the gate.
+WARN = "#c77c1f"
+
 # MA divergence (price / MA x 100): within +-MA_DIV_NEUTRAL_PCT of 100 is
 # "neutral". The MA chart's three background bands (StockMaDialog) and the
 # Universe table's MA20 Div cell both read this one number so the chart's

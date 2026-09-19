@@ -59,7 +59,7 @@ from PyQt6.QtGui import QColor, QFont
 
 from ui.common import create_font, FONT_TITLE, FONT_BODY, FONT_SMALL, FONT_CAPTION
 from ui.colors import PROFIT, LOSS, MA_RAMP, MA_DIV_NEUTRAL_PCT
-from ui.theme import ACCENT, TEXT, TEXT_MUTED, TEXT_FAINT, LINE, LINE_SOFT, GRP_BG
+from ui.theme import ACCENT, TEXT, TEXT_MUTED, TEXT_FAINT, LINE, LINE_SOFT, GRP_BG, SURFACE
 
 logger = logging.getLogger(__name__)
 
@@ -669,12 +669,12 @@ class StockMaDialog(QDialog):
             if y is None or not np.isfinite(y):
                 continue
             if key == "Close":
-                text, bg, fg = self._fmt_str.format(y), TEXT, "#ffffff"
+                text, bg, fg = self._fmt_str.format(y), TEXT, SURFACE
             elif key == "EW":
-                text, bg, fg = f"EW {_compact(y)}", TEXT_MUTED, "#ffffff"
+                text, bg, fg = f"EW {_compact(y)}", TEXT_MUTED, SURFACE
             else:
                 bg = MA_RAMP[key]
-                text, fg = f"{key} {_compact(y)}", ("#ffffff" if key in ("MA5", "MA10") else TEXT)
+                text, fg = f"{key} {_compact(y)}", (SURFACE if key in ("MA5", "MA10") else TEXT)
             entries.append((key, float(y), text, bg, fg))
         if not entries:
             return
