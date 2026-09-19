@@ -24,6 +24,18 @@ FLAT = "#75798c"      # zero / not applicable
 ACTION_BUY = "#2e7d5b"   # rebalance buy candidate
 ACTION_SELL = "#b7791f"  # rebalance sell candidate
 
+# MA divergence (price / MA x 100): within +-MA_DIV_NEUTRAL_PCT of 100 is
+# "neutral". The MA chart's three background bands (StockMaDialog) and the
+# Universe table's MA20 Div cell both read this one number so the chart's
+# overheated/depressed zones and the table's coloring agree (docs/ui.md
+# MA Chart Redesign issue #6: the two used to have different thresholds).
+MA_DIV_NEUTRAL_PCT = 2.0
+
+# Moving-average lines: one accent ramp, darkest for the shortest window,
+# so period order reads as lightness instead of five competing hues
+# (MA Chart Redesign issue #2). Close is neutral ink (ui.theme.TEXT).
+MA_RAMP = {"MA5": "#6d5fb8", "MA10": "#9184d9", "MA20": "#b5abfc", "MA50": "#d8d5f2"}
+
 # Pre-allocated QColor instances -- avoids re-parsing the hex string on every
 # cell of every row (_populate_row/fill_table_rows run per cell per refresh).
 QC_PROFIT = QColor(PROFIT)
