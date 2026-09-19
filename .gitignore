@@ -39,3 +39,8 @@ scratch/
 
 # Editor settings (uncomment if you don't want to share these across machines)
 # .vscode/
+
+# Obsidian vault lives in obsidian/ (tracked, minus the per-machine UI state file that
+# Obsidian rewrites on every click). The old vault folder is untracked leftover on disk.
+obsidian/.obsidian/workspace.json
+Portfolio Management/
