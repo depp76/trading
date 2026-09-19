@@ -40,7 +40,7 @@ def app_qss(font_css: str) -> str:
     Two rules aren't in docs/ui.md's own reference snippet, added here out of
     necessity rather than invention:
       - QPushButton:checked -- several buttons in the app are toggles
-        (Universe's "Target List" filter, Trading History's "Sort by Date").
+        (Universe's "Target" filter, Trading History's "Sort by Date").
         Without a :checked rule they'd have no way to show their active
         state under this stylesheet.
       - QFrame#DashboardCard -- Trading History's KPI cards were the one

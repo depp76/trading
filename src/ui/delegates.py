@@ -72,27 +72,42 @@ class CellDelegate(QStyledItemDelegate):
     def draw_marker(cls, painter, cell: QRect, x: int, color: str):
         painter.fillRect(x, cell.y() + (cell.height() - cls.MARKER_H) // 2, cls.MARKER_W, cls.MARKER_H, QColor(color))
 
+    META_GAP = 8
+
     @staticmethod
     def draw_name_and_meta(painter, option, x: int, w: int, name: str, meta: str):
-        """Name on the upper half, faint "ticker · market" meta on the lower
-        half (or the name vertically centred when there is no meta)."""
+        """One line: the name, then the faint "ticker · market" meta to its
+        right (user direction 2026-09-19 -- it used to sit on a second line
+        under the name). The meta keeps its full width; the name elides
+        first when the cell is too narrow for both."""
         rect = option.rect
         name_font = QFont(option.font)
+        name_fm = QFontMetrics(name_font)
+        line_rect = QRect(x, rect.y(), w, rect.height())
+        if not meta:
+            painter.setFont(name_font)
+            painter.setPen(QColor(TEXT))
+            painter.drawText(line_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             name_fm.elidedText(name, Qt.TextElideMode.ElideRight, w))
+            return
+
+        meta_font = QFont(option.font)
+        meta_font.setPointSize(max(6, option.font.pointSize() - 1))
+        meta_fm = QFontMetrics(meta_font)
+        meta_w = min(meta_fm.horizontalAdvance(meta), w)
+        name_w = max(10, w - meta_w - CellDelegate.META_GAP)
+        elided = name_fm.elidedText(name, Qt.TextElideMode.ElideRight, name_w)
+        drawn_w = name_fm.horizontalAdvance(elided)
+
         painter.setFont(name_font)
         painter.setPen(QColor(TEXT))
-        elided = QFontMetrics(name_font).elidedText(name, Qt.TextElideMode.ElideRight, w)
-        if meta:
-            name_rect = QRect(x, rect.y(), w, rect.height() // 2 + 2 + (rect.height() % 2))
-            painter.drawText(name_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, elided)
-            meta_font = QFont(option.font)
-            meta_font.setPointSize(max(6, option.font.pointSize() - 1))
-            painter.setFont(meta_font)
-            painter.setPen(QColor(TEXT_FAINT))
-            meta_rect = QRect(x, rect.y() + rect.height() // 2, w, rect.height() // 2)
-            painter.drawText(meta_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, meta)
-        else:
-            painter.drawText(QRect(x, rect.y(), w, rect.height()),
-                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.drawText(QRect(x, rect.y(), name_w, rect.height()),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.setFont(meta_font)
+        painter.setPen(QColor(TEXT_FAINT))
+        meta_x = x + drawn_w + CellDelegate.META_GAP
+        painter.drawText(QRect(meta_x, rect.y(), max(0, x + w - meta_x), rect.height()),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, meta)
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +115,7 @@ class CellDelegate(QStyledItemDelegate):
 # ---------------------------------------------------------------------------
 # docs/ui.md 1.7: one badge/marker vocabulary for the highlight states
 # custom_settings.json stores as "On"/"Tg" (kept as-is; only the two places
-# that display it -- this badge and the toolbar's "Target List" filter --
+# that display it -- this badge and the toolbar's "Target" filter --
 # agree on wording).
 STATUS_BADGE = {
     "On": ("Watch", ACCENT_TEXT, ACCENT, ACCENT_BG),
@@ -110,9 +125,9 @@ STATUS_MARKER = {"On": ACCENT, "Tg": ACCENT}
 
 
 class IdentityDelegate(CellDelegate):
-    """Column 0: status marker + name + "ticker · market" meta + status
-    badge, replacing the old separate Name/Market/Ticker columns and the
-    per-row Pf button (docs/ui.md 2.2, 1.7)."""
+    """Column 0: status marker + name with the "ticker · market" meta to
+    its right + status badge, replacing the old separate Name/Market/Ticker
+    columns and the per-row Pf button (docs/ui.md 2.2, 1.7)."""
 
     def paint(self, painter, option, index):
         painter.save()

@@ -118,7 +118,10 @@ def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
                     if mode == 'bp':
                         changes[label] = (current_price - old_price) * 100
                     elif mode == 'abs':
-                        changes[label] = old_price
+                        # Level change in the instrument's own unit (VIX
+                        # points, $ for WTI) -- used to store the old level
+                        # itself, which no consumer could show as a change.
+                        changes[label] = current_price - old_price
                     else:
                         changes[label] = (current_price - old_price) / old_price * 100
 

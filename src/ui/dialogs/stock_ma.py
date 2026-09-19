@@ -55,7 +55,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QWidget, QFrame,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QFontMetrics
 
 from ui.common import create_font, FONT_TITLE, FONT_BODY, FONT_SMALL, FONT_CAPTION
 from ui.colors import PROFIT, LOSS, MA_RAMP, MA_DIV_NEUTRAL_PCT
@@ -176,9 +176,11 @@ class StockMaDialog(QDialog):
 
         is_stock = market in _STOCK_MARKETS
         if self._investor_data or is_stock:
-            splitter.addWidget(self._build_right_panel(is_stock))
+            panel = self._build_right_panel(is_stock)
+            splitter.addWidget(panel)
             splitter.setStretchFactor(0, 10)
-            splitter.setStretchFactor(1, 3)
+            splitter.setStretchFactor(1, 0)          # the panel keeps its content width; the chart flexes
+            splitter.setCollapsible(1, False)
 
         chart_v.addLayout(self._build_header_row())
         chart_v.addLayout(self._build_view_row())
@@ -358,6 +360,43 @@ class StockMaDialog(QDialog):
             it.setForeground(QColor(color))
         return it
 
+    # Horizontal room a cell needs beyond its text: ui/theme.py's
+    # QTableWidget::item padding (8px a side), the style's own text margin
+    # (~3px a side), plus slack for hinting/DPI differences between the
+    # metrics measured here and the glyphs painted later. 22px was exactly
+    # the sum with no slack, and a 7-digit close (1,849,000) still elided
+    # on a real screen.
+    _SIDE_CELL_PAD = 36
+
+    @classmethod
+    def _fit_side_table(cls, table: QTableWidget) -> None:
+        """Size every column to its widest header/cell text and pin the
+        table's minimum width to the total, so the splitter cannot squeeze
+        the side panel below what its numbers need. Net-purchase figures
+        are share counts (7-8 digits, e.g. -1,234,567) -- under the old
+        Stretch mode a narrow panel elided them to '1,23...'."""
+        # Measure with the fonts the widget will actually paint with: the
+        # global stylesheet re-resolves them at polish time.
+        table.ensurePolished()
+        table.horizontalHeader().ensurePolished()
+        head_fm = QFontMetrics(table.horizontalHeader().font())
+        cell_fm = QFontMetrics(table.font())
+        total = 0
+        for c in range(table.columnCount()):
+            header = table.horizontalHeaderItem(c)
+            w = head_fm.horizontalAdvance(header.text()) if header else 0
+            for r in range(table.rowCount()):
+                it = table.item(r, c)
+                if it is not None:
+                    w = max(w, cell_fm.horizontalAdvance(it.text()))
+            w += cls._SIDE_CELL_PAD
+            table.setColumnWidth(c, w)
+            total += w
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        table.horizontalHeader().setStretchLastSection(True)
+        scrollbar_w = table.style().pixelMetric(table.style().PixelMetric.PM_ScrollBarExtent)
+        table.setMinimumWidth(total + scrollbar_w + 2 * table.frameWidth())
+
     def _build_futures_table(self, rows: list) -> QTableWidget:
         right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         table = self._new_side_table(["Name", "Code", "Return"])
@@ -366,9 +405,7 @@ class StockMaDialog(QDialog):
             table.setItem(i, 0, self._cell(row['Contract']))
             table.setItem(i, 1, self._cell(row['Symbol']))
             table.setItem(i, 2, self._cell(f"${row.get('Close', 0):,.2f}", right))
-        table.setMinimumWidth(260)
-        for c in range(3):
-            table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Stretch)
+        self._fit_side_table(table)
         return table
 
     def _build_investor_table(self, rows: list) -> QTableWidget:
@@ -389,10 +426,7 @@ class StockMaDialog(QDialog):
                 val = row.get(key, 0)
                 color = PROFIT if val > 0 else (LOSS if val < 0 else None)
                 table.setItem(i, j, self._cell(f"{val:,}", right, color))
-        table.setMinimumWidth(360 + (140 if has_details else 0))
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        for col in range(1, len(headers)):
-            table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        self._fit_side_table(table)
         return table
 
     def _open_company_page(self, *_):

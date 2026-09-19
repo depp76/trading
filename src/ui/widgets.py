@@ -30,20 +30,21 @@ from ui.theme import ACCENT, TEXT, TEXT_FAINT, TEXT_EMPTY, TEXT_SUB
 #
 # This replaces the prior 22-column layout (separate Name/Market/Ticker/Pf/
 # MA/Del columns, Div(20)+Div(50), 52W High/High Diff/Low/Low Diff as four
-# columns, 3D/5D/10D/20D/60D/120D) with the mockup's 13: Name+Ticker merged
+# columns, 3D/5D/10D/20D/60D/120D) with the mockup's layout (14 columns): Name+Ticker merged
 # into one identity cell (with an inline status badge, replacing the Pf
 # button column), a single 52W range bar (replacing 4 columns), Div(20) and
 # Div(50) merged into one "MA20 Div" (Div(50) dropped -- the mockup doesn't
-# carry it), momentum trimmed to 3D/20D/60D/120D (5D/10D dropped), a new
+# carry it), momentum as 3D/10D/20D/60D/120D (5D dropped; 10D re-added on
+# 2026-09-19 by user direction), a new
 # "Chg" day-over-day column (data/cache.py's _TD_PERIODS now has a "1d"
 # entry for this), and a "Trend" mini chart. The MA-chart and Delete action
 # buttons are gone too -- see StockTable's docstring for what replaced them.
 #
-# group is the docs/ui.md 2.5 column-group toggle bucket ("price"/"value"/
-# "momentum"), or None for the identity column, which the group toggle never
-# hides. There is no data for a fourth "supply/demand" group in this table,
-# so no toggle was added for one rather than shipping an empty, permanently-
-# disabled button.
+# group ("price"/"value"/"momentum", None for the identity column) is kept
+# as the column's semantic bucket; the toolbar toggle that used to hide
+# groups was removed on 2026-09-19 (user direction), so it is documentation
+# only now (history_table.py derives its header sections from the same
+# field on its own ColSpecs).
 # scale is the docs/ui.md 1.2 heatmap alpha scale, or None for non-heatmap
 # columns. "trend" isn't a text cell (see TrendDelegate) so it has no scale.
 # "chg" (day-over-day) uses a tighter scale than the 3D-120D columns since a
@@ -51,19 +52,25 @@ from ui.theme import ACCENT, TEXT, TEXT_FAINT, TEXT_EMPTY, TEXT_SUB
 # ---------------------------------------------------------------------------
 ColSpec = namedtuple("ColSpec", ["key", "label", "min_width", "weight", "group", "scale"])
 
+# User direction 2026-09-19: Price and Cap are a fixed 80 px (a seven-digit
+# won price or market cap is not wall-to-wall); Chg, MA20 Div and every
+# momentum column share the 3D column's width; 10D is back next to 3D.
+_NARROW_W, _NARROW_WEIGHT = 58, 0.62
+
 COLUMNS = [
     ColSpec("identity",  "Name / Ticker", 150, 2.4,  None,       None),
-    ColSpec("price",     "Price",          86, 0.95, "price",    None),
-    ColSpec("chg",       "Chg",            62, 0.7,  "price",    5),
-    ColSpec("cap",       "Cap",            62, 0.7,  "price",    None),
+    ColSpec("price",     "Price",          80, None, "price",    None),
+    ColSpec("chg",       "Chg",            _NARROW_W, _NARROW_WEIGHT, "price",    5),
+    ColSpec("cap",       "Cap",            80, None, "price",    None),
     ColSpec("range52w",  "52W Range",     112, 1.5,  "price",    None),
     ColSpec("tper",      "tPER",           54, 0.55, "value",    None),
     ColSpec("fper",      "fPER",           54, 0.55, "value",    None),
-    ColSpec("ma20div",   "MA20 Div",       94, 1.05, "momentum", 20),
-    ColSpec("d3",        "3D",             58, 0.62, "momentum", 10),
-    ColSpec("d20",       "20D",            58, 0.62, "momentum", 10),
-    ColSpec("d60",       "60D",            58, 0.62, "momentum", 10),
-    ColSpec("d120",      "120D",           58, 0.62, "momentum", 10),
+    ColSpec("ma20div",   "MA20 Div",       _NARROW_W, _NARROW_WEIGHT, "momentum", 20),
+    ColSpec("d3",        "3D",             _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
+    ColSpec("d10",       "10D",            _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
+    ColSpec("d20",       "20D",            _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
+    ColSpec("d60",       "60D",            _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
+    ColSpec("d120",      "120D",           _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
     ColSpec("trend",     "Trend",          80, 1.0,  "momentum", None),
 ]
 
@@ -72,21 +79,36 @@ COLUMNS = [
 # is meant makes future reordering a silent bug. Kept in sync with COLUMNS
 # by the assertion below (fails loudly at import time if they drift).
 COL_IDENTITY, COL_PRICE, COL_CHG, COL_CAP, COL_RANGE52W, COL_TPER, COL_FPER, \
-    COL_MA20DIV, COL_D3, COL_D20, COL_D60, COL_D120, COL_TREND = range(len(COLUMNS))
+    COL_MA20DIV, COL_D3, COL_D10, COL_D20, COL_D60, COL_D120, COL_TREND = range(len(COLUMNS))
 assert [c.key for c in COLUMNS] == [
     "identity", "price", "chg", "cap", "range52w", "tper", "fper",
-    "ma20div", "d3", "d20", "d60", "d120", "trend",
-]
-
-# (group key, toolbar button label) -- docs/ui.md 2.5, default all-on.
-TOGGLE_GROUPS = [
-    ("price", "Price"),
-    ("value", "Value"),
-    ("momentum", "Momentum"),
+    "ma20div", "d3", "d10", "d20", "d60", "d120", "trend",
 ]
 
 # Momentum columns paired with the changes{} dict key each one reads.
-_MOMENTUM_COLS = [(COL_D3, "3d"), (COL_D20, "20d"), (COL_D60, "60d"), (COL_D120, "120d")]
+_MOMENTUM_COLS = [(COL_D3, "3d"), (COL_D10, "10d"), (COL_D20, "20d"), (COL_D60, "60d"), (COL_D120, "120d")]
+
+# Index, yield and commodity rows sit in the same table as equities (user
+# direction 2026-09-19, superseding docs/ui.md 2.4's separate Market rail) so
+# their price and change rates read alongside stocks. Their change_mode sets
+# the unit: 'pct' (stocks, indices), 'bp' (yields), 'abs' (VIX/WTI levels).
+_BP_HEAT_SCALE = 25.0   # 25 bp is "full" heat, in place of a pct column's scale
+
+
+def _fmt_change(v: float, mode: str) -> str:
+    if mode == 'bp':
+        return f"{v:+.0f}bp"
+    if mode == 'abs':
+        return f"{v:+.2f}"
+    return f"{v:+.1f}%"
+
+
+def _change_bg(v: float, pct_scale, mode: str):
+    """Heatmap tint for a change cell; abs-mode levels have no comparable
+    scale, so they only get the PROFIT/LOSS foreground."""
+    if mode == 'abs' or pct_scale is None:
+        return None
+    return heatmap_bg(v, _BP_HEAT_SCALE if mode == 'bp' else pct_scale)
 
 
 class NumericItem(QTableWidgetItem):
@@ -291,9 +313,9 @@ class FilterableHeader(QHeaderView):
 # StockTable  — main universe table with filters and action buttons
 # ---------------------------------------------------------------------------
 class StockTable(QTableWidget):
-    """Trading Universe watchlist table (docs/ui.md 2). Rows are plain
-    equities only -- index/bond/commodity rows are UniverseTab's Market
-    Rail's job, not this table's (docs/ui.md 2.4).
+    """Trading Universe watchlist table (docs/ui.md 2). Holds every
+    watchlist row -- equities plus the index/yield/commodity rows, which
+    format their price and changes by change_mode (see _fmt_change).
 
     Per-row actions used to be three QPushButtons wired via
     add_action_buttons()/setCellWidget(); that's gone (docs/ui.md's own
@@ -312,8 +334,9 @@ class StockTable(QTableWidget):
     delete_requested = pyqtSignal(str)     # emitted with the row's ticker
     toggle_requested = pyqtSignal(str)     # emitted with the row's ticker
 
-    # docs/ui.md 1.4 density toggle; "compact" is the default.
-    DENSITY_ROW_HEIGHTS = {"compact": 28, "normal": 34, "spacious": 42}
+    # One row height (the old "compact" density; the Normal/Spacious toggle
+    # was removed on 2026-09-19 by user direction).
+    ROW_HEIGHT = 28
 
     def __init__(self):
         super().__init__()
@@ -367,7 +390,8 @@ class StockTable(QTableWidget):
         # A manual header drag on column 0 bypasses _stretch_columns, so the
         # overlay needs its own hook to stay the same width as the column.
         self._filter_header.sectionResized.connect(self._on_section_resized)
-        self.set_density("compact")
+        self.verticalHeader().setDefaultSectionSize(self.ROW_HEIGHT)
+        self._frozen.verticalHeader().setDefaultSectionSize(self.ROW_HEIGHT)
 
     def _build_frozen_column(self):
         """Pins the Name column on horizontal scroll (docs/ui.md 1.5:
@@ -446,25 +470,6 @@ class StockTable(QTableWidget):
             mirror.setData(Qt.ItemDataRole.UserRole, src.data(Qt.ItemDataRole.UserRole))
             self._frozen.setItem(row, 0, mirror)
             self._frozen.setRowHidden(row, self.isRowHidden(row))
-
-    def set_density(self, level: str):
-        """Row-height toggle (docs/ui.md 1.4); 'compact' is the default."""
-        h = self.DENSITY_ROW_HEIGHTS.get(level, self.DENSITY_ROW_HEIGHTS["compact"])
-        self._density = level
-        self.verticalHeader().setDefaultSectionSize(h)
-        self._frozen.verticalHeader().setDefaultSectionSize(h)
-
-    def set_column_group_visible(self, group: str, visible: bool):
-        """Show/hide every column in `group` (docs/ui.md 2.5 column-group
-        toggle). The identity column (group=None) is structural and never
-        affected."""
-        changed = False
-        for col, spec in enumerate(COLUMNS):
-            if spec.group == group and self.isColumnHidden(col) != (not visible):
-                self.setColumnHidden(col, not visible)
-                changed = True
-        if changed:
-            self._stretch_columns()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -747,19 +752,26 @@ class StockTable(QTableWidget):
 
     def _populate_row(self, row, item, highlights):
         """Renders every cell of one row from the redesigned 13-column spec
-        (docs/ui.md 2.2). This table only ever receives plain equities now
-        -- UniverseTab filters index/bond/commodity rows out to the Market
-        Rail before calling load_data()/update_changed_rows() (docs/ui.md
-        2.4) -- so the bp/abs/is_bond/is_index branching the old 22-column
-        version needed for those rows is gone."""
+        (docs/ui.md 2.2). Index/yield/commodity rows share the table with
+        equities; change_mode picks the price/change formatting and the
+        cap/PER cells show "-" where the concept does not apply."""
         right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         numeric_font = self._numeric_font
 
         currency = item.get('currency', '')
         ticker = item.get('ticker', '')
+        mode = item.get('change_mode', 'pct')       # 'pct' | 'bp' (yields) | 'abs' (VIX/WTI levels)
+        is_index = bool(item.get('is_index'))
         is_usd = (currency == '$' and 'usd_price' in item)
         price_raw = float(item.get('usd_price', 0) if is_usd else item.get('price', 0))
-        price_text = f"${price_raw:,.2f}" if is_usd else f"{int(price_raw):,}"
+        if mode == 'bp':
+            price_text = f"{price_raw:.2f}%"
+        elif is_usd:
+            price_text = f"${price_raw:,.2f}"
+        elif is_index or mode == 'abs':
+            price_text = f"{price_raw:,.2f}"
+        else:
+            price_text = f"{int(price_raw):,}"
 
         # col 0: identity (name + "ticker · market" meta + status badge) --
         # see IdentityDelegate. Sorts by name (DisplayRole), same as the old
@@ -787,22 +799,30 @@ class StockTable(QTableWidget):
         # col 2: Chg -- day-over-day change (data/cache.py's _TD_PERIODS has
         # a "1d" entry now, computed the same way as 3D/20D/60D/120D).
         chg = float(changes.get("1d", 0.0) or 0.0)
-        chg_item = NumericItem(f"{chg:+.1f}%", chg)
+        chg_item = NumericItem(_fmt_change(chg, mode), chg)
         chg_item.setTextAlignment(right)
         chg_item.setFont(numeric_font)
         chg_item.setForeground(fg_for(chg))
-        bg = heatmap_bg(chg, COLUMNS[COL_CHG].scale)
+        bg = _change_bg(chg, COLUMNS[COL_CHG].scale, mode)
         if bg is not None:
             chg_item.setBackground(bg)
         self.setItem(row, COL_CHG, chg_item)
 
-        # col 3: Cap (market_cap is in KRW; 100,000,000 = 100M KRW)
-        try:
-            cap_eok = int(item.get('market_cap', 0)) // 100_000_000
-        except Exception:
-            cap_eok = 0
-        cap_item = NumericItem(f"{cap_eok:,}", cap_eok)
-        cap_item.setTextAlignment(right)
+        # col 3: Cap (market_cap is in KRW; 100,000,000 = 100M KRW). Index,
+        # yield and commodity rows have no market cap.
+        cap_eok = None
+        if not is_index:
+            try:
+                cap_eok = int(item.get('market_cap', 0)) // 100_000_000
+            except Exception:
+                cap_eok = 0
+        if cap_eok is None:
+            cap_item = NumericItem("-", float('-inf'))
+            cap_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            cap_item.setForeground(QColor(TEXT_EMPTY))
+        else:
+            cap_item = NumericItem(f"{cap_eok:,}", cap_eok)
+            cap_item.setTextAlignment(right)
         cap_item.setFont(numeric_font)
         self.setItem(row, COL_CAP, cap_item)
 
@@ -859,17 +879,17 @@ class StockTable(QTableWidget):
             ma_item.setForeground(QColor(TEXT_EMPTY))
         self.setItem(row, COL_MA20DIV, ma_item)
 
-        # cols 8-11: 3D / 20D / 60D / 120D momentum (5D/10D dropped)
+        # momentum: 3D / 10D / 20D / 60D / 120D (5D dropped)
         trend_points = []
         for col, key in _MOMENTUM_COLS:
             val = float(changes.get(key, 0.0) or 0.0)
             trend_points.append(val)
-            cell = NumericItem(f"{val:+.1f}%", val)
+            cell = NumericItem(_fmt_change(val, mode), val)
             cell.setTextAlignment(right)
             cell.setFont(numeric_font)
             if val != 0:
                 cell.setForeground(fg_for(val))
-                bg = heatmap_bg(val, COLUMNS[col].scale)
+                bg = _change_bg(val, COLUMNS[col].scale, mode)
                 if bg is not None:
                     cell.setBackground(bg)
             self.setItem(row, col, cell)
@@ -913,7 +933,7 @@ class StockTable(QTableWidget):
         self.col_filter_changed.emit()
 
     def apply_col_filters(self, text_filter="", tg_only=False, market="ALL"):
-        """Apply the toolbar's market filter, Target List toggle and text
+        """Apply the toolbar's market filter, Target toggle and text
         search. Called by UniverseTab.filter_table(). `market` is one of
         "ALL"/"KOSPI"/"KOSDAQ" (docs/ui.md 2.1: replaced the old Market
         column's Excel-style dropdown with plain toolbar buttons, since

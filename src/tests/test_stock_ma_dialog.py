@@ -124,6 +124,25 @@ class TestStockChart(unittest.TestCase):
         d.render(pm)
 
 
+class TestInvestorTableFitsItsNumbers(unittest.TestCase):
+
+    def test_columns_are_wide_enough_for_share_counts(self):
+        from PyQt6.QtGui import QFontMetrics
+        from PyQt6.QtWidgets import QTableWidget
+        rows = [{"Date": "2026.09.19", "Close": 1849000, "Foreigner": -12345678, "Institution": 9876543, "Retail": 2468135}]
+        d = StockMaDialog("005930", "Samsung", "KOSPI", _df(), investor_data=rows)
+        table = d.findChild(QTableWidget)
+        fm = QFontMetrics(table.font())
+        # 8px padding a side (theme) + 3px style text margin a side, plus slack.
+        needed = [fm.horizontalAdvance(table.item(0, c).text()) + 28 for c in range(table.columnCount())]
+        for c, need in enumerate(needed):
+            self.assertGreaterEqual(table.columnWidth(c), need, table.item(0, c).text())
+        # The splitter cannot shrink the table below what every column needs.
+        # (Column widths themselves can exceed this before the dialog is
+        # shown: the last section stretches into the widget's default size.)
+        self.assertGreaterEqual(table.minimumWidth(), sum(needed))
+
+
 class TestSimpleAndEmptyCharts(unittest.TestCase):
 
     def test_bond_yield_is_a_single_panel_without_views(self):

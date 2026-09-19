@@ -30,7 +30,19 @@ def _no_disk(_path, default=None):
 
 
 def _universe(n=40):
-    rows = []
+    # Index / yield / commodity rows share the table with equities (their
+    # change_mode picks the price/change unit).
+    rows = [
+        {"ticker": "KS11", "name": "KOSPI", "market": "Index", "is_index": True, "price": 2500.12,
+         "market_cap": float("inf"), "changes": {"1d": 1.2, "3d": 0.5, "20d": -2.0, "60d": 4.0, "120d": 6.0},
+         "change_mode": "pct", "index_order": 1},
+        {"ticker": "KR3YT", "name": "KR 3Y", "market": "Index", "is_index": True, "is_bond": True, "price": 3.12,
+         "currency": "%", "market_cap": float("inf"), "changes": {"1d": -2.0, "3d": 1.0}, "change_mode": "bp", "index_order": 5},
+        {"ticker": "^VIX", "name": "VIX", "market": "Index", "is_index": True, "price": 18.4,
+         "market_cap": float("inf"), "changes": {"1d": 0.8, "3d": -1.1}, "change_mode": "abs", "index_order": 6},
+        {"ticker": "CL=F", "name": "WTI", "market": "Index", "is_index": True, "price": 88.5, "usd_price": 88.5,
+         "currency": "$", "market_cap": float("inf"), "changes": {"1d": -0.7}, "change_mode": "abs", "index_order": 7},
+    ]
     for i in range(n):
         rows.append({
             "ticker": f"{100000 + i}", "name": f"Stock{i}", "market": "KOSPI" if i % 2 == 0 else "KOSDAQ",
@@ -94,7 +106,7 @@ class TestEveryTabBuildsUnderTheAppStylesheet(unittest.TestCase):
         with _capture_qt_messages() as messages, _all_tabs_patched():
             u, h, a, s = self._build_all()
             u.all_data = _universe()
-            u._reload_table_and_rail()   # exercises StockTable cells + Market Rail cards
+            u._reload_table()            # exercises every StockTable cell type, index rows included
             u.filter_table()
             for tab in (u, h, a, s):
                 tab.resize(1400, 800)
@@ -106,21 +118,6 @@ class TestEveryTabBuildsUnderTheAppStylesheet(unittest.TestCase):
 
         qss_warnings = [m for m in messages if "stylesheet" in m.lower()]
         self.assertEqual(qss_warnings, [])
-
-    def test_rail_cards_for_every_change_mode_parse(self):
-        from ui.universe_tab import UniverseTab
-        with _capture_qt_messages() as messages:
-            for item in (
-                {"name": "KOSPI", "ticker": "KS11", "is_index": True, "price": 2500.0,
-                 "changes": {"1d": 1.2}, "change_mode": "pct"},
-                {"name": "Bond 3Y", "ticker": "B3", "is_bond": True, "price": 3.12,
-                 "changes": {"1d": -2.0}, "change_mode": "bp"},
-                {"name": "USD", "ticker": "USD", "price": 1350.0, "changes": {}, "change_mode": "abs"},
-            ):
-                card = UniverseTab._make_rail_card(item)
-                card.show()
-                app.processEvents()
-        self.assertEqual([m for m in messages if "stylesheet" in m.lower()], [])
 
 
 class TestStrategyTabSmoke(unittest.TestCase):

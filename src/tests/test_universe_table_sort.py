@@ -126,6 +126,40 @@ class TestNumericSortIsNumericNotLexicographic(unittest.TestCase):
         self.assertEqual(_tickers(table), ["000003", "000001", "000002"])
 
 
+class TestIndexRowsFormatByChangeMode(unittest.TestCase):
+    """Index / yield / commodity rows live in the same table as equities
+    (user direction 2026-09-19); change_mode sets the price/change unit and
+    the cap cell shows "-" where there is no market cap."""
+
+    def _row(self, table, ticker):
+        for r in range(table.rowCount()):
+            if table.item(r, COL_IDENTITY).data(Qt.ItemDataRole.UserRole)["ticker"] == ticker:
+                return r
+        raise AssertionError(ticker)
+
+    def test_price_and_change_units(self):
+        from ui.widgets import COL_CHG, COL_CAP, COL_D3
+        table = StockTable()
+        table.load_data([
+            {"ticker": "KS11", "name": "KOSPI", "market": "Index", "is_index": True, "price": 2500.126,
+             "market_cap": float("inf"), "changes": {"1d": 1.23, "3d": -0.5}, "change_mode": "pct"},
+            {"ticker": "KR3YT", "name": "KR 3Y", "market": "Index", "is_index": True, "is_bond": True, "price": 3.125,
+             "currency": "%", "market_cap": float("inf"), "changes": {"1d": -2.4, "3d": 5.0}, "change_mode": "bp"},
+            {"ticker": "^VIX", "name": "VIX", "market": "Index", "is_index": True, "price": 18.4,
+             "market_cap": float("inf"), "changes": {"1d": 0.75}, "change_mode": "abs"},
+            {"ticker": "CL=F", "name": "WTI", "market": "Index", "is_index": True, "price": 88.5, "usd_price": 88.5,
+             "currency": "$", "market_cap": float("inf"), "changes": {"1d": -0.7}, "change_mode": "abs"},
+            _mk("005930", "Samsung", 70000),
+        ])
+        cell = lambda t, c: table.item(self._row(table, t), c).text()  # noqa: E731
+        self.assertEqual((cell("KS11", COL_PRICE), cell("KS11", COL_CHG), cell("KS11", COL_D3)), ("2,500.13", "+1.2%", "-0.5%"))
+        self.assertEqual((cell("KR3YT", COL_PRICE), cell("KR3YT", COL_CHG), cell("KR3YT", COL_D3)), ("3.12%", "-2bp", "+5bp"))
+        self.assertEqual((cell("^VIX", COL_PRICE), cell("^VIX", COL_CHG)), ("18.40", "+0.75"))
+        self.assertEqual((cell("CL=F", COL_PRICE), cell("CL=F", COL_CHG)), ("$88.50", "-0.70"))
+        self.assertEqual(cell("KS11", COL_CAP), "-")
+        self.assertEqual(cell("005930", COL_CAP), "1,000")   # 100,000,000,000 KRW -> 1,000 eok
+
+
 class TestFrozenColumnTracksIdentityWidth(unittest.TestCase):
     """The frozen Name overlay is a second QTableWidget whose own column
     used to stay at Qt's 100px default while its widget was resized to

@@ -28,7 +28,7 @@ class TestStartupAddedTickersRenderOnce(unittest.TestCase):
     def test_startup_arrivals_are_batched_into_one_render(self):
         tab = self._tab()
         with patch.object(tab, "load_custom_settings"), patch.object(tab, "save_custom_settings"), \
-             patch.object(tab, "_reload_table_and_rail") as reload, patch.object(tab, "filter_table") as filt:
+             patch.object(tab, "_reload_table") as reload, patch.object(tab, "filter_table") as filt:
             for t, cap in (("100001", 5), ("100002", 50), ("100003", 20)):
                 tab._handle_single_stock_loaded(_stock(t, cap), "", is_startup=True, ticker_hint=t)
             # Nothing rendered yet; the single-shot timer is armed instead.
@@ -45,7 +45,7 @@ class TestStartupAddedTickersRenderOnce(unittest.TestCase):
     def test_user_add_still_renders_immediately(self):
         tab = self._tab()
         with patch.object(tab, "load_custom_settings"), patch.object(tab, "save_custom_settings"), \
-             patch.object(tab, "_reload_table_and_rail") as reload, patch.object(tab, "filter_table"), \
+             patch.object(tab, "_reload_table") as reload, patch.object(tab, "filter_table"), \
              patch.object(tab, "update_total_status"):
             tab._handle_single_stock_loaded(_stock("100009", 1), "", is_startup=False, ticker_hint="100009")
             self.assertEqual(reload.call_count, 1)

@@ -57,11 +57,11 @@ class TestFetchHistoricalChanges(unittest.TestCase):
         self.assertEqual(ch["ma50_div"], 0.0)
         self.assertEqual(ch["ma20_roc_1w"], 0.0)
 
-    def test_abs_mode_reports_reference_levels(self):
+    def test_abs_mode_reports_level_deltas(self):
         cp = self.closes[-1] + 3.0
         ch = fetch_historical_changes("VIX", cp, self.df, mode="abs")
-        # abs mode: period columns carry the past level itself (VIX/WTI display)
-        self.assertAlmostEqual(ch["5d"], self.closes[self.n - 1 - 5])
+        # abs mode: period columns are the change in the instrument's own unit
+        self.assertAlmostEqual(ch["5d"], cp - self.closes[self.n - 1 - 5])
         self.assertAlmostEqual(ch["52w_high_diff"], cp - max(self.closes))
         self.assertAlmostEqual(ch["52w_low_diff"], cp - min(self.closes))
         self.assertEqual(ch["ma20_div"], 0.0)
