@@ -956,15 +956,19 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         sort_by_date = getattr(self, "_sort_by_date", False)
 
         if sort_by_date:
-            # All rows sorted by buy_date ascending (closed + open together),
-            # with a summary row appended after each calendar month.
+            # All rows sorted by buy_date descending (closed + open together,
+            # most recently bought first), with a summary row appended after
+            # each calendar month's group (build_monthly_rows groups rows by
+            # first-seen month, so the most recent month lands first here too).
             all_rows = closed_rows + open_rows
-            all_rows.sort(key=lambda x: x[1]["buy_date"])
+            all_rows.sort(key=lambda x: x[1]["buy_date"], reverse=True)
             rows = self._build_monthly_rows(all_rows)
         else:
-            # Default: closed (oldest first) then open (oldest first)
-            closed_rows.sort(key=lambda x: x[1]["buy_date"])
-            open_rows.sort(key=lambda x: x[1]["buy_date"])
+            # Default: closed (most recently bought first) then open (most
+            # recently bought first) -- user request: recently bought stocks
+            # at the top instead of the bottom.
+            closed_rows.sort(key=lambda x: x[1]["buy_date"], reverse=True)
+            open_rows.sort(key=lambda x: x[1]["buy_date"], reverse=True)
             rows = closed_rows + open_rows
         self._fill_table(rows)
 
@@ -980,7 +984,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
             tbl.setUpdatesEnabled(True)
         self._update_open_stocks_combo()
         self._fit_columns()
-        tbl.scrollToBottom()
+        tbl.scrollToTop()
 
     # ---Buy/Sell cell double-click edit ---
     # Editable columns: Buy(3=Date, 4=Price, 5=Qty, 6=Amount), Sell(8=Date, 10=Price, 11=Qty, 12=Amount)

@@ -86,10 +86,6 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
     def _build_ui(self):
         universe_layout = QVBoxLayout(self)
 
-        tu_title = QLabel("Trading Universe")
-        tu_title.setFont(create_font(16, QFont.Weight.Bold))
-        universe_layout.addWidget(tu_title)
-
         # Add Ticker + Search panel
         add_layout = QHBoxLayout()
 

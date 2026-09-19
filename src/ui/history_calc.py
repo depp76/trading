@@ -43,10 +43,12 @@ def compute_pl_fields(rec: dict):
 def build_monthly_rows(all_rows: list):
     """Insert a ("monthly", summary_rec) row after each buy-month group.
 
-    all_rows: [(kind, rec), ...] already sorted by buy_date ascending.
-    The summary carries the month total buy amount and the realized (pl)
-    + unrealized (curr_pl) P/L of that month's positions. Pure function so
-    it can be unit-tested without a widget (roadmap 6-3b).
+    all_rows: [(kind, rec), ...] already sorted by buy_date (ascending or
+    descending -- rows are grouped by the month of the first row seen for it,
+    so either direction keeps each month's rows contiguous). The summary
+    carries the month total buy amount and the realized (pl) + unrealized
+    (curr_pl) P/L of that month's positions. Pure function so it can be
+    unit-tested without a widget (roadmap 6-3b).
     """
     rows = []
     month_groups: dict = {}
