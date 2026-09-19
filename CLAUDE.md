@@ -173,6 +173,7 @@ not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
   (`data/collectors/naver.py`, `data/collectors/krx.py`), and the `'맑은 고딕 Semilight'`
   font-family fallback name (`ui/common.py`). `gemini_helper.py`'s prompts were included in
   the sweep — see the note on that file above for the response-language consequence.
+- UI 변경은 `docs/ui.md` 의 전역 규칙을 따른다.
 - Fonts go through `create_font()`; inline stylesheets splice `FONT_FAMILY_CSS` instead of
   repeating the font-family list.
 - Bulk table repaints are wrapped in `setUpdatesEnabled(False)` / `finally:

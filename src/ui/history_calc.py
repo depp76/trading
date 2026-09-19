@@ -60,14 +60,22 @@ def build_monthly_rows(all_rows: list):
     for month, m_rows in month_groups.items():
         total_buy = 0.0
         total_pl = 0.0
+        trade_count = 0
+        closed_count = 0
+        win_count = 0
         for k, r in m_rows:
             rows.append((k, r))
+            trade_count += 1
             b_amt = r.get("buy_amount")
             if b_amt:
                 total_buy += float(b_amt)
             pl = r.get("pl", 0.0)
             curr_pl = r.get("curr_pl", 0.0)
             total_pl += (float(pl) if pl else 0.0) + (float(curr_pl) if curr_pl else 0.0)
+            if k == "closed":
+                closed_count += 1
+                if pl and float(pl) > 0:
+                    win_count += 1
 
         rows.append(("monthly", {
             "company": f"Monthly Summary [{month}]",
@@ -78,6 +86,11 @@ def build_monthly_rows(all_rows: list):
             "pl": total_pl,
             "pl_pct": 0.0,
             "sell_price": 0, "buy_price": 0, "qty": 0, "sell_qty": 0, "days_held": 0, "curr_days": 0,
+            # docs/ui.md 3.4: "거래 수 · 매수액 · 실현손익 · 승률을 한 줄로" --
+            # trade count and win rate (closed trades only; open positions
+            # have no realized win/loss yet) for the group-header row.
+            "trade_count": trade_count,
+            "win_rate_pct": (win_count / closed_count * 100.0) if closed_count else None,
         }))
     return rows
 

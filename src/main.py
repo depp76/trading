@@ -14,9 +14,9 @@ from paths import ENV_FILE, APP_LOG_FILE
 from ui.common import (
     create_font,
     _ACCENT_COLOR,
-    _ACCENT_HOVER_COLOR,
     FONT_FAMILY_CSS,
 )
+from ui.theme import app_qss
 
 load_dotenv(ENV_FILE)
 
@@ -241,65 +241,13 @@ class MainWindow(QMainWindow):
 if __name__ == "__main__":
     print("Starting Portfolio Management...")
     app = QApplication(sys.argv)
+    # Windows' native style silently ignores parts of the stylesheet below
+    # (notably QTabBar and QHeaderView theming); Fusion renders every rule
+    # (docs/ui.md 6.4).
+    app.setStyle("Fusion")
     app_font = create_font(10, style_name="Semilight")
     app.setFont(app_font)
-    app.setStyleSheet(f"""
-        QMainWindow {{ background-color: #f0f0f0; }}
-        QTableWidget {{
-            background-color: white;
-            alternate-background-color: #f9f9f9;
-            gridline-color: #d0d0d0;
-            {FONT_FAMILY_CSS}
-        }}
-        QHeaderView::section {{
-            background-color: #e0e0e0;
-            padding: 4px;
-            border: 1px solid #d0d0d0;
-            font-weight: bold;
-            {FONT_FAMILY_CSS}
-        }}
-        QLineEdit {{
-            padding: 5px;
-            border: 1px solid #c0c0c0;
-            border-radius: 4px;
-            {FONT_FAMILY_CSS}
-        }}
-        QComboBox {{
-            padding: 5px;
-            border: 1px solid #c0c0c0;
-            border-radius: 4px;
-            {FONT_FAMILY_CSS}
-        }}
-        QPushButton {{
-            padding: 8px 16px;
-            background-color: {_ACCENT_COLOR};
-            color: white;
-            border: none;
-            border-radius: 4px;
-            font-weight: bold;
-            {FONT_FAMILY_CSS}
-        }}
-        QPushButton:hover {{ background-color: {_ACCENT_HOVER_COLOR}; }}
-        QPushButton:disabled {{ background-color: #cccccc; }}
-        QPushButton:checked {{ background-color: {_ACCENT_HOVER_COLOR}; border: 2px solid #003f7f; }}
-
-        QTabWidget::pane {{
-            border: 1px solid #d0d0d0;
-            background: white;
-            border-radius: 4px;
-        }}
-        QTabBar::tab {{
-            background: #e0e0e0;
-            border: 1px solid #d0d0d0;
-            padding: 10px 30px;
-            font-weight: bold;
-            {FONT_FAMILY_CSS}
-        }}
-        QTabBar::tab:selected {{
-            background: white;
-            border-bottom: 2px solid {_ACCENT_COLOR};
-        }}
-    """)
+    app.setStyleSheet(app_qss(FONT_FAMILY_CSS))
 
     window = MainWindow()
     window.showMaximized()

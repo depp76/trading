@@ -1,18 +1,89 @@
 """ui/history_table.py — Cell factories and row rendering for the Trading History
 table (split out of TradingHistoryTab on 2026-09-17)."""
-from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
-from PyQt6.QtCore import Qt, QEvent
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QLabel, QStyledItemDelegate, QStyle
+from PyQt6.QtCore import Qt, QEvent, QRect
+from PyQt6.QtGui import QColor, QPainter, QPen, QFont, QFontMetrics
+
+from ui.colors import PROFIT, LOSS, FLAT, QC_PROFIT, QC_LOSS
+from ui.common import create_numeric_font
+from ui.theme import ACCENT, ACCENT_TEXT, ACCENT_BG, SURFACE, ZEBRA, GRP_BG, TEXT_MUTED, TEXT_FAINT
+from ui.widgets import ColSpec
+
+# Tabular-numerals font for numeric cells (docs/ui.md 1.3), built once.
+_NUMERIC_FONT = create_numeric_font(9)
+
+# "-" -> a thin, muted em dash (docs/ui.md 3.3): closed rows' empty Position
+# section and open rows' empty Sell section used to render as a bold "-",
+# the same visual weight as a real value.
+_DASH = "—"
+_DASH_COLOR = "#c3c6d4"
+
+# ---------------------------------------------------------------------------
+# Column spec (docs/ui.md issue #9 "섹션 구분선을 페인트 이벤트에서 직접
+# 그린다": header labels, group/section colors and column-width minimums
+# used to live in three unrelated places -- _COLS in history_tab.py, SECTIONS
+# here, and a hand-aligned `mins` list in history_tab.py._fit_columns) that
+# had to be kept in lock-step by hand. This is the one place now; SECTIONS
+# (still consumed as-is by GroupedHeaderView/SectionTable) and the header
+# label list are both derived from it.
+#
+# weight=None means a fixed-width column (docs/ui.md issue #8 already covers
+# only the Company column flexing to fill the viewport -- see
+# TradingHistoryTab._fit_columns -- the rest of this table's columns are
+# genuinely fixed-content widths, unlike Universe's flex/weighted columns).
+# scale is unused here (no heatmap-background columns in this table).
+# ---------------------------------------------------------------------------
+_SECTION_COLOR = {
+    "Trading":  ("#75798c", "#595d6c"),
+    "Buy":      ("#2e7d5b", "#2e7d5b"),
+    "Sell":     (PROFIT, "#a32f26"),
+    "Position": (ACCENT, ACCENT_TEXT),
+    "Past":     ("#cfd3e5", "#75798c"),
+}
+
+COLUMNS = [
+    ColSpec("company",    "Company", 140, None, "Trading",  None),  # flex-absorbing, see _fit_columns
+    ColSpec("market",     "Market",   62, None, "Trading",  None),
+    ColSpec("ticker",     "Ticker",   64, None, "Trading",  None),
+    ColSpec("buy_date",   "Date",     84, None, "Buy",      None),
+    ColSpec("buy_price",  "Price",    78, None, "Buy",      None),
+    ColSpec("buy_qty",    "Q'ty",     55, None, "Buy",      None),
+    ColSpec("buy_amount", "Amount",   85, None, "Buy",      None),
+    ColSpec("sell_date",  "Date",     84, None, "Sell",     None),
+    ColSpec("sell_days",  "Days",     40, None, "Sell",     None),
+    ColSpec("sell_price", "Price",    78, None, "Sell",     None),
+    ColSpec("sell_qty",   "Q'ty",     55, None, "Sell",     None),
+    ColSpec("sell_amount","Amount",   85, None, "Sell",     None),
+    ColSpec("sell_pl",    "P/L",      85, None, "Sell",     None),
+    ColSpec("sell_pl_pct","P/L(%)",   70, None, "Sell",     None),
+    ColSpec("pos_days",   "Days",     40, None, "Position", None),
+    ColSpec("pos_price",  "Price",    78, None, "Position", None),
+    ColSpec("pos_pl",     "P/L",      85, None, "Position", None),
+    ColSpec("pos_pl_pct", "P/L(%)",   70, None, "Position", None),
+    ColSpec("p5",         "5D",       70, None, "Past",     None),
+    ColSpec("p10",        "10D",      70, None, "Past",     None),
+    ColSpec("p20",        "20D",      70, None, "Past",     None),
+]
+
+
+def _derive_sections(columns):
+    """Groups consecutive same-`group` ColSpecs into GroupedHeaderView/
+    SectionTable's (label, start_col, span, color) tuples."""
+    sections = []
+    start = 0
+    cur = columns[0].group
+    for i in range(1, len(columns) + 1):
+        g = columns[i].group if i < len(columns) else None
+        if g != cur:
+            sections.append((cur, start, i - start, _SECTION_COLOR[cur][0]))
+            start = i
+            cur = g
+    return sections
+
 
 # Column groups of the history grid: (label, first column, span, separator colour).
 # Shared by GroupedHeaderView (two-row header) and SectionTable (vertical rules).
-SECTIONS = [
-    ("Trading",  0,  3, "#444444"),
-    ("Buy",       3,  4, "#1a6b3c"),
-    ("Sell",      7,  7, "#c0392b"),
-    ("Position", 14,  4, "#0078d4"),
-    ("Past",     18,  3, "#6d28d9"),
-]
+SECTIONS = _derive_sections(COLUMNS)
 
 
 class SectionTable(QTableWidget):
@@ -52,6 +123,68 @@ class SectionTable(QTableWidget):
         painter.restore()
 
 
+class TradeStateDelegate(QStyledItemDelegate):
+    """Company column: a left status marker + a Open/Closed badge painted at
+    the cell's right edge (docs/ui.md 1.7, issue #5) -- replaces the old
+    bg_open mint background, which shared its color channel with the zebra
+    stripe and disappeared under print/color-blind conditions. Reads
+    Qt.ItemDataRole.UserRole = {"state": "Open"|"Closed"} set by
+    fill_table_rows(); paints plain text (via the base class) when absent,
+    e.g. for the position-summary mini table elsewhere that doesn't use this
+    delegate at all -- this only ever installs on the main history grid."""
+
+    _BADGE = {
+        "Open":   ("Open", ACCENT_TEXT, ACCENT, ACCENT_BG),
+        "Closed": ("Closed", TEXT_FAINT, "#e4e7f5", "transparent"),
+    }
+    _MARKER = {"Open": ACCENT, "Closed": "#e4e7f5"}
+
+    def paint(self, painter, option, index):
+        data = index.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+        rect = option.rect
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(rect, QColor(ACCENT_BG))
+        else:
+            bg = index.data(Qt.ItemDataRole.BackgroundRole)
+            painter.fillRect(rect, bg if bg else option.palette.base())
+
+        state = data.get("state", "Closed")
+        painter.fillRect(rect.x() + 4, rect.y() + (rect.height() - 16) // 2, 3, 16, QColor(self._MARKER[state]))
+
+        badge = self._BADGE[state]
+        label, fg, border, bg_hex = badge
+        badge_font = QFont(option.font)
+        badge_font.setPointSize(max(6, option.font.pointSize() - 2))
+        badge_font.setBold(True)
+        bw = QFontMetrics(badge_font).horizontalAdvance(label) + 14
+        bh = 15
+        bx = rect.right() - bw - 6
+        by = rect.y() + (rect.height() - bh) // 2
+
+        text_x = rect.x() + 4 + 3 + 8
+        text_w = max(10, bx - text_x - 4)
+        painter.setPen(QColor("#1c1e2c"))
+        painter.setFont(option.font)
+        fm = QFontMetrics(option.font)
+        elided = fm.elidedText(index.data(Qt.ItemDataRole.DisplayRole) or "", Qt.TextElideMode.ElideRight, text_w)
+        painter.drawText(QRect(text_x, rect.y(), text_w, rect.height()),
+                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+
+        painter.setPen(QPen(QColor(border)))
+        painter.setBrush(QColor(bg_hex))
+        painter.drawRoundedRect(bx, by, bw, bh, 4, 4)
+        painter.setPen(QColor(fg))
+        painter.setFont(badge_font)
+        painter.drawText(QRect(bx, by, bw, bh), Qt.AlignmentFlag.AlignCenter, label)
+
+        painter.restore()
+
+
 def si(text, align=Qt.AlignmentFlag.AlignCenter):
     it = QTableWidgetItem(text)
     it.setTextAlignment(align)
@@ -63,6 +196,7 @@ def ni(val, fmt="{:,.0f}"):
     it.setData(Qt.ItemDataRole.EditRole, round(float(val), 4))
     it.setText(fmt.format(val))
     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    it.setFont(_NUMERIC_FONT)
     return it
 
 
@@ -71,10 +205,11 @@ def pi(val: float):
     it.setData(Qt.ItemDataRole.EditRole, round(val, 4))
     it.setText(f"{val:+.1f}%")
     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    it.setFont(_NUMERIC_FONT)
     if val > 0:
-        it.setForeground(QColor("#c0392b"))
+        it.setForeground(QC_PROFIT)
     elif val < 0:
-        it.setForeground(QColor("#2980b9"))
+        it.setForeground(QC_LOSS)
     return it
 
 
@@ -83,13 +218,14 @@ def wi(val: float):
     it.setData(Qt.ItemDataRole.EditRole, round(val, 4))
     it.setText(f"{val:.1f}%")
     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    it.setFont(_NUMERIC_FONT)
     return it
 
 
 def dash():
-    it = QTableWidgetItem("-")
+    it = QTableWidgetItem(_DASH)
     it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-    it.setForeground(QColor("#aaaaaa"))
+    it.setForeground(QColor(_DASH_COLOR))
     return it
 
 
@@ -100,9 +236,42 @@ def loading_item():
     return it
 
 
-def fill_table_rows(tbl, rows: list) -> list:
+def _monthly_summary_label(rec: dict) -> QLabel:
+    """One rich-text line for a month group-header row (docs/ui.md 3.4):
+    month, trade count, buy amount, realized P/L, win rate. Rendered as a
+    QLabel spanning the whole row (see fill_table_rows) rather than per-
+    column cells, so it's structurally not a data row -- nothing to sort or
+    double-click-edit."""
+    pl = rec.get("pl", 0.0)
+    pl_color = PROFIT if pl > 0 else LOSS if pl < 0 else FLAT
+    win_pct = rec.get("win_rate_pct")
+    win_text = f"{win_pct:.0f}%" if win_pct is not None else "—"
+    month_label = rec.get("buy_date", "")
+
+    def field(label, value, color="#1c1e2c"):
+        return (f'<span style="color:{TEXT_MUTED};">{label}</span> '
+                f'<b style="color:{color};">{value}</b>')
+
+    html = (
+        f'<span style="font-weight:600; color:{ACCENT_TEXT};">{month_label}</span>'
+        '&nbsp;&nbsp;&nbsp;' + field("Trades", rec.get("trade_count", 0)) +
+        '&nbsp;&nbsp;&nbsp;' + field("Buy", f"{rec.get('buy_amount', 0.0):,.0f}") +
+        '&nbsp;&nbsp;&nbsp;' + field("Realized P/L", f"{pl:+,.0f}", pl_color) +
+        '&nbsp;&nbsp;&nbsp;' + field("Win rate", win_text)
+    )
+    lbl = QLabel(html)
+    lbl.setStyleSheet(f"background: {GRP_BG}; padding-left: 12px; font-size: 9pt;")
+    return lbl
+
+
+def fill_table_rows(tbl, rows: list, *, hide_stale_closed: bool = True) -> list:
     """Render (kind, rec) rows into the unified history table; returns the
-    per-row (kind, rec) list the tab keeps for double-click editing."""
+    per-row (kind, rec) list the tab keeps for double-click editing.
+
+    hide_stale_closed: docs/ui.md 3.5 -- when True, a closed position's
+    Position/Past columns go blank once curr_days > 30 (a toolbar toggle in
+    TradingHistoryTab now controls this instead of it being hardcoded).
+    """
     n_rows = len(rows)
     cur_rows = tbl.rowCount()
     # Adjust row count without full reset when possible
@@ -110,57 +279,32 @@ def fill_table_rows(tbl, rows: list) -> list:
         tbl.setRowCount(n_rows)
 
     L = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-    bg_even = QColor("#ffffff")
-    bg_odd  = QColor("#f5f7fa")
-    bg_open = QColor("#edfbf0")   # mint for current holdings
-    n_cols  = tbl.columnCount()
-
-    # Pre-build colour-constant items to avoid repeated QColor() in inner loop
-    col_red  = QColor("#c0392b")
-    col_blue = QColor("#2980b9")
-    bg_summary = QColor("#fff5e6")
+    n_cols = tbl.columnCount()
 
     row_data = []
-    closed_idx = 0
     for r, (kind, rec) in enumerate(rows):
         row_data.append((kind, rec))  # preserve reference for double-click editing
 
         if kind == "monthly":
-            tbl.setItem(r, 0, si(rec["company"], Qt.AlignmentFlag.AlignCenter))
-            tbl.setItem(r, 1, dash())
-            tbl.setItem(r, 2, dash())
-
-            tbl.setItem(r, 3, si(rec["buy_date"]))
-            tbl.setItem(r, 4, dash())
-            tbl.setItem(r, 5, dash())
-            tbl.setItem(r, 6, ni(rec["buy_amount"]))
-
-            tbl.setItem(r, 7, dash())
-            tbl.setItem(r, 8, dash())
-            tbl.setItem(r, 9, dash())
-            tbl.setItem(r, 10, dash())
-            tbl.setItem(r, 11, dash())
-
-            pl_it = ni(rec["pl"])
-            if rec["pl"] > 0: pl_it.setForeground(col_red)
-            elif rec["pl"] < 0: pl_it.setForeground(col_blue)
-            tbl.setItem(r, 12, pl_it)
-            tbl.setItem(r, 13, dash())
-
-            for c in range(14, tbl.columnCount()):
-                tbl.setItem(r, c, dash())
-
-            # Highlight summary row
-            for c in range(tbl.columnCount()):
-                if tbl.item(r, c):
-                    tbl.item(r, c).setBackground(bg_summary)
-                    font = tbl.item(r, c).font()
-                    font.setBold(True)
-                    tbl.item(r, c).setFont(font)
+            tbl.setSpan(r, 0, 1, n_cols)
+            tbl.setItem(r, 0, QTableWidgetItem(""))  # keeps _row_data/row indexing simple; label does the drawing
+            tbl.setCellWidget(r, 0, _monthly_summary_label(rec))
             continue
 
-        # ---Col 0-2: Company ---
-        tbl.setItem(r, 0, si(rec["company"], L))
+        # A row that was a group header on a previous render and is a normal
+        # trade row now (row count/position can be reused, see setRowCount
+        # above) must drop its stale span/widget before being repopulated.
+        if tbl.columnSpan(r, 0) != 1:
+            tbl.setSpan(r, 0, 1, 1)
+        if tbl.cellWidget(r, 0) is not None:
+            tbl.removeCellWidget(r, 0)
+
+        is_closed = bool(rec.get("sell_date") or rec.get("sell_price"))
+
+        # ---Col 0-2: Company (+ Open/Closed state marker+badge, TradeStateDelegate) ---
+        company_item = si(rec["company"], L)
+        company_item.setData(Qt.ItemDataRole.UserRole, {"state": "Closed" if is_closed else "Open"})
+        tbl.setItem(r, 0, company_item)
         tbl.setItem(r, 1, si(rec.get("market", ""), Qt.AlignmentFlag.AlignCenter))
         tbl.setItem(r, 2, si(rec.get("ticker", ""), Qt.AlignmentFlag.AlignCenter))
 
@@ -170,8 +314,6 @@ def fill_table_rows(tbl, rows: list) -> list:
         tbl.setItem(r, 5, ni(rec["qty"]))
         tbl.setItem(r, 6, ni(rec["buy_amount"]))
 
-        is_closed = bool(rec.get("sell_date") or rec.get("sell_price"))
-
         # ---Col 7-13: Sell section ---
         if is_closed:
             tbl.setItem(r, 7,  si(rec.get("sell_date", "")) if rec.get("sell_date") else dash())
@@ -180,8 +322,8 @@ def fill_table_rows(tbl, rows: list) -> list:
             tbl.setItem(r, 10, ni(rec.get("sell_qty", 0.0)))
             tbl.setItem(r, 11, ni(rec.get("sell_amount", 0.0)))
             pl_it = ni(rec.get("pl", 0.0))
-            if rec.get("pl", 0.0) > 0:   pl_it.setForeground(col_red)
-            elif rec.get("pl", 0.0) < 0: pl_it.setForeground(col_blue)
+            if rec.get("pl", 0.0) > 0:   pl_it.setForeground(QC_PROFIT)
+            elif rec.get("pl", 0.0) < 0: pl_it.setForeground(QC_LOSS)
             tbl.setItem(r, 12, pl_it)
             tbl.setItem(r, 13, pi(rec.get("pl_pct", 0.0)))
         else:
@@ -193,7 +335,7 @@ def fill_table_rows(tbl, rows: list) -> list:
         curr_price  = rec.get("curr_price", 0)
 
         # _refresh_summary already sets curr_days = (today - sell_date).days for closed rows
-        hide_past_info = (kind == "closed" and rec.get("curr_days", 0) > 30)
+        hide_past_info = hide_stale_closed and kind == "closed" and rec.get("curr_days", 0) > 30
 
         if hide_past_info:
             tbl.setItem(r, 14, dash())
@@ -208,8 +350,8 @@ def fill_table_rows(tbl, rows: list) -> list:
             tbl.setItem(r, 15, ni(curr_price))
             if is_open_row:
                 pl_cur = ni(rec.get("curr_pl", 0.0))
-                if rec.get("curr_pl", 0.0) > 0:   pl_cur.setForeground(col_red)
-                elif rec.get("curr_pl", 0.0) < 0: pl_cur.setForeground(col_blue)
+                if rec.get("curr_pl", 0.0) > 0:   pl_cur.setForeground(QC_PROFIT)
+                elif rec.get("curr_pl", 0.0) < 0: pl_cur.setForeground(QC_LOSS)
                 tbl.setItem(r, 16, pl_cur)
                 tbl.setItem(r, 17, pi(rec.get("curr_pl_pct", 0.0)))
             else:
@@ -226,8 +368,8 @@ def fill_table_rows(tbl, rows: list) -> list:
                         opp_pl_pct = (curr_price - sell_price) / sell_price * 100
 
                         pl_cur = ni(opp_pl)
-                        if opp_pl > 0:   pl_cur.setForeground(col_red)
-                        elif opp_pl < 0: pl_cur.setForeground(col_blue)
+                        if opp_pl > 0:   pl_cur.setForeground(QC_PROFIT)
+                        elif opp_pl < 0: pl_cur.setForeground(QC_LOSS)
                         tbl.setItem(r, 16, pl_cur)
                         tbl.setItem(r, 17, pi(opp_pl_pct))
                     else:
@@ -255,13 +397,10 @@ def fill_table_rows(tbl, rows: list) -> list:
             tbl.setItem(r, 19, pi(rec["wk2"])  if rec["wk2"]  else dash())
             tbl.setItem(r, 20, pi(rec["mth1"]) if rec["mth1"] else dash())
 
-        # ---Row background (single pass via setBackground per item) ---
-        if kind == "closed":
-            bg = bg_even if closed_idx % 2 == 0 else bg_odd
-            closed_idx += 1
-        else:
-            bg = bg_open
-
+        # ---Row background: one zebra stripe (docs/ui.md 3.7/issue #5) --
+        # state used to be a second background channel (bg_open mint);
+        # that's the marker+badge's job now, so this is purely alternation.
+        bg = QColor(SURFACE if r % 2 == 0 else ZEBRA)
         for c in range(n_cols):
             it = tbl.item(r, c)
             if it:

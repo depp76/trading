@@ -17,18 +17,43 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QFont
 
+import matplotlib.dates as mdates
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
 from paths import TRADING_RECORD_FILE
-from data_fetcher import get_usd_krw_rate_for_date, get_index_close_for_date
+from data_fetcher import get_usd_krw_rate, get_usd_krw_rate_for_date, get_index_close_for_date
 from threads.fetch_threads import AssetMetricsPreloadThread
-from ui.widgets import GroupedHeaderView
+from ui.widgets import GroupedHeaderView, ColSpec, NumericItem
 from ui.dialogs import TotalAssetsGraphDialog
+from ui.colors import PROFIT, LOSS
+from ui.theme import ACCENT, TEXT_MUTED
 
 logger = logging.getLogger(__name__)
 
 
+class _AssetsTable(QTableWidget):
+    """QTableWidget subclass so resize/show can drive a column-stretch
+    callback directly (docs/ui.md 1.5), the same pattern StockTable uses --
+    more reliable than a QEvent.Resize event filter for catching every
+    layout-driven resize (e.g. the initial layout pass before the window is
+    shown maximized)."""
+
+    def __init__(self, stretch_cb):
+        super().__init__()
+        self._stretch_cb = stretch_cb
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._stretch_cb()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._stretch_cb()
+
+
 from ui.common import (
     create_font, atomic_save_json, safe_load_json, FONT_FAMILY_CSS, ThreadOwnerMixin,
-    _ACTION_INSIGHT_COLOR, _ACTION_INSIGHT_HOVER_COLOR,
 )
 
 
@@ -36,14 +61,40 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
     """Tab for recording periodic total-asset snapshots with weekly/cumulative return calculations."""
 
     _JSON_FILE = TRADING_RECORD_FILE
-    _COLS_SUB = [
-        "Date", "KOSPI", "", "", "Total Assets", "", "", "", "",
-        "USD/KRW", "Total Assets($)", "", "", "", ""
+
+    # docs/ui.md 4.2/4.3: KRW-7-col + USD-6-col = 15 columns collapsed to a
+    # single currency toggle + 10 columns (the one place label/min-width/
+    # weight live -- see _stretch_columns). Total Assets' own sub-label
+    # ("KRW"/"USD") is relabeled live by _apply_currency_toggle(); the rest
+    # are fixed.
+    _GROUPS = [
+        ("Date", 0, 1, "#444444"),
+        ("KOSPI", 1, 3, "#444444"),
+        ("Total Assets", 4, 1, "#444444"),
+        ("Weekly P/L", 5, 2, "#1a6b3c"),
+        ("Cumulative P/L", 7, 2, "#0078d4"),
+        ("vs KOSPI", 9, 1, "#6d28d9"),
+    ]
+    # Sub-labels are English to match the rest of the app's UI (docs/ui.md's
+    # own table uses Korean sub-labels -- 종가/주간 %/누적 % -- but every
+    # other tab's column header is English, so these are the same grouping
+    # translated to stay consistent rather than the literal doc text).
+    _COLUMNS = [
+        ColSpec("date",       "Week · Date", 140, 1.3, None, None),
+        ColSpec("kospi",      "Close",             80, 0.8, None, None),
+        ColSpec("kospi_wk",   "Weekly %",          70, 0.7, None, None),
+        ColSpec("kospi_cum",  "Cumulative %",      80, 0.8, None, None),
+        ColSpec("total",      "KRW",              110, 1.1, None, None),
+        ColSpec("weekly_amt", "Amount",           100, 1.0, None, None),
+        ColSpec("weekly_pct", "%",                 70, 0.7, None, None),
+        ColSpec("cum_amt",    "Amount",           100, 1.0, None, None),
+        ColSpec("cum_pct",    "%",                 70, 0.7, None, None),
+        ColSpec("excess",     "vs KOSPI (%p)",     90, 0.9, None, None),
     ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._records: list[dict] = []   # [{"date": str, "total": float}, ...]
+        self._records: list[dict] = []   # [{"date": str, "total": float, "manual": bool}, ...]
         # USD/KRW rate and KOSPI-close lookups hit the network on their first
         # call per session (fx.py/market.py's own staleness-aware caches), so
         # the first table render skips them (see _refresh_table_impl) and
@@ -51,6 +102,9 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         # instead of blocking __init__ (roadmap 2026-09-18, review.md 1-2).
         self._metrics_ready = False
         self._metrics_thread = None
+        self._currency = "KRW"          # docs/ui.md 4.3 toggle
+        self._current_live_asset = 0.0
+        self._asset_edit_manual = False  # user typed over the auto-filled value (docs/ui.md 4.5)
         self._build_ui()
         self._load_records()
         self._schedule_daily_sync()
@@ -62,56 +116,75 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         root.setSpacing(8)
         root.setContentsMargins(12, 10, 12, 10)
 
+        # ---Header row: currency toggle + USD/KRW rate (docs/ui.md 4.1/4.3) ---
+        header_row = QHBoxLayout()
+        lbl_currency = QLabel("Currency:")
+        lbl_currency.setFont(create_font(10, style_name="Semilight"))
+        header_row.addWidget(lbl_currency)
+
+        self._currency_combo = QComboBox()
+        self._currency_combo.setFont(create_font(10, style_name="Semilight"))
+        self._currency_combo.addItems(["KRW", "USD"])
+        self._currency_combo.setFixedWidth(90)
+        self._currency_combo.currentTextChanged.connect(self._on_currency_changed)
+        header_row.addWidget(self._currency_combo)
+
+        header_row.addSpacing(12)
+        self._rate_lbl = QLabel("USD/KRW: -")
+        self._rate_lbl.setFont(create_font(10, style_name="Semilight"))
+        self._rate_lbl.setStyleSheet(f"color: {TEXT_MUTED};")
+        header_row.addWidget(self._rate_lbl)
+        header_row.addStretch()
+        root.addLayout(header_row)
+
+        # ---Inline chart (docs/ui.md 4.4): always-visible weekly trend,
+        # asset vs KOSPI rebased to first week = 100. The _show_graph modal
+        # stays available for a zoomed/detailed view. ---
+        self._chart_fig = Figure(figsize=(6, 2), constrained_layout=True)
+        self._chart_ax = self._chart_fig.add_subplot(111)
+        self._chart_canvas = FigureCanvas(self._chart_fig)
+        self._chart_canvas.setFixedHeight(200)
+        root.addWidget(self._chart_canvas)
+
         # ---Controls bar ---
         ctrl = QHBoxLayout()
 
         self._date_combo = QComboBox()
         self._date_combo.setFont(create_font(10, style_name="Semilight"))
         self._date_combo.setFixedWidth(150)
-        self._date_combo.setStyleSheet(
-            "QComboBox { border:1px solid #ccc; border-radius:4px; padding:4px 6px; " + FONT_FAMILY_CSS + " font-size: 10pt; }"
-        )
         for label, _ in self._friday_dates():
             self._date_combo.addItem(label)
         # Default to the most recent (last) Friday
         if self._date_combo.count() > 0:
             self._date_combo.setCurrentIndex(self._date_combo.count() - 1)
+        self._date_combo.currentIndexChanged.connect(self._on_date_combo_changed)
 
         self._asset_edit = QLineEdit()
         self._asset_edit.setFont(create_font(10, style_name="Semilight"))
-        self._asset_edit.setPlaceholderText("Total Assets")
+        self._asset_edit.setPlaceholderText("Total Assets (auto-filled)")
         self._asset_edit.setFixedWidth(120)
         self._asset_edit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._asset_edit.setStyleSheet(
-            "QLineEdit { border:1px solid #ccc; border-radius:4px; padding:4px 6px; " + FONT_FAMILY_CSS + " font-size: 10pt; }"
-        )
         self._asset_edit.textEdited.connect(self._fmt_asset_input)
+        self._asset_edit.textEdited.connect(self._on_asset_edit_user_typed)
 
+        # Add Record is this tab's one primary action (docs/ui.md 1.6);
+        # Delete is destructive ("danger"); This Week/Graph/Export are
+        # secondary utilities and stay neutral.
         add_btn = QPushButton("\u2795  Add Record")
+        add_btn.setObjectName("primary")
         add_btn.setFont(create_font(10, QFont.Weight.Bold))
         add_btn.setFixedHeight(32)
-        add_btn.setStyleSheet(
-            "QPushButton { background:#d35400; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
-            "QPushButton:hover { background:#e67e22; }"
-        )
         add_btn.clicked.connect(self._add_record)
 
         del_btn = QPushButton("\U0001f5d1  Delete Selected")
+        del_btn.setObjectName("danger")
         del_btn.setFont(create_font(10, QFont.Weight.Bold))
         del_btn.setFixedHeight(32)
-        del_btn.setStyleSheet(
-            "QPushButton { background:#c0392b; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
-            "QPushButton:hover { background:#a93226; }"
-        )
         del_btn.clicked.connect(self._delete_selected)
 
         today_btn = QPushButton("\U0001f4c5  This Week")
         today_btn.setFont(create_font(10, QFont.Weight.Bold))
         today_btn.setFixedHeight(32)
-        today_btn.setStyleSheet(
-            "QPushButton { background:#6c757d; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
-            "QPushButton:hover { background:#5a6268; }"
-        )
         def _select_latest():
             self._date_combo.setCurrentIndex(self._date_combo.count() - 1)
         today_btn.clicked.connect(_select_latest)
@@ -124,21 +197,22 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         live_asset_title = QLabel("Current Total Asset:")
         live_asset_title.setFont(create_font(10, style_name="Semilight"))
 
-        self.live_asset_lbl = QLineEdit("-")
-        self.live_asset_lbl.setReadOnly(True)
+        # docs/ui.md issue #7 (mockup): these were QLineEdit(readOnly), which
+        # look editable (bordered, input-shaped) despite never accepting
+        # input -- plain KPI-style labels now, matching History's KPI strip.
+        self.live_asset_lbl = QLabel("-")
         self.live_asset_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.live_asset_lbl.setFont(create_font(10, QFont.Weight.Bold))
-        self.live_asset_lbl.setStyleSheet("QLineEdit { background:transparent; color:#2c3e50; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }")
+        self.live_asset_lbl.setStyleSheet("color:#2c3e50;")
         self.live_asset_lbl.setFixedWidth(120)
-        
+
         live_diff_title = QLabel("Weekly P/L:")
         live_diff_title.setFont(create_font(10, style_name="Semilight"))
 
-        self.live_diff_lbl = QLineEdit("-")
-        self.live_diff_lbl.setReadOnly(True)
+        self.live_diff_lbl = QLabel("-")
         self.live_diff_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.live_diff_lbl.setFont(create_font(10, QFont.Weight.Bold))
-        self.live_diff_lbl.setStyleSheet("QLineEdit { background:transparent; color:#2c3e50; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }")
+        self.live_diff_lbl.setStyleSheet("color:#2c3e50;")
         self.live_diff_lbl.setFixedWidth(150)
 
         ctrl.addWidget(lbl_date)
@@ -160,10 +234,6 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         graph_btn = QPushButton("\U0001f4c8  Graph")
         graph_btn.setFont(create_font(10, QFont.Weight.Bold))
         graph_btn.setFixedHeight(32)
-        graph_btn.setStyleSheet(
-            f"QPushButton {{ background:{_ACTION_INSIGHT_COLOR}; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; {FONT_FAMILY_CSS} }}"
-            f"QPushButton:hover {{ background:{_ACTION_INSIGHT_HOVER_COLOR}; }}"
-        )
         graph_btn.clicked.connect(self._show_graph)
         ctrl.addSpacing(6)
         ctrl.addWidget(graph_btn)
@@ -172,10 +242,6 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         export_btn.setFont(create_font(10, QFont.Weight.Bold))
         export_btn.setFixedHeight(32)
         export_btn.setToolTip("Export the asset snapshot table to Excel or CSV")
-        export_btn.setStyleSheet(
-            "QPushButton { background:#6c757d; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
-            "QPushButton:hover { background:#5a6268; }"
-        )
         export_btn.clicked.connect(self._on_export_clicked)
         ctrl.addSpacing(6)
         ctrl.addWidget(export_btn)
@@ -184,39 +250,93 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         ctrl.addWidget(del_btn)
         root.addLayout(ctrl)
 
-        # ---Table ---
-        self._table = QTableWidget()
+        # ---Table (docs/ui.md 4.2/4.5: one spec -- label/min-width/weight --
+        # instead of a separate _COLS_SUB list and a flat widths=[...] list) ---
+        self._table = _AssetsTable(self._stretch_columns)
         self._table.setFont(create_font(9, style_name="Semilight"))
-        self._table.setColumnCount(len(self._COLS_SUB))
-        
-        sections = [
-            ("Date", 0, 1, "#444444"),
-            ("KOSPI", 1, 3, "#444444"),
-            ("Total Assets", 4, 1, "#444444"),
-            ("Weekly P/L", 5, 2, "#1a6b3c"),
-            ("Cumulative P/L", 7, 2, "#0078d4"),
-            ("USD/KRW", 9, 1, "#444444"),
-            ("Total Assets($)", 10, 1, "#444444"),
-            ("Weekly P/L($)", 11, 2, "#1a6b3c"),
-            ("Cumulative P/L($)", 13, 2, "#0078d4"),
-        ]
-        grouped_hdr = GroupedHeaderView(sections, self._COLS_SUB, self._table, group_h=28, sub_h=0)
-        self._table.setHorizontalHeader(grouped_hdr)
+        self._table.setColumnCount(len(self._COLUMNS))
+
+        self._grouped_hdr = GroupedHeaderView(
+            self._GROUPS, self._current_sub_labels(), self._table, group_h=22, sub_h=18, sortable=True,
+        )
+        self._table.setHorizontalHeader(self._grouped_hdr)
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setAlternatingRowColors(True)
-        self._table.setSortingEnabled(False)
-        widths = [110, 80, 80, 80, 100, 100, 80, 100, 80, 90, 100, 90, 80, 90, 80]
-        for col_idx, width in enumerate(widths):
-            self._table.horizontalHeader().setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Fixed)
-            self._table.setColumnWidth(col_idx, width)
+        # docs/ui.md issue #9 (mockup): "정렬이 꺼져 있다" -- every column is
+        # sortable now (a superset of the doc's minimum ask, Weekly P/L and
+        # vs KOSPI). Default stays chronological (most recent first, matching
+        # Trading History's own default) -- pinned explicitly rather than
+        # relying on QHeaderView's own default indicator state, since
+        # setSortingEnabled(True) immediately applies whatever that is.
+        self._grouped_hdr.setSortIndicator(0, Qt.SortOrder.DescendingOrder)
+        self._table.setSortingEnabled(True)
+        for col_idx, spec in enumerate(self._COLUMNS):
+            self._table.horizontalHeader().setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
+            self._table.setColumnWidth(col_idx, spec.min_width)
         self._table.setStyleSheet(
             "QTableWidget { gridline-color: #d0d0d0; " + FONT_FAMILY_CSS + " font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
         )
         self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         root.addWidget(self._table)
+
+    def _stretch_columns(self):
+        """Distributes column widths from _COLUMNS (min-width + weight),
+        the same system Universe's StockTable uses (docs/ui.md 1.5, Phase 3)
+        -- replaces the flat widths=[...] list this table used to hardcode."""
+        if self._table.rowCount() == 0:
+            return
+        vp_w = int(self._table.viewport().width() * 0.99)
+        if vp_w <= 0:
+            return
+        total_weight = sum(c.weight for c in self._COLUMNS)
+        unit = vp_w / total_weight
+        widths = {i: max(c.min_width, int(c.weight * unit)) for i, c in enumerate(self._COLUMNS)}
+        # Rounding residual - absorb into the Date column (index 0) using
+        # exact arithmetic, same rationale as StockTable._stretch_columns.
+        residual = vp_w - sum(widths.values())
+        widths[0] = max(self._COLUMNS[0].min_width, widths[0] + residual)
+        if getattr(self, '_last_col_widths', None) == widths:
+            return
+        self._last_col_widths = widths
+        for col, w in widths.items():
+            self._table.setColumnWidth(col, w)
+
+    def _current_sub_labels(self) -> list:
+        labels = [c.label for c in self._COLUMNS]
+        labels[4] = self._currency  # "Total Assets" column: "KRW" or "USD"
+        return labels
+
+    def _on_currency_changed(self, text: str):
+        self._currency = text
+        self._grouped_hdr.set_sub_labels(self._current_sub_labels())
+        self._refresh_table()  # also redraws the inline chart for the new currency
+
+    def _update_rate_label(self, rate: float):
+        self._rate_lbl.setText(f"USD/KRW: {rate:,.1f}" if rate > 0 else "USD/KRW: -")
+
+    def _on_date_combo_changed(self, _index):
+        self._asset_edit_manual = False
+        self._maybe_autofill_asset_edit()
+
+    def _on_asset_edit_user_typed(self, _text):
+        self._asset_edit_manual = True
+
+    def _maybe_autofill_asset_edit(self):
+        """Auto-fill Total Assets from the live position total (docs/ui.md
+        4.5) -- only for the latest (current) Friday, and only while the
+        user hasn't typed over it; a historical date or a user-edited value
+        is left alone."""
+        is_latest = (
+            self._date_combo.count() > 0
+            and self._date_combo.currentIndex() == self._date_combo.count() - 1
+        )
+        if not is_latest or self._asset_edit_manual:
+            return
+        if self._current_live_asset > 0:
+            self._asset_edit.setText(f"{self._current_live_asset:,.0f}")
 
     # ---Friday date helpers ---
     @staticmethod
@@ -320,18 +440,25 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
             QMessageBox.warning(self, "Error", "Total Assets must be a number.")
             return
 
+        # docs/ui.md 4.5: the value was auto-filled from the live position
+        # total unless the user typed over it (or there was nothing to
+        # auto-fill, e.g. a historical date) -- flag it for later comparison.
+        is_manual = self._asset_edit_manual
+
         # Update if same date exists, otherwise append
         for r in self._records:
             if r["date"] == date_str:
                 r["total"] = total
+                r["manual"] = is_manual
                 break
         else:
-            self._records.append({"date": date_str, "total": total})
+            self._records.append({"date": date_str, "total": total, "manual": is_manual})
 
         self._records.sort(key=lambda r: r["date"])
         self._save_records()
         self._refresh_table()
         self._asset_edit.clear()
+        self._asset_edit_manual = False
 
     def _delete_selected(self):
         rows = sorted({idx.row() for idx in self._table.selectedIndexes()}, reverse=True)
@@ -422,15 +549,26 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         dlg.exec()
 
     # ---Export (review.md 2-2) ---
+    # Always the full KRW+USD dump regardless of the on-screen currency
+    # toggle (docs/ui.md 4.3): export is a complete data backup/analysis
+    # artifact, not a screenshot of the current view. Built from
+    # _compute_records_metrics() directly rather than scraping self._table,
+    # since the table now only ever shows one currency's 10 columns.
     _EXPORT_HEADERS = [
         "Date", "KOSPI", "KOSPI Weekly %", "KOSPI Cumulative %",
         "Total Assets", "Weekly P/L", "Weekly P/L %", "Cumulative P/L", "Cumulative P/L %",
         "USD/KRW", "Total Assets ($)", "Weekly P/L ($)", "Weekly P/L (%) [$]",
         "Cumulative P/L ($)", "Cumulative P/L (%) [$]",
+        "Excess Return (%p)", "Excess Return (%p) [$]", "Manual",
     ]
 
+    @staticmethod
+    def _export_fmt(val, fmt="{:,.0f}") -> str:
+        return "" if val is None else fmt.format(val)
+
     def _on_export_clicked(self):
-        if self._table.rowCount() == 0:
+        metrics = self._compute_records_metrics()
+        if not metrics:
             QMessageBox.information(self, "Export", "No data to export.")
             return
 
@@ -448,11 +586,28 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         elif not want_csv and not path.lower().endswith(".xlsx"):
             path += ".xlsx"
 
+        f = self._export_fmt
         rows = []
-        for r in range(self._table.rowCount()):
+        for m in metrics:
             rows.append([
-                (self._table.item(r, c).text() if self._table.item(r, c) else "")
-                for c in range(self._table.columnCount())
+                m["date"],
+                f(m["kospi_close"]) if m["kospi_close"] else "",
+                f(m["kospi_weekly_pct"], "{:+.2f}%"),
+                f(m["kospi_cum_pct"], "{:+.2f}%"),
+                f(m["total_krw"]),
+                f(m["weekly_amt_krw"], "{:+,.0f}"),
+                f(m["weekly_pct_krw"], "{:+.2f}%"),
+                f(m["cum_amt_krw"], "{:+,.0f}"),
+                f(m["cum_pct_krw"], "{:+.2f}%"),
+                f(m["usd_rate"], "{:,.1f}") if m["usd_rate"] else "",
+                f(m["total_usd"]) if m["total_usd"] else "",
+                f(m["weekly_amt_usd"], "{:+,.0f}"),
+                f(m["weekly_pct_usd"], "{:+.2f}%"),
+                f(m["cum_amt_usd"], "{:+,.0f}"),
+                f(m["cum_pct_usd"], "{:+.2f}%"),
+                f(m["excess_pct_krw"], "{:+.2f}%"),
+                f(m["excess_pct_usd"], "{:+.2f}%"),
+                "Yes" if m["manual"] else "",
             ])
 
         try:
@@ -478,60 +633,72 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         QMessageBox.information(self, "Export", f"Exported {len(rows)} row(s) to {path}")
 
     def _on_cell_double_clicked(self, row, col):
-        if col == 1:
+        # col 4 is "Total Assets" (docs/ui.md 4.2) in both the old 15-column
+        # and new 10-column layout; this previously checked col == 1
+        # (KOSPI's close-price column), a stale index from before this
+        # table had separate KOSPI weekly/cumulative columns in between.
+        if col == 4:
             current_val = self._records[row].get("total", 0)
             text, ok = QInputDialog.getText(self, "Edit Total Assets", "Enter new Total Assets amount:", text=f"{current_val:,.0f}")
             if ok:
                 try:
                     val = float(text.replace(',', '').strip())
                     self._records[row]["total"] = val
+                    # A direct table edit is as "manual" as typing over the
+                    # auto-filled input (docs/ui.md 4.5).
+                    self._records[row]["manual"] = True
                     self._save_records()
                     self._refresh_table()
                 except ValueError:
                     QMessageBox.warning(self, "Error", "Invalid number format.")
 
     # ---Table rendering ---
+    # docs/ui.md issue #9 (mockup): "정렬이 꺼져 있다" -- sorting is enabled
+    # below now, so every numeric cell needs a real sort key independent of
+    # its display text. Plain QTableWidgetItem(text) has none (Qt falls back
+    # to comparing the display string), which is exactly the bug
+    # ui.widgets.NumericItem exists to avoid -- see its docstring.
     @staticmethod
     def _pct_item(val: float | None) -> QTableWidgetItem:
         if val is None:
-            it = QTableWidgetItem("-")
+            it = NumericItem("-", float('-inf'))
             it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             return it
-        it = QTableWidgetItem(f"{val:+.2f}%")
+        it = NumericItem(f"{val:+.2f}%", val)
         it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         if val > 0:
-            it.setForeground(QColor("#c0392b"))
+            it.setForeground(QColor(PROFIT))
         elif val < 0:
-            it.setForeground(QColor("#2980b9"))
+            it.setForeground(QColor(LOSS))
         return it
 
     @staticmethod
     def _amt_item(val: float | None) -> QTableWidgetItem:
         if val is None:
-            it = QTableWidgetItem("-")
+            it = NumericItem("-", float('-inf'))
             it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             return it
-        it = QTableWidgetItem(f"{val:+,.0f}")
+        it = NumericItem(f"{val:+,.0f}", val)
         it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         if val > 0:
-            it.setForeground(QColor("#c0392b"))
+            it.setForeground(QColor(PROFIT))
         elif val < 0:
-            it.setForeground(QColor("#2980b9"))
+            it.setForeground(QColor(LOSS))
         return it
 
     @staticmethod
     def _amt_usd_item(val: float | None) -> QTableWidgetItem:
         if val is None:
-            it = QTableWidgetItem("-")
+            it = NumericItem("-", float('-inf'))
             it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             return it
         sign = "+" if val > 0 else "-" if val < 0 else ""
-        it = QTableWidgetItem(f"{sign}${abs(val):,.0f}")
+        it = NumericItem(f"{sign}${abs(val):,.0f}", val)
         it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         if val > 0:
-            it.setForeground(QColor("#c0392b"))
+            it.setForeground(QColor(PROFIT))
         elif val < 0:
-            it.setForeground(QColor("#2980b9"))
+            it.setForeground(QColor(LOSS))
         return it
 
     def _refresh_table(self):
@@ -542,13 +709,19 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         finally:
             tbl.setUpdatesEnabled(True)
 
-    def _refresh_table_impl(self):
-        self._table.setRowCount(0)
+    def _compute_records_metrics(self) -> list:
+        """One structured dict per record with every KRW/USD/KOSPI metric
+        this tab displays (docs/ui.md 4) -- shared by table rendering
+        (which shows a currency-aware subset), export (full KRW+USD dump)
+        and the inline chart, so the underlying math lives in exactly one
+        place instead of being duplicated per consumer.
+        """
         records = self._records
         n = len(records)
-        self._table.setRowCount(n)
+        if n == 0:
+            return []
 
-        first_total = records[0]["total"] if n > 0 else None
+        first_total = records[0]["total"]
 
         # Pre-compute all USD/KRW rates and index prices in one pass.
         # Skipped until the background preload thread warms the underlying
@@ -563,12 +736,9 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
                 if d not in rate_cache:
                     rate_cache[d], kospi_cache[d] = self._rate_kospi_for_date(d)
 
-        first_usd_total = None
-        first_kospi = 0.0
-        if n > 0:
-            r0 = rate_cache.get(records[0]["date"], 0)
-            first_usd_total = records[0]["total"] / r0 if r0 > 0 else 0
-            first_kospi = kospi_cache.get(records[0]["date"], 0)
+        r0 = rate_cache.get(records[0]["date"], 0)
+        first_usd_total = records[0]["total"] / r0 if r0 > 0 else 0
+        first_kospi = kospi_cache.get(records[0]["date"], 0)
 
         # Pre-parse each record's date once (was parsed separately for the
         # weekly KRW/USD block and again for the weekly KOSPI block below).
@@ -581,9 +751,10 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
                 return None
         parsed_dates = [_safe_parse_date(rec["date"]) for rec in records]
 
+        out = []
         for i, rec in enumerate(records):
-            date_str  = rec["date"]
-            total     = rec["total"]
+            date_str = rec["date"]
+            total    = rec["total"]
 
             usd_rate = rate_cache.get(date_str, 0)
             usd_val = total / usd_rate if usd_rate > 0 else 0
@@ -614,70 +785,150 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
 
             # Cumulative: relative to the very first record
             cumulative_pct = None; cumulative_amt = None
-            if first_total is not None and i > 0:
+            if i > 0:
                 cumulative_amt = total - first_total
-            if first_total and first_total != 0 and i > 0:
-                cumulative_pct = cumulative_amt / first_total * 100
+                if first_total:
+                    cumulative_pct = cumulative_amt / first_total * 100
 
             cumulative_usd_pct = None; cumulative_usd_amt = None
-            if first_usd_total is not None and i > 0:
+            if i > 0:
                 cumulative_usd_amt = usd_val - first_usd_total
-            if first_usd_total and first_usd_total != 0 and i > 0:
-                cumulative_usd_pct = cumulative_usd_amt / first_usd_total * 100
+                if first_usd_total:
+                    cumulative_usd_pct = cumulative_usd_amt / first_usd_total * 100
 
-            # Date cell
-            d_it = QTableWidgetItem(date_str)
-            d_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setItem(i, 0, d_it)
-
-            # KOSPI cell
             k_val = kospi_cache.get(date_str, 0.0)
-            k_it = QTableWidgetItem(f"{k_val:,.0f}" if k_val > 0 else "-")
-            k_it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 1, k_it)
-            
             k_weekly_pct = None
             if i > 0 and is_weekly:
                 prev_k = kospi_cache.get(records[i - 1]["date"], 0)
                 if prev_k > 0 and k_val > 0:
                     k_weekly_pct = (k_val - prev_k) / prev_k * 100
-            self._table.setItem(i, 2, self._pct_item(k_weekly_pct))
-            
-            k_pct = ((k_val - first_kospi) / first_kospi * 100) if first_kospi > 0 and k_val > 0 else None
-            self._table.setItem(i, 3, self._pct_item(k_pct))
+            k_cum_pct = ((k_val - first_kospi) / first_kospi * 100) if first_kospi > 0 and k_val > 0 else None
 
-            # Total Assets cell (KRW)
-            t_it = QTableWidgetItem(f"{total:,.0f}")
-            t_it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 4, t_it)
+            # docs/ui.md 4.2 "vs KOSPI": the asset's own cumulative return
+            # minus KOSPI's, per currency. None wherever either side is None
+            # (row 0, or KOSPI/rate data not warmed yet).
+            excess_krw = (cumulative_pct - k_cum_pct) if cumulative_pct is not None and k_cum_pct is not None else None
+            excess_usd = (cumulative_usd_pct - k_cum_pct) if cumulative_usd_pct is not None and k_cum_pct is not None else None
 
-            # Weekly / Cumulative (KRW)
-            self._table.setItem(i, 5, self._amt_item(weekly_amt))
-            self._table.setItem(i, 6, self._pct_item(weekly_pct))
-            self._table.setItem(i, 7, self._amt_item(cumulative_amt))
-            self._table.setItem(i, 8, self._pct_item(cumulative_pct))
-            
-            # USD/KRW Rate cell
-            r_it = QTableWidgetItem(f"{usd_rate:,.1f}" if usd_rate > 0 else "-")
-            r_it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 9, r_it)
+            week_label = f"W{parsed_dates[i].isocalendar()[1]:02d}" if parsed_dates[i] is not None else ""
 
-            # Total Assets ($) cell
-            u_it = QTableWidgetItem(f"$ {usd_val:,.0f}" if usd_val > 0 else "-")
-            u_it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 10, u_it)
+            out.append({
+                "date": date_str, "week_label": week_label,
+                "kospi_close": k_val, "kospi_weekly_pct": k_weekly_pct, "kospi_cum_pct": k_cum_pct,
+                "total_krw": total, "weekly_amt_krw": weekly_amt, "weekly_pct_krw": weekly_pct,
+                "cum_amt_krw": cumulative_amt, "cum_pct_krw": cumulative_pct,
+                "usd_rate": usd_rate, "total_usd": usd_val,
+                "weekly_amt_usd": weekly_usd_amt, "weekly_pct_usd": weekly_usd_pct,
+                "cum_amt_usd": cumulative_usd_amt, "cum_pct_usd": cumulative_usd_pct,
+                "excess_pct_krw": excess_krw, "excess_pct_usd": excess_usd,
+                "manual": bool(rec.get("manual", False)),
+            })
+        return out
 
-            # Weekly / Cumulative ($)
-            self._table.setItem(i, 11, self._amt_usd_item(weekly_usd_amt))
-            self._table.setItem(i, 12, self._pct_item(weekly_usd_pct))
-            self._table.setItem(i, 13, self._amt_usd_item(cumulative_usd_amt))
-            self._table.setItem(i, 14, self._pct_item(cumulative_usd_pct))
+    def _refresh_table_impl(self):
+        metrics = self._compute_records_metrics()
+        # docs/ui.md issue #9: sorting is enabled on this table now, so the
+        # full rebuild below must not run while Qt could auto-resort
+        # mid-loop (the same class of bug Phase 2's fix addressed for
+        # Universe -- setItem(i, ...) writing into row i only means what we
+        # think it means while sorting is off).
+        self._table.setSortingEnabled(False)
+        self._table.setRowCount(0)
+        self._table.setRowCount(len(metrics))
 
+        usd = (self._currency == "USD")
+        for i, m in enumerate(metrics):
+            # Date cell: week badge + date together (docs/ui.md 4.6)
+            label = f"{m['week_label']} · {m['date']}" if m['week_label'] else m['date']
+            d_it = QTableWidgetItem(label)
+            d_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if m["manual"]:
+                d_it.setToolTip("Manually entered/edited")
+            self._table.setItem(i, 0, d_it)
+
+            k_it = NumericItem(f"{m['kospi_close']:,.0f}" if m['kospi_close'] > 0 else "-", m['kospi_close'])
+            k_it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._table.setItem(i, 1, k_it)
+            self._table.setItem(i, 2, self._pct_item(m["kospi_weekly_pct"]))
+            self._table.setItem(i, 3, self._pct_item(m["kospi_cum_pct"]))
+
+            if usd:
+                total_val = m["total_usd"]
+                total_it = NumericItem(f"$ {total_val:,.0f}" if total_val > 0 else "-", total_val)
+                weekly_amt_it = self._amt_usd_item(m["weekly_amt_usd"])
+                weekly_pct_it = self._pct_item(m["weekly_pct_usd"])
+                cum_amt_it    = self._amt_usd_item(m["cum_amt_usd"])
+                cum_pct_it    = self._pct_item(m["cum_pct_usd"])
+                excess_it     = self._pct_item(m["excess_pct_usd"])
+            else:
+                total_val = m["total_krw"]
+                total_it = NumericItem(f"{total_val:,.0f}", total_val)
+                weekly_amt_it = self._amt_item(m["weekly_amt_krw"])
+                weekly_pct_it = self._pct_item(m["weekly_pct_krw"])
+                cum_amt_it    = self._amt_item(m["cum_amt_krw"])
+                cum_pct_it    = self._pct_item(m["cum_pct_krw"])
+                excess_it     = self._pct_item(m["excess_pct_krw"])
+            total_it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._table.setItem(i, 4, total_it)
+            self._table.setItem(i, 5, weekly_amt_it)
+            self._table.setItem(i, 6, weekly_pct_it)
+            self._table.setItem(i, 7, cum_amt_it)
+            self._table.setItem(i, 8, cum_pct_it)
+            self._table.setItem(i, 9, excess_it)
+
+        self._table.setSortingEnabled(True)
+
+        if self._metrics_ready:
+            try:
+                self._update_rate_label(get_usd_krw_rate())
+            except Exception:
+                self._update_rate_label(0.0)
+
+        self._stretch_columns()
         self._update_live_asset_labels()
+        self._update_chart(metrics)
+
+    def _update_chart(self, metrics=None):
+        """Inline weekly-trend chart (docs/ui.md 4.4): Total Assets (in the
+        active currency) vs KOSPI, both rebased to first week = 100, with
+        the gap between them shaded to show excess return. The _show_graph
+        modal is kept separately for a zoomed/detailed view."""
+        if metrics is None:
+            metrics = self._compute_records_metrics()
+        ax = self._chart_ax
+        ax.clear()
+        if len(metrics) < 2:
+            ax.text(0.5, 0.5, "Not enough data yet", ha="center", va="center",
+                     transform=ax.transAxes, color=TEXT_MUTED, fontsize=9)
+            self._chart_canvas.draw()
+            return
+
+        usd = (self._currency == "USD")
+        total_key = "total_usd" if usd else "total_krw"
+        first_total = metrics[0][total_key]
+        first_kospi = metrics[0]["kospi_close"]
+
+        x = [mdates.date2num(_dt.datetime.strptime(m["date"], "%Y-%m-%d")) for m in metrics]
+        asset_rebased = [(100.0 * m[total_key] / first_total) if first_total else 100.0 for m in metrics]
+        kospi_rebased = [(100.0 * m["kospi_close"] / first_kospi) if first_kospi else 100.0 for m in metrics]
+
+        ax.plot(x, asset_rebased, color=ACCENT, linewidth=2, label=f"Total Assets ({self._currency})")
+        ax.plot(x, kospi_rebased, color=TEXT_MUTED, linewidth=1.4, label="KOSPI")
+        ax.fill_between(x, kospi_rebased, asset_rebased, color=PROFIT, alpha=0.14)
+
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%y.%m.%d"))
+        self._chart_fig.autofmt_xdate(rotation=30)
+        ax.margins(x=0.02)
+        ax.grid(True, linestyle=":", alpha=0.4)
+        ax.legend(fontsize=8, loc="upper left")
+        ax.set_ylabel("Index (first week = 100)", fontsize=8)
+
+        self._chart_canvas.draw()
 
     def update_live_asset(self, current_total: float):
         self._current_live_asset = current_total
         self._update_live_asset_labels()
+        self._maybe_autofill_asset_edit()
 
     def _update_live_asset_labels(self):
         
@@ -693,13 +944,13 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
             if last_total > 0:
                 diff = curr_val - last_total
                 ratio = (diff / last_total) * 100
-                color = "#c0392b" if diff > 0 else ("#2980b9" if diff < 0 else "#2c3e50")
+                color = PROFIT if diff > 0 else (LOSS if diff < 0 else "#2c3e50")
                 sign = "+" if diff > 0 else ""
                 self.live_diff_lbl.setText(f"{sign}{diff:,.0f} ({sign}{ratio:.2f}%)")
-                self.live_diff_lbl.setStyleSheet(f"QLineEdit {{ background:transparent; color: {color}; font-weight: bold; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }}")
+                self.live_diff_lbl.setStyleSheet(f"color: {color};")
             else:
                 self.live_diff_lbl.setText("-")
-                self.live_diff_lbl.setStyleSheet("QLineEdit { background:transparent; color: #2c3e50; font-weight: bold; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }")
+                self.live_diff_lbl.setStyleSheet("color: #2c3e50;")
         else:
             self.live_diff_lbl.setText("-")
-            self.live_diff_lbl.setStyleSheet("QLineEdit { background:transparent; color: #2c3e50; font-weight: bold; border:1px solid #ccc; border-radius:4px; padding:3px 6px; }")
+            self.live_diff_lbl.setStyleSheet("color: #2c3e50;")

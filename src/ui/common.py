@@ -38,6 +38,18 @@ def create_font(
     return font
 
 
+def create_numeric_font(size: int = 9) -> QFont:
+    """Monospace-digit font for numeric table cells (docs/ui.md 1.3: tabular
+    numerals, so digits line up vertically down a column). Consolas ships
+    with Windows and its digits are fixed-width; the app's Korean UI font
+    (Malgun Gothic Semilight) is proportional, so numeric cells deliberately
+    use a different family than text cells."""
+    font = QFont()
+    font.setFamilies(["Consolas", "Cascadia Mono", "Malgun Gothic Semilight"])
+    font.setPointSize(size)
+    return font
+
+
 # ---------------------------------------------------------------------------
 # Styling constants
 # ---------------------------------------------------------------------------
@@ -65,13 +77,6 @@ _ACTION_PORTFOLIO_COLOR = "#1a5276"
 _ACTION_PORTFOLIO_HOVER_COLOR = "#21618c"
 _ACTION_VALIDATE_COLOR = "#6c3483"
 _ACTION_VALIDATE_HOVER_COLOR = "#9b59b6"
-
-# Read-only insight views (roadmap 7-4) — popups/charts that only display data
-# (Total Assets "Graph", Trading History "Summary"), as opposed to the action
-# colors above which all *run* something. Reuses the hex the now-deleted AI
-# Diagnosis button used, so no visible color is newly introduced.
-_ACTION_INSIGHT_COLOR = "#0a3d62"
-_ACTION_INSIGHT_HOVER_COLOR = "#1e5799"
 
 # Status text colors (roadmap 7-2c) — e.g. a risk-gate PASS/FAIL cell. Reserved
 # for status display only (roadmap 7-4d): an action button must not reuse these,

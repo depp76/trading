@@ -2,7 +2,7 @@
 fill_table_rows() column layout for the Trading History grid."""
 import unittest
 
-from PyQt6.QtWidgets import QApplication, QTableWidget
+from PyQt6.QtWidgets import QApplication, QTableWidget, QLabel
 from PyQt6.QtCore import Qt
 
 app = QApplication.instance() or QApplication([])
@@ -10,6 +10,7 @@ app = QApplication.instance() or QApplication([])
 from ui.history_table import si, ni, pi, wi, dash, loading_item, fill_table_rows  # noqa: E402
 
 N_COLS = 21
+DASH = "—"  # docs/ui.md 3.3: a thin, muted em dash instead of a bold "-"
 
 
 def _rec(**kw):
@@ -43,7 +44,7 @@ class TestCellFactories(unittest.TestCase):
 
     def test_plain_items(self):
         self.assertEqual(si("abc").text(), "abc")
-        self.assertEqual(dash().text(), "-")
+        self.assertEqual(dash().text(), DASH)
         self.assertEqual(loading_item().text(), "Total")
 
 
@@ -62,9 +63,23 @@ class TestFillTableRows(unittest.TestCase):
         t = self._texts(0)
         self.assertEqual(t[0], "X")
         self.assertEqual(t[3], "2026-01-10")
-        self.assertEqual(t[7:14], ["-"] * 7)            # sell section empty
+        self.assertEqual(t[7:14], [DASH] * 7)            # sell section empty
         self.assertEqual(t[15:18], ["Total"] * 3)      # price not yet loaded
-        self.assertEqual(t[18:21], ["-"] * 3)
+        self.assertEqual(t[18:21], [DASH] * 3)
+
+    def test_open_row_identity_cell_carries_state_for_the_delegate(self):
+        # Company (col 0)'s marker+badge is painted by TradeStateDelegate
+        # from Qt.ItemDataRole.UserRole (docs/ui.md 1.7/issue #5) rather
+        # than a bg_open background color.
+        fill_table_rows(self.tbl, [("open", _rec())])
+        data = self.tbl.item(0, 0).data(Qt.ItemDataRole.UserRole)
+        self.assertEqual(data, {"state": "Open"})
+
+    def test_closed_row_identity_cell_state_is_closed(self):
+        rec = _rec(sell_date="2026-02-09", sell_price=120.0, sell_qty=10.0, sell_amount=1200.0)
+        fill_table_rows(self.tbl, [("closed", rec)])
+        data = self.tbl.item(0, 0).data(Qt.ItemDataRole.UserRole)
+        self.assertEqual(data, {"state": "Closed"})
 
     def test_open_row_with_price_shows_pl(self):
         rec = _rec(curr_price=120.0, curr_pl=200.0, curr_pl_pct=20.0, curr_days=5, wk1=1.5)
@@ -85,7 +100,7 @@ class TestFillTableRows(unittest.TestCase):
         self.assertEqual(t[8], "30")
         self.assertEqual(t[12], "200")
         self.assertEqual(t[13], "+20.0%")
-        self.assertEqual(t[16], "-")   # closed rows never show a current P/L amount...
+        self.assertEqual(t[16], DASH)   # closed rows never show a current P/L amount...
 
     def test_closed_today_shows_opportunity_pl(self):
         rec = _rec(sell_date="2026-09-19", sell_price=100.0, sell_qty=10.0, sell_amount=1000.0,
@@ -99,17 +114,43 @@ class TestFillTableRows(unittest.TestCase):
         rec = _rec(sell_date="2026-01-20", sell_price=1.0, curr_days=45, curr_price=99.0, wk1=2.0)
         fill_table_rows(self.tbl, [("closed", rec)])
         t = self._texts(0)
-        self.assertEqual(t[14:21], ["-"] * 7)
+        self.assertEqual(t[14:21], [DASH] * 7)
 
-    def test_monthly_summary_row_is_bold_with_total(self):
-        rec = {"company": "Monthly Summary [2026-01]", "buy_date": "2026-01", "buy_amount": 1500.0,
-               "pl": -50.0}
-        fill_table_rows(self.tbl, [("monthly", rec)])
+    def test_hide_stale_closed_false_shows_position_and_past_columns(self):
+        # docs/ui.md 3.5: the 30-day rule is now a caller-controlled toggle
+        # rather than always-on.
+        rec = _rec(sell_date="2026-01-20", sell_price=1.0, curr_days=45, curr_price=99.0, wk1=2.0)
+        fill_table_rows(self.tbl, [("closed", rec)], hide_stale_closed=False)
         t = self._texts(0)
-        self.assertEqual(t[0], "Monthly Summary [2026-01]")
-        self.assertEqual(t[6], "1,500")
-        self.assertEqual(t[12], "-50")
-        self.assertTrue(self.tbl.item(0, 0).font().bold())
+        self.assertEqual(t[14], "45")
+        self.assertEqual(t[15], "99")
+
+    def test_monthly_summary_row_spans_as_a_group_header(self):
+        # docs/ui.md 3.4: a month summary is a group-header row now (a single
+        # QLabel spanning every column), not per-column data cells subject
+        # to the same sort/filter/double-click-edit path as a real trade.
+        rec = {"company": "Monthly Summary [2026-01]", "buy_date": "2026-01", "buy_amount": 1500.0,
+               "pl": -50.0, "trade_count": 3, "win_rate_pct": 0.0}
+        out = fill_table_rows(self.tbl, [("monthly", rec)])
+        self.assertEqual(out, [("monthly", rec)])
+        self.assertEqual(self.tbl.columnSpan(0, 0), N_COLS)
+        widget = self.tbl.cellWidget(0, 0)
+        self.assertIsInstance(widget, QLabel)
+        text = widget.text()
+        self.assertIn("2026-01", text)
+        self.assertIn("-50", text)
+
+    def test_row_reused_from_monthly_to_trade_clears_span_and_widget(self):
+        # A row index that held a group-header on one render and a normal
+        # trade on the next (row count reused, see fill_table_rows) must not
+        # keep the stale span/cellWidget from the earlier render.
+        monthly = {"company": "Monthly Summary [2026-01]", "buy_date": "2026-01", "buy_amount": 0.0,
+                   "pl": 0.0, "trade_count": 0, "win_rate_pct": None}
+        fill_table_rows(self.tbl, [("monthly", monthly)])
+        fill_table_rows(self.tbl, [("open", _rec())])
+        self.assertEqual(self.tbl.columnSpan(0, 0), 1)
+        self.assertIsNone(self.tbl.cellWidget(0, 0))
+        self.assertEqual(self.tbl.item(0, 0).text(), "X")
 
     def test_row_count_follows_input(self):
         fill_table_rows(self.tbl, [("open", _rec()), ("open", _rec())])

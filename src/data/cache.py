@@ -43,7 +43,7 @@ def is_us_market(market) -> bool:
     return str(market or "").strip() in _US_MARKETS
 
 
-_TD_PERIODS = {"3d": 3, "5d": 5, "10d": 10, "20d": 20, "60d": 60, "120d": 120}
+_TD_PERIODS = {"1d": 1, "3d": 3, "5d": 5, "10d": 10, "20d": 20, "60d": 60, "120d": 120}
 _CHANGE_KEYS = tuple(_TD_PERIODS.keys())
 
 # Tickers that FDR resolves natively but yfinance cannot (needs ^ prefix, or is KR-only).
