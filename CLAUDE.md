@@ -144,10 +144,9 @@ Dev tooling is in `requirements-dev.txt`
 - **`src/gemini_helper.py`**: Gemini calls for the per-stock AI report feature
   (`GOOGLE_API_KEY` in `.env`); the AI filter (2026-09-19) and portfolio diagnosis
   (2026-09-19) features were removed. Prompts were rewritten from
-  Korean to English in the 2026-09-18 source-code-wide English-only pass; none of them
-  pin a response language anymore, so Gemini's replies are no longer guaranteed Korean
-  (previously they explicitly were, for the app's Korean-speaking end user) — revisit if
-  that regresses the UX.
+  Korean to English in the 2026-09-18 source-code-wide English-only pass; the stock-report
+  prompt explicitly asks for a Korean-language reply (the app's end user is Korean-speaking),
+  so keep that line if the prompt is edited.
 
 ### External dependencies / credentials
 

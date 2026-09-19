@@ -11,10 +11,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QLineEdit, QPushButton,
     QLabel, QHeaderView, QComboBox, QMessageBox, QDialog, QFrame,
-    QInputDialog,
+    QInputDialog, QMenu,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
 
 import trade_db
 from data_fetcher import is_kr_code
@@ -421,7 +421,59 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         )
         tbl.setItemDelegateForColumn(0, TradeStateDelegate(tbl))
         tbl.cellDoubleClicked.connect(self._on_cell_double_clicked)
+        # Delete: right-click menu or the Delete key on the selected rows.
+        # trade_db.delete_trade() existed for a long time with no UI path to
+        # it, so a mistyped trade could only be removed by editing the DB.
+        tbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        tbl.customContextMenuRequested.connect(self._on_table_context_menu)
+        self._delete_shortcut = QShortcut(QKeySequence.StandardKey.Delete, tbl)
+        self._delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        self._delete_shortcut.activated.connect(self._delete_selected_trades)
         return tbl
+
+    def _selected_trade_records(self) -> list:
+        """(kind, rec) for every selected row that is a real trade (month
+        group-header rows are skipped)."""
+        rows = sorted({idx.row() for idx in self._table.selectedIndexes()})
+        return [self._row_data[r] for r in rows if r < len(self._row_data) and self._row_data[r][0] != "monthly"]
+
+    def _on_table_context_menu(self, pos):
+        if not self._selected_trade_records():
+            return
+        menu = QMenu(self._table)
+        delete_action = menu.addAction("Delete Trade...")
+        if menu.exec(self._table.viewport().mapToGlobal(pos)) is delete_action:
+            self._delete_selected_trades()
+
+    def _delete_selected_trades(self):
+        targets = self._selected_trade_records()
+        if not targets:
+            return
+        names = ", ".join(f"{rec.get('company', '')} ({rec.get('buy_date', '')})" for _, rec in targets[:3])
+        if len(targets) > 3:
+            names += f" and {len(targets) - 3} more"
+        reply = QMessageBox.question(
+            self, "Delete Trade",
+            f"Delete {len(targets)} trade(s)?\n{names}\n\nThis removes them from portfolio.db.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for kind, rec in targets:
+            key = rec.get("orig_key")
+            try:
+                if key:
+                    trade_db.delete_trade(key)
+            except Exception as e:
+                logger.error("Failed to delete trade %s: %s", key, e, exc_info=True)
+                QMessageBox.warning(self, "Database Error", f"Failed to delete trade:\n{e}")
+                break
+            source = self._closed_data if kind == "closed" else self._open_data
+            if rec in source:
+                source.remove(rec)
+        self._refresh_summary()
+        self._apply_filter()
 
     def _fit_columns(self):
         """Set column widths to fill the viewport without horizontal scrolling

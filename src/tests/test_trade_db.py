@@ -224,5 +224,27 @@ class TestDbPath(TempDBMixin, unittest.TestCase):
         self.assertTrue(os.path.exists(trade_db.db_path()))
 
 
+class TestBackupTo(TempDBMixin, unittest.TestCase):
+    """backup_to() (AutoBackupThread's DB path) must produce a standalone,
+    consistent copy that includes rows still sitting in the WAL sidecar."""
+
+    def test_backup_contains_every_committed_row(self):
+        trade_db.upsert_trades([_make_record(ticker="005930"), _make_record(ticker="000660", buy_date="2024-02-01")])
+        dest = self._tmp.name + ".backup.db"
+        try:
+            trade_db.backup_to(dest)
+            conn = sqlite3.connect(dest)
+            try:
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                tickers = sorted(r[0] for r in conn.execute("SELECT ticker FROM trades"))
+            finally:
+                conn.close()
+            self.assertEqual(tickers, ["000660", "005930"])
+        finally:
+            for suffix in ("", "-wal", "-shm"):
+                if os.path.exists(dest + suffix):
+                    os.unlink(dest + suffix)
+
+
 if __name__ == "__main__":
     unittest.main()

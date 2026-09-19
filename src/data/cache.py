@@ -1,6 +1,7 @@
 """data/cache.py — In-memory caching, sessions, and timing helpers."""
 from datetime import datetime, timedelta
 from collections import OrderedDict
+import math
 import threading
 import logging
 import urllib3
@@ -193,12 +194,10 @@ def safe_float(value, default=0.0):
     if value is None:
         return default
     if isinstance(value, (int, float)):
-        import math
         return default if math.isnan(value) else float(value)
     try:
         val_str = str(value).replace(',', '').strip()
         f = float(val_str)
-        import math
         return default if math.isnan(f) else f
     except (ValueError, TypeError):
         return default

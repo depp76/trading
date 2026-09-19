@@ -606,20 +606,18 @@ class AutoBackupThread(QThread):
             if not existing:
                 return  # nothing to back up yet (e.g. very first run)
 
-            if DB_FILE in existing:
-                try:
-                    import trade_db
-                    trade_db.checkpoint_wal()
-                except Exception:
-                    logger.warning(
-                        "WAL checkpoint before backup failed -- proceeding with the "
-                        "copy anyway, but it may miss the most recent commits",
-                        exc_info=True,
-                    )
-
             os.makedirs(dest_dir, exist_ok=True)
             for fpath in existing:
-                shutil.copy2(fpath, os.path.join(dest_dir, os.path.basename(fpath)))
+                dest = os.path.join(dest_dir, os.path.basename(fpath))
+                if fpath == DB_FILE:
+                    # SQLite's own backup API rather than checkpoint + file
+                    # copy: it includes committed WAL frames and holds the
+                    # locks itself, so a write landing mid-copy cannot leave a
+                    # torn or stale snapshot.
+                    import trade_db
+                    trade_db.backup_to(dest)
+                else:
+                    shutil.copy2(fpath, dest)
 
             self._prune_old_backups()
             rel_dest = os.path.relpath(dest_dir, BASE_DIR)

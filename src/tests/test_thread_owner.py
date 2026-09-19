@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from PyQt6.QtCore import QThread, QObject
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 app = QApplication.instance() or QApplication([])
 
@@ -132,6 +132,35 @@ class TestSignalSlotArity(unittest.TestCase):
             upsert.assert_called_once_with([edited])
             tab._save_overrides([])
             upsert.assert_called_once()
+        tab._settings_save_timer.stop()
+
+    def test_history_tab_deletes_selected_trades(self):
+        from ui.history_tab import TradingHistoryTab
+        tab = TradingHistoryTab()
+        open_rec = {"ticker": "005930", "company": "A", "buy_date": "2026-01-01", "orig_key": "k1",
+                    "buy_price": 1.0, "qty": 1.0, "buy_amount": 1.0}
+        closed_rec = {"ticker": "000660", "company": "B", "buy_date": "2026-02-01", "orig_key": "k2",
+                      "sell_date": "2026-03-01", "buy_price": 1.0, "qty": 1.0, "buy_amount": 1.0}
+        keep_rec = {"ticker": "035420", "company": "C", "buy_date": "2026-04-01", "orig_key": "k3",
+                    "buy_price": 1.0, "qty": 1.0, "buy_amount": 1.0}
+        tab._open_data = [open_rec, keep_rec]
+        tab._closed_data = [closed_rec]
+        tab._row_data = [("closed", closed_rec), ("open", open_rec), ("open", keep_rec)]
+        with patch.object(tab, "_selected_trade_records", return_value=[("closed", closed_rec), ("open", open_rec)]), \
+             patch("ui.history_tab.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes), \
+             patch("ui.history_tab.trade_db.delete_trade", return_value=True) as delete, \
+             patch.object(tab, "_refresh_summary"), patch.object(tab, "_apply_filter"):
+            tab._delete_selected_trades()
+        self.assertEqual([c.args[0] for c in delete.call_args_list], ["k2", "k1"])
+        self.assertEqual(tab._open_data, [keep_rec])
+        self.assertEqual(tab._closed_data, [])
+        # "No" leaves everything alone.
+        with patch.object(tab, "_selected_trade_records", return_value=[("open", keep_rec)]), \
+             patch("ui.history_tab.QMessageBox.question", return_value=QMessageBox.StandardButton.No), \
+             patch("ui.history_tab.trade_db.delete_trade") as delete:
+            tab._delete_selected_trades()
+        delete.assert_not_called()
+        self.assertEqual(tab._open_data, [keep_rec])
         tab._settings_save_timer.stop()
 
     def test_history_tab_renames_every_record_with_that_ticker(self):

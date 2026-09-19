@@ -58,7 +58,7 @@ def _generate(prompt: str, *, json_mode: bool = False, model: str = None) -> str
 
     from google.genai import types as genai_types  # type: ignore
 
-    chosen_model = model or os.environ.get("GEMINI_MODEL", _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
+    chosen_model = model or _MODEL
 
     response = client.models.generate_content(
         model=chosen_model,
@@ -125,6 +125,7 @@ Write a short briefing based on this stock's current metrics.
    (52-week high/low, moving averages, etc.).
 
 # Output Format
+- Write the briefing in Korean (the reader is a Korean-speaking investor)
 - Exactly 3 lines, each starting with an emoji (e.g. 📈, 💰, 🎯)
 - Under 200 characters total
 - Briefly note at the end of the last line that this is reference-only analysis, not investment advice
