@@ -6,7 +6,7 @@ Contains:
   SingleStockFetchThread, AllDataFetchThread,
   UniverseLightweightFetchThread, PositionPriceFetchThread,
   AutoBackupThread, RebalanceBacktestThread, TrendFollowingBacktestThread,
-  TrendFollowingPortfolioThread, StrategySummaryThread,
+  MaCrossBacktestThread, TrendFollowingPortfolioThread, StrategySummaryThread,
   AccountDepositThread
 """
 import os
@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from paths import BASE_DIR, DB_FILE, CUSTOM_SETTINGS_FILE, TRADING_RECORD_FILE, ARCHIVE_DIR
+from paths import BASE_DIR, DB_FILE, CUSTOM_SETTINGS_FILE, ARCHIVE_DIR
 from data_fetcher import (
     fetch_market_data,
     fetch_single_stock,
@@ -32,9 +32,9 @@ from data_fetcher import (
 
 logger = logging.getLogger(__name__)
 
-# trading_record.json (Total Assets' weekly snapshots) is the one file here that
-# cannot be rebuilt from an external API if lost -- it is typed in by hand.
-_AUTO_BACKUP_FILES = [DB_FILE, CUSTOM_SETTINGS_FILE, TRADING_RECORD_FILE]
+# portfolio.db holds both the trade log and (since 2026-09-19) the Total Assets
+# snapshots, so it and custom_settings.json are everything typed in by hand.
+_AUTO_BACKUP_FILES = [DB_FILE, CUSTOM_SETTINGS_FILE]
 _AUTO_BACKUP_MAX_KEEP = 7  # keep only the most recent N automatic backups
 
 
@@ -587,9 +587,9 @@ class AccountDepositThread(QThread):
 # Auto-backup thread (runs on app start)
 # ---------------------------------------------------------------------------
 class AutoBackupThread(QThread):
-    """Copies portfolio.db + custom_settings.json + trading_record.json into
-    archive/auto_<timestamp>/ on every app start, then prunes old automatic
-    backups beyond _AUTO_BACKUP_MAX_KEEP.
+    """Copies portfolio.db (trades + asset snapshots) and custom_settings.json
+    into archive/auto_<timestamp>/ on every app start, then prunes old
+    automatic backups beyond _AUTO_BACKUP_MAX_KEEP.
 
     Runs off the UI thread so startup is never blocked by disk I/O. This does not
     replace the manual archive/backup_<timestamp>/ convention used before editing
@@ -723,6 +723,32 @@ class TrendFollowingBacktestThread(QThread):
             self.finished.emit(result, "")
         except Exception as e:
             logger.warning("Trend-following backtest failed for %s", self.ticker, exc_info=True)
+            self.finished.emit(None, str(e))
+
+
+# ---------------------------------------------------------------------------
+# MA cross single-stock backtest thread (ma_cross.md 3, 4)
+# ---------------------------------------------------------------------------
+class MaCrossBacktestThread(QThread):
+    """Background thread: strategy.ma_cross.run_backtest_for_stock() for the MA
+    Cross tab (ui/ma_cross_tab.py). Same shape as TrendFollowingBacktestThread:
+    the history fetch is the slow part, so it never runs on the UI thread."""
+    finished = pyqtSignal(object, str)   # result dict | None, error message ("" on success)
+
+    def __init__(self, ticker: str, market: str, config, target_year=None):
+        super().__init__()
+        self.ticker = ticker
+        self.market = market
+        self.config = config
+        self.target_year = target_year
+
+    def run(self):
+        from strategy.ma_cross import run_backtest_for_stock
+        try:
+            result = run_backtest_for_stock(self.ticker, self.market, target_year=self.target_year, config=self.config)
+            self.finished.emit(result, "")
+        except Exception as e:
+            logger.warning("MA cross backtest failed for %s", self.ticker, exc_info=True)
             self.finished.emit(None, str(e))
 
 

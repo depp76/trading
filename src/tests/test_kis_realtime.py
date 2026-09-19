@@ -69,6 +69,16 @@ class TestKisRealtimePriceFallback(unittest.TestCase):
         mock_fallback.assert_called_once_with(["005930"], {})
         self.assertEqual(result, {"005930": 70000.0})
 
+    @patch("data.collectors.kis.is_krx_market_open", return_value=True)
+    @patch("data.collectors.kis._get_kis_approval_key")
+    @patch("data.collectors.kis._kis_rest_price_fallback")
+    def test_few_tickers_skip_the_websocket_during_market_hours(self, mock_fallback, mock_key, _open):
+        mock_fallback.return_value = {"005930": 70000.0, "000660": 200000.0}
+        result = fetch_kis_realtime_prices(["005930", "000660"])
+        mock_key.assert_not_called()          # no WebSocket handshake attempted
+        mock_fallback.assert_called_once_with(["005930", "000660"], {})
+        self.assertEqual(result, {"005930": 70000.0, "000660": 200000.0})
+
     @patch("data.collectors.kis.fetch_kis_stock_info")
     def test_rest_fallback_worker(self, mock_info):
         mock_info.side_effect = lambda code: {"price": 75000} if code == "005930" else None

@@ -435,22 +435,37 @@ def fetch_investor_trend(ticker: str, days: int = 60) -> list:
     return rows
 
 
-def fetch_kis_realtime_prices(tickers: list, timeout: float = 6.0) -> dict:
+# Hybrid realtime path: the WebSocket session is opened fresh on every 60 s
+# refresh (connect, subscribe, wait for ticks, unsubscribe, close), which only
+# pays off once there are enough tickers to amortise it. Below this count a
+# handful of REST quotes (parallel, ~0.3 s) beats a handshake plus up to
+# _KIS_WS_TIMEOUT s of waiting for a tick that a thin stock may never print.
+_KIS_WS_MIN_TICKERS = 4
+_KIS_WS_TIMEOUT = 3.0
+
+
+def fetch_kis_realtime_prices(tickers: list, timeout: float = _KIS_WS_TIMEOUT) -> dict:
     """Opens a short-lived KIS WebSocket session, subscribes to real-time trade ticks
     (H0STCNT0) for each KR ticker, and collects the first tick price seen per ticker
     within `timeout` seconds. Tickers with no tick in that window (e.g. no trades yet,
     or market closed) fall back to a per-ticker REST quote via fetch_kis_stock_info.
 
     Meant for small ticker sets (open/recently-closed positions), not bulk watchlists.
+    Fewer than _KIS_WS_MIN_TICKERS tickers, or a closed market, skip the WebSocket
+    entirely and go straight to REST.
     """
     prices: dict = {}
     if not tickers:
         return prices
 
     # Outside regular KRX market hours (e.g. weekends, nights), no ticks are generated.
-    # Bypass the WebSocket connection and immediately use REST fallback to avoid 6s timeout delays.
+    # Bypass the WebSocket connection and immediately use REST fallback to avoid timeout delays.
     if not is_krx_market_open():
         logger.debug("[fetch_kis_realtime_prices] KRX is closed; bypassing WebSocket and using REST fallback")
+        return _kis_rest_price_fallback(tickers, {})
+
+    if len(tickers) < _KIS_WS_MIN_TICKERS:
+        logger.debug("[fetch_kis_realtime_prices] %d ticker(s): REST is cheaper than a WebSocket session", len(tickers))
         return _kis_rest_price_fallback(tickers, {})
 
     try:

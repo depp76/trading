@@ -11,14 +11,14 @@ the US market code paths still exist but are commented out in the UI), "Trading 
 KOSPI and USD), and "Strategy" (roadmap 7-1) — a `QTabWidget` of sub-tabs behind a shared
 "Today's Signals" summary bar: "Auto Trading" (weekly factor-scoring rebalance signals plus
 a walk-forward backtest), "Trend Following" (Donchian channel breakout backtest for one
-ticker or a multi-ticker portfolio), and a "MA Cross" placeholder (spec exists, no UI yet).
-The strategy sub-tabs are signal generation and research only; nothing places orders.
+ticker or a multi-ticker portfolio), and "MA Cross" (fast/slow MA golden-cross backtest for one
+ticker). The strategy sub-tabs are signal generation and research only; nothing places orders.
 
 The repo is a git repository (branch `master`). Commit or branch as usual; the old
 `archive/backup_<timestamp>/` copy-before-editing convention is no longer needed.
-`AutoBackupThread` still writes `archive/auto_<timestamp>/` snapshots of `portfolio.db`,
-`custom_settings.json` and `trading_record.json` on every start (last 7 kept); `archive/` is
-gitignored.
+`AutoBackupThread` still writes `archive/auto_<timestamp>/` snapshots of `portfolio.db` (via
+the SQLite online backup API) and `custom_settings.json` on every start (last 7 kept);
+`archive/` is gitignored.
 
 ## Running
 
@@ -62,7 +62,7 @@ Dev tooling is in `requirements-dev.txt`
 - **`src/ui/`**: `universe_tab.py` (`UniverseTab`), `history_tab.py` (`TradingHistoryTab`),
   `assets_tab.py` (`TradingRecordTab`), `strategy_tab.py` (`StrategyTab`, roadmap 7-1 — the
   "Strategy" top-level tab: a `QTabWidget` hosting `auto_trading_tab.py` (`AutoTradingTab`),
-  `trend_following_tab.py` (`TrendFollowingTab`), and a `MA Cross` placeholder, behind a
+  `trend_following_tab.py` (`TrendFollowingTab`) and `ma_cross_tab.py` (`MaCrossTab`), behind a
   "Today's Signals" summary bar driven by `threads.fetch_threads.StrategySummaryThread`),
   `widgets.py` (`StockTable`, `NumericItem`, `FilterPopup`, `GroupedHeaderView`), `delegates.py`
   (every custom-painted table cell: `CellDelegate` base + the Universe/History/Strategy
@@ -91,7 +91,8 @@ Dev tooling is in `requirements-dev.txt`
 - **`src/threads/`**: every network call the UI triggers runs in a `QThread` subclass here
   (`AllDataFetchThread`, `UniverseLightweightFetchThread`, `PositionPriceFetchThread`,
   `RealtimePriceThread`, `StockMaThread`, `AccountDepositThread`, `RebalanceBacktestThread`,
-  `TrendFollowingBacktestThread`, `TrendFollowingPortfolioThread`, `StrategySummaryThread`,
+  `TrendFollowingBacktestThread`, `MaCrossBacktestThread`, `TrendFollowingPortfolioThread`,
+  `StrategySummaryThread`,
   the Gemini threads, `AutoBackupThread`). Never call `data_fetcher` functions from a slot on
   the UI thread; add a thread class instead. Connect `finished` signals to bound methods,
   not closures, so Qt queues them onto the UI thread; when a slot needs per-request
@@ -119,7 +120,8 @@ Dev tooling is in `requirements-dev.txt`
   and an `__init__.py` facade; tests go in `tests/strategy/<name>/`; docstrings and commit
   messages cite the md section numbers, and the md is updated in the same commit as the
   code. Current members: `rebalance/` (weekly factor scoring, classification, walk-forward
-  backtest; `rebalance.md`), `ma_cross/` (single-stock MA20/MA60 golden-cross backtest;
+  backtest; `rebalance.md`), `ma_cross/` (single-stock fast/slow MA golden-cross backtest:
+  `config.py` with `MaCrossConfig`, `signals.py`, `backtest.py`; UI in `ui/ma_cross_tab.py`;
   `ma_cross.md`), and `trend_following/` (Donchian channel breakout with optional v2
   overlays — regime MA filter, ATR stop, volatility-target sizing, all off by default:
   `config.py`, `signals.py` with the no-lookahead `donchian_signal`, `backtest.py` with
@@ -135,10 +137,14 @@ Dev tooling is in `requirements-dev.txt`
   lists only the names callers outside `data/` use (about 30; trimmed from 79 on
   2026-09-19), so add a name there when a new UI/thread caller needs it rather than
   importing `data.*` directly.
-- **`src/trade_db.py`**: SQLite persistence (`portfolio.db`, WAL mode). Prefer
-  `upsert_trades()` for batches. Do not generate `orig_key` values in callers:
+- **`src/trade_db.py`**: SQLite persistence (`portfolio.db`, WAL mode): the `trades` table and,
+  since 2026-09-19, `asset_records` (the Total Assets tab's weekly snapshots —
+  `load_asset_records()` / `save_asset_records()`, a full replace per save). Prefer
+  `upsert_trades()` for trade batches. Do not generate `orig_key` values in callers:
   `upsert_trade()` without a key claims a collision-free one inside the INSERT and writes it
-  back into the record.
+  back into the record. `init_db()` runs before any tab is built (`MainWindow`) because
+  `TradingRecordTab` reads the DB in its constructor. `backup_to()` is the online-backup
+  entry point `AutoBackupThread` uses.
 - **`tools/register_secret.py`**: standalone CLI for pushing secrets to Google Cloud Secret
   Manager; unrelated to the app runtime. **`docs/history/`**: dated one-off documents.
 - **`src/gemini_helper.py`**: Gemini calls for the per-stock AI report feature
@@ -162,10 +168,12 @@ Dev tooling is in `requirements-dev.txt`
 
 ### Local state / cache files (gitignored)
 
-`portfolio.db` (source of truth for trades), `custom_settings.json`, `universe_cache.json`,
-`trading_record.json`, `vkospi_cache.json`, `kis_token_cache.json`, `app.log`, `archive/`,
+`portfolio.db` (source of truth for trades and asset snapshots), `custom_settings.json`,
+`universe_cache.json`, `vkospi_cache.json`, `kis_token_cache.json`, `app.log`, `archive/`,
 plus the legacy `custom_history.json` / `trade_overrides.json` pair (read once by
-`_migrate_legacy_json`). All of these paths come from `src/paths.py`. They are runtime data,
+`_migrate_legacy_json`) and the legacy `trading_record.json` (read once by
+`_migrate_asset_records_json` while `asset_records` is empty; left on disk afterwards). All of
+these paths come from `src/paths.py`. They are runtime data,
 not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
 (scope "PortfolioManagement"/"PortfolioManagement"; migrated once from the old
 "MyCompany"/"PortfolioManager" scope).

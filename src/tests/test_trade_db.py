@@ -24,16 +24,22 @@ class TempDBMixin:
         self._orig_db        = trade_db._DB_FILE
         self._orig_custom    = trade_db._CUSTOM_JSON
         self._orig_overrides = trade_db._OVERRIDES_JSON
+        self._orig_asset     = trade_db._ASSET_JSON
         trade_db._DB_FILE       = self._tmp.name
         trade_db._CUSTOM_JSON   = self._tmp.name + ".custom.json"     # does not exist
         trade_db._OVERRIDES_JSON = self._tmp.name + ".overrides.json" # does not exist
+        trade_db._ASSET_JSON    = self._tmp.name + ".assets.json"     # does not exist
         trade_db.init_db()
 
     def tearDown(self):
         trade_db._DB_FILE        = self._orig_db
         trade_db._CUSTOM_JSON    = self._orig_custom
         trade_db._OVERRIDES_JSON = self._orig_overrides
+        trade_db._ASSET_JSON     = self._orig_asset
         os.unlink(self._tmp.name)
+        for suffix in ("-wal", "-shm", ".assets.json"):
+            if os.path.exists(self._tmp.name + suffix):
+                os.unlink(self._tmp.name + suffix)
 
 
 def _make_record(**kwargs) -> dict:
@@ -222,6 +228,36 @@ class TestDbPath(TempDBMixin, unittest.TestCase):
 
     def test_file_exists(self):
         self.assertTrue(os.path.exists(trade_db.db_path()))
+
+
+class TestAssetRecords(TempDBMixin, unittest.TestCase):
+    """asset_records replaces trading_record.json (review 2026-09-19 #5)."""
+
+    def test_round_trip_sorted_by_date(self):
+        self.assertEqual(trade_db.load_asset_records(), [])
+        trade_db.save_asset_records([
+            {"date": "2026-08-14", "total": 120_000_000.0, "manual": True},
+            {"date": "2026-08-07", "total": 118_000_000.0, "manual": False},
+        ])
+        self.assertEqual(trade_db.load_asset_records(), [
+            {"date": "2026-08-07", "total": 118_000_000.0, "manual": False},
+            {"date": "2026-08-14", "total": 120_000_000.0, "manual": True},
+        ])
+        # Saving is a full replace: a dropped row disappears.
+        trade_db.save_asset_records([{"date": "2026-08-14", "total": 121_000_000.0, "manual": True}])
+        self.assertEqual([r["date"] for r in trade_db.load_asset_records()], ["2026-08-14"])
+
+    def test_legacy_json_is_imported_once(self):
+        import json
+        with open(trade_db._ASSET_JSON, "w", encoding="utf-8") as f:
+            json.dump([{"date": "2026-01-02", "total": 100.0, "manual": True},
+                       {"date": "2026-01-09", "total": 101.0}], f)
+        trade_db.init_db()
+        self.assertEqual([r["date"] for r in trade_db.load_asset_records()], ["2026-01-02", "2026-01-09"])
+        # The table is no longer empty, so a second init_db() does not re-apply the file.
+        trade_db.save_asset_records([{"date": "2026-01-09", "total": 999.0, "manual": True}])
+        trade_db.init_db()
+        self.assertEqual(trade_db.load_asset_records(), [{"date": "2026-01-09", "total": 999.0, "manual": True}])
 
 
 class TestBackupTo(TempDBMixin, unittest.TestCase):

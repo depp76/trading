@@ -23,6 +23,13 @@ trades
   is_custom    INTEGER  DEFAULT 1 – 1 = manually entered, 0 = imported from XLS
   created_at   TEXT               – ISO-8601 timestamp
   updated_at   TEXT               – ISO-8601 timestamp
+
+asset_records  (Total Assets tab's weekly snapshots; was trading_record.json,
+                imported once by _migrate_asset_records_json)
+  date         TEXT     PRIMARY KEY – YYYY-MM-DD (a Friday)
+  total        REAL     NOT NULL    – total assets in KRW
+  manual       INTEGER  DEFAULT 1   – 1 = typed by the user, 0 = auto-filled from the live total
+  created_at / updated_at TEXT
 """
 
 import sqlite3
@@ -31,7 +38,7 @@ import os
 import logging
 import datetime as _dt
 
-from paths import DB_FILE, LEGACY_CUSTOM_HISTORY_JSON, LEGACY_TRADE_OVERRIDES_JSON
+from paths import DB_FILE, LEGACY_CUSTOM_HISTORY_JSON, LEGACY_TRADE_OVERRIDES_JSON, TRADING_RECORD_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +47,7 @@ logger = logging.getLogger(__name__)
 _DB_FILE        = DB_FILE
 _CUSTOM_JSON    = LEGACY_CUSTOM_HISTORY_JSON
 _OVERRIDES_JSON = LEGACY_TRADE_OVERRIDES_JSON
+_ASSET_JSON     = TRADING_RECORD_FILE
 
 
 # ── Connection helper ──────────────────────────────────────────────────────────
@@ -80,9 +88,72 @@ def init_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_buy_date ON trades(buy_date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trades_sell_date ON trades(sell_date)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS asset_records (
+                date        TEXT    PRIMARY KEY,
+                total       REAL    NOT NULL,
+                manual      INTEGER DEFAULT 1,
+                created_at  TEXT    DEFAULT (datetime('now','localtime')),
+                updated_at  TEXT    DEFAULT (datetime('now','localtime'))
+            )
+        """)
         conn.commit()
         # 1. Legacy JSON migration (custom_history.json + trade_overrides.json)
         _migrate_legacy_json(conn)
+        # 2. Total Assets snapshots (trading_record.json), once
+        _migrate_asset_records_json(conn)
+    finally:
+        conn.close()
+
+
+# ── Total Assets snapshots (asset_records) ────────────────────────────────────
+
+def _migrate_asset_records_json(conn: sqlite3.Connection) -> None:
+    """One-time import of trading_record.json into asset_records. Runs only
+    while the table is empty, so a JSON left on disk after the import is
+    never re-applied over later edits."""
+    if conn.execute("SELECT COUNT(*) FROM asset_records").fetchone()[0]:
+        return
+    if not os.path.exists(_ASSET_JSON):
+        return
+    try:
+        with open(_ASSET_JSON, "r", encoding="utf-8") as f:
+            records = json.load(f)
+    except Exception as e:
+        logger.warning("[trade_db] Could not read %s: %s", _ASSET_JSON, e)
+        return
+    if not isinstance(records, list):
+        return
+    rows = [(r["date"], float(r["total"]), 1 if r.get("manual", True) else 0)
+            for r in records if isinstance(r, dict) and r.get("date") is not None and r.get("total") is not None]
+    conn.executemany("INSERT OR IGNORE INTO asset_records (date, total, manual) VALUES (?, ?, ?)", rows)
+    conn.commit()
+    logger.info("[trade_db] Imported %d asset snapshot(s) from %s", len(rows), os.path.basename(_ASSET_JSON))
+
+
+def load_asset_records() -> list[dict]:
+    """All weekly snapshots, oldest first: [{"date", "total", "manual"}, ...]."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT date, total, manual FROM asset_records ORDER BY date").fetchall()
+        return [{"date": r["date"], "total": float(r["total"]), "manual": bool(r["manual"])} for r in rows]
+    finally:
+        conn.close()
+
+
+def save_asset_records(records: list[dict]) -> None:
+    """Replace the whole asset_records table with `records` in one transaction.
+    The Total Assets tab edits an in-memory list (a few hundred rows at most)
+    and saves it as a unit, the same way it saved the JSON file."""
+    now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute("DELETE FROM asset_records")
+            conn.executemany(
+                "INSERT INTO asset_records (date, total, manual, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                [(r["date"], float(r["total"]), 1 if r.get("manual", True) else 0, now, now) for r in records],
+            )
     finally:
         conn.close()
 

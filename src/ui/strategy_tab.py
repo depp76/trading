@@ -23,8 +23,8 @@ Redesign (docs/ui.md "Strategy Redesign" mockup, roadmap 7-1 Phase 1/2/4):
   - the trend-following coverage cap (_TF_SUMMARY_MAX_TICKERS) used to be
     visible only inside the summary string's parentheses (issue #2); it is
     a banner now, with a combo to widen it (_build_coverage_banner).
-  - MA Cross is a disabled sub-tab with a "Coming soon" label instead of a
-    same-weight tab that opens to one gray placeholder line (issue #3).
+  - MA Cross was a disabled "Coming soon" tab (issue #3) until
+    ui/ma_cross_tab.py landed the same day; it is a full sub-tab now.
 """
 import logging
 import time
@@ -40,6 +40,7 @@ import trade_db
 from threads.fetch_threads import StrategySummaryThread
 from ui.auto_trading_tab import AutoTradingTab
 from ui.trend_following_tab import TrendFollowingTab
+from ui.ma_cross_tab import MaCrossTab
 from ui.common import create_font, ThreadOwnerMixin, FONT_KPI
 from ui.theme import ACCENT_TEXT
 
@@ -89,18 +90,8 @@ class StrategyTab(ThreadOwnerMixin, QWidget):
         self.trend_following_tab = TrendFollowingTab(self._universe_tab)
         self._sub_tabs.addTab(self.trend_following_tab, "Trend Following")
 
-        # docs/ui.md Strategy Redesign issue #3: MA Cross used to be a
-        # same-weight tab that opened to one gray placeholder line, giving it
-        # equal visual standing with two fully-built strategies. It is a
-        # disabled tab with a "Coming soon" label now -- clicking it does
-        # nothing (Qt disables the click itself) rather than opening to a
-        # page whose only content is "not implemented yet".
-        ma_cross_idx = self._sub_tabs.addTab(QWidget(), "MA Cross (Coming soon)")
-        self._sub_tabs.setTabEnabled(ma_cross_idx, False)
-        self._sub_tabs.setTabToolTip(
-            ma_cross_idx,
-            "strategy/ma_cross/ma_cross.md has a spec; no UI yet.",
-        )
+        self.ma_cross_tab = MaCrossTab(self._universe_tab)
+        self._sub_tabs.addTab(self.ma_cross_tab, "MA Cross")
 
     # ── signal cards (docs/ui.md Strategy Redesign issue #1) ────────────────
     def _build_signal_cards(self) -> QFrame:
@@ -283,4 +274,5 @@ class StrategyTab(ThreadOwnerMixin, QWidget):
         out = super().collect_threads_to_stop()
         out.extend(self.auto_trading_tab.collect_threads_to_stop())
         out.extend(self.trend_following_tab.collect_threads_to_stop())
+        out.extend(self.ma_cross_tab.collect_threads_to_stop())
         return out

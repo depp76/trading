@@ -113,11 +113,11 @@ class TestSignalSlotArity(unittest.TestCase):
         )
 
     def test_auto_backup_covers_every_hand_entered_state_file(self):
-        # trading_record.json (Total Assets weekly snapshots) is typed in by
-        # hand and cannot be rebuilt from any API, so it must be in the list.
+        # Everything typed in by hand lives in portfolio.db (trades + asset
+        # snapshots) and custom_settings.json; both must be in the list.
         from threads.fetch_threads import _AUTO_BACKUP_FILES
-        from paths import DB_FILE, CUSTOM_SETTINGS_FILE, TRADING_RECORD_FILE
-        self.assertEqual(set(_AUTO_BACKUP_FILES), {DB_FILE, CUSTOM_SETTINGS_FILE, TRADING_RECORD_FILE})
+        from paths import DB_FILE, CUSTOM_SETTINGS_FILE
+        self.assertEqual(set(_AUTO_BACKUP_FILES), {DB_FILE, CUSTOM_SETTINGS_FILE})
 
     def test_history_tab_save_overrides_upserts_only_the_given_records(self):
         from ui.history_tab import TradingHistoryTab

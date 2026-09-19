@@ -97,7 +97,11 @@ class MainWindow(QMainWindow):
         # Tab System
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
-        
+
+        # Schema + one-time JSON migrations before any tab reads the DB
+        # (TradingRecordTab loads asset_records in its constructor).
+        trade_db.init_db()
+
         # 1. Trading Universe Tab
         self.universe_tab = UniverseTab()
         self.tabs.addTab(self.universe_tab, "Trading Universe")
@@ -123,9 +127,6 @@ class MainWindow(QMainWindow):
         # Native status bar: shows short-lived progress text from background fetch threads
         # (e.g. "Fetching KOSPI quotes... (3/5)", "Waiting for Yahoo Finance response...").
         self.statusBar().showMessage("Ready")
-
-        # Initialise the SQLite database (creates tables + migrates legacy JSON on first run).
-        trade_db.init_db()
 
         # Load Trading History from the database (primary source).
         self.trading_history_tab.load_from_db()

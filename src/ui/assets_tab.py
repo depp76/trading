@@ -21,7 +21,7 @@ import matplotlib.dates as mdates
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
-from paths import TRADING_RECORD_FILE
+import trade_db
 from data_fetcher import get_usd_krw_rate, get_usd_krw_rate_for_date, get_index_close_for_date
 from threads.fetch_threads import AssetMetricsPreloadThread
 from ui.widgets import GroupedHeaderView, ColSpec, NumericItem
@@ -53,14 +53,13 @@ class _AssetsTable(QTableWidget):
 
 
 from ui.common import (
-    create_font, atomic_save_json, safe_load_json, FONT_FAMILY_CSS, ThreadOwnerMixin,
+    create_font, FONT_FAMILY_CSS, ThreadOwnerMixin,
 )
 
 
 class TradingRecordTab(ThreadOwnerMixin, QWidget):
     """Tab for recording periodic total-asset snapshots with weekly/cumulative return calculations."""
 
-    _JSON_FILE = TRADING_RECORD_FILE
 
     # docs/ui.md 4.2/4.3: KRW-7-col + USD-6-col = 15 columns collapsed to a
     # single currency toggle + 10 columns (the one place label/min-width/
@@ -406,16 +405,19 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
 
     # ---JSON load/save ---
     def _load_records(self):
-        data = safe_load_json(self._JSON_FILE, default=[])
-        if data:
-            self._records = sorted(data, key=lambda r: r.get("date", ""))
+        try:
+            self._records = trade_db.load_asset_records()
+        except Exception as e:
+            logger.error("[TradingRecord] Load error: %s", e, exc_info=True)
+            self._records = []
         self._refresh_table()
 
     def _save_records(self):
         try:
-            atomic_save_json(self._JSON_FILE, self._records, indent=2)
+            trade_db.save_asset_records(self._records)
         except Exception as e:
-            logger.warning("[TradingRecord] Save error: %s", e, exc_info=True)
+            logger.error("[TradingRecord] Save error: %s", e, exc_info=True)
+            QMessageBox.warning(self, "Database Error", f"Failed to save asset records:\n{e}")
 
     # ---Background metrics warm-up (roadmap 2026-09-18, review.md 1-2) ---
     def _start_metrics_preload(self):

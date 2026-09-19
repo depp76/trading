@@ -62,7 +62,7 @@ def _all_tabs_patched():
     # fetch per ticker); a thread outliving its tab aborts the test process
     # when it emits into a deleted widget, so it is stubbed out here.
     with patch("ui.universe_tab.safe_load_json", side_effect=_no_disk), \
-         patch("ui.assets_tab.safe_load_json", side_effect=_no_disk), \
+         patch("ui.assets_tab.trade_db.load_asset_records", return_value=[]), \
          patch("ui.assets_tab.TradingRecordTab._start_metrics_preload"), \
          patch("ui.assets_tab.TradingRecordTab._schedule_daily_sync"), \
          patch("ui.strategy_tab.StrategyTab._refresh_summary"), \

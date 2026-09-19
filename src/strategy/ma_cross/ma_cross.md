@@ -30,11 +30,12 @@
   매도"를 과거 데이터에 적용해 트레이드 수·승수·누적 수익률을 구하는 벡터화(numpy) 백테스트.
 - 리밸런싱 알고리즘(`rebalance.md`, 종목군 단위 주간 스코어링)과는 별개 자산이며 함수를
   공유하지 않는다 (`rebalance.md` 3-4).
-- **현재 UI 연결 없음** — `src/ui/`, `src/threads/`에서 이 패키지를 호출하는 곳이 없다
-  (2026-09-18 확인). 호출자는 `tests/strategy/ma_cross/test_backtest.py`뿐이다. `roadmap.md` 4-4
-  "백테스트 — 전략 비교 UI"가 이 로직을 다시 화면에 올리는 후보 작업이다.
-- 패키지 구성은 `strategy/__init__.py`의 규칙(전략별 폴더 + `<name>.md`)을 따르되, 코드는
-  `backtest.py` 하나다 — `config.py`/`signals.py` 분리는 6장 참고.
+- **UI**: Strategy 탭의 "MA Cross" 서브탭(`ui/ma_cross_tab.py::MaCrossTab`, 2026-09-19) —
+  종목 입력 또는 Trading Universe에서 선택, 파라미터 조정, `threads/fetch_threads.py::
+  MaCrossBacktestThread`로 백그라운드 실행, KPI 스트립(트레이드·승수·승률·복리 수익률) +
+  종가/빠른·느린 MA 차트(진입▲ 청산▼) + 트레이드 표.
+- 패키지 구성은 다른 두 전략과 같다: `config.py`(`MaCrossConfig`), `signals.py`(진입/청산 조건),
+  `backtest.py`(체결·집계), `__init__.py` 파사드.
 
 ---
 
@@ -91,11 +92,15 @@
 
 ## 4. 함수 구성
 
-| 함수 | 역할 | 반환 |
-|------|------|------|
-| `run_backtest_strategy(df, buy_sell_points=False, target_year=None)` | 3장 규칙의 벡터화 구현 | `(total_trades, win_count, cumulative_return)`; `buy_sell_points=True`면 여기에 `buy_dates, buy_prices, sell_dates, sell_prices, bt_buy_date_list` 5개를 덧붙인 8-튜플 |
-| `run_backtest_for_stock(ticker, market, days=1095, target_year=None, df=None)` | 데이터 조회 + 트레이드별 상세(보유일, 연환산 수익률) | `{"ticker", "trades": [{buy_date, buy_price, sell_date, sell_price, return_pct, days_held, ann_return}], "error"}` |
-| `run_bulk_backtest_chunk(tickers, market, days=1095, target_year=None)` | yahooquery 일괄 조회 후 종목별 `run_backtest_for_stock` | 위 dict의 리스트 |
+| 함수 | 파일 | 역할 | 반환 |
+|------|------|------|------|
+| `MaCrossConfig(fast_n=20, slow_n=60, entry_mult=1.10, take_profit_mult=1.30, overheat_mult=1.30, days=1095)` | `config.py` | 파라미터 단일 출처(기본값 = 분리 전 리터럴). `fast_col`/`slow_col`/`windows` 속성 | dataclass |
+| `entry_signal(ma_fast, ma_slow, config)` | `signals.py` | 3장 진입 조건(전일 ≤ · 당일 > slow×entry_mult) | bool 배열 |
+| `exit_condition(ma_fast, ma_slow, config)` | `signals.py` | 3장 청산 2·3(과열, 데드크로스) | bool 배열 |
+| `next_true_index(mask)` | `signals.py` | 각 날짜 이후 첫 True 인덱스 | int 배열 |
+| `run_backtest_strategy(df, buy_sell_points=False, target_year=None, config=None)` | `backtest.py` | 3장 규칙의 벡터화 구현 | `(total_trades, win_count, cumulative_return)`; `buy_sell_points=True`면 여기에 `buy_dates, buy_prices, sell_dates, sell_prices, bt_buy_date_list` 5개를 덧붙인 8-튜플 |
+| `run_backtest_for_stock(ticker, market, days=None, target_year=None, df=None, config=None)` | `backtest.py` | 데이터 조회 + 트레이드별 상세(보유일, 연환산 수익률) | `{"ticker", "trades": [{buy_date, buy_price, sell_date, sell_price, return_pct, days_held, ann_return}], "error", "summary": {n_trades, win_count, win_rate_pct, cumulative_return_pct}, "df"}` |
+| `run_bulk_backtest_chunk(tickers, market, days=None, target_year=None, config=None)` | `backtest.py` | yahooquery 일괄 조회 후 종목별 `run_backtest_for_stock` | 위 dict의 리스트 |
 
 구현 메모: 청산 조건 2·3은 `np.minimum.accumulate`로 "각 날짜 이후 첫 충족일" 배열을 한 번
 만들어 두고, 익절(조건 1)은 진입 이후 종가의 `np.maximum.accumulate` + `searchsorted`로 찾는다.
@@ -117,14 +122,13 @@
 
 ## 6. 알려진 한계 / 다음 단계
 
-- [ ] 파라미터(1.10 진입 배수, 1.30 익절/과열 배수, MA20/MA60 창)가 `backtest.py`에 리터럴로
-      박혀 있다 — `config.py`의 `MaCrossConfig` dataclass로 분리 (`rebalance.md` 8-H와 같은 방식).
-- [ ] 신호 생성(3장 진입/청산 조건)을 `signals.py`로 분리해 `backtest.py`는 체결·집계만 담당.
+- [x] 파라미터를 `config.py`의 `MaCrossConfig`로 분리 (2026-09-19).
+- [x] 신호 생성을 `signals.py`로 분리, `backtest.py`는 체결·집계만 (2026-09-19).
+- [x] UI 재연결 — Strategy 탭 "MA Cross" 서브탭 (2026-09-19).
 - [ ] 수수료·세금 미반영 (리밸런싱 백테스트는 반영함 — `rebalance.md` 7장 참고).
 - [ ] 복리 누적 수익률은 반영됐으나(2026-09-18) MDD·Sharpe 등 리스크 지표는 아직 없음.
 - [ ] 미청산 포지션 무시, 슬리피지 없음, 롱 온리.
 - [ ] 실데이터 백테스트 결과를 이 문서 5장에 기록.
-- [ ] UI 재연결 여부 결정 (`roadmap.md` 4-4).
 
 ---
 
@@ -139,3 +143,8 @@
   수익률이 크게 저평가되는 문제가 있었다 (외부 코드 리뷰로 식별, `review_claude.md` 참고).
   `tests/strategy/ma_cross/test_backtest.py`의 `test_cumulative_return_equals_sum`을
   `test_cumulative_return_is_compounded`로 교체.
+- 2026-09-19: 패키지를 다른 전략과 같은 3단(`config.py`/`signals.py`/`backtest.py`)으로 분리 —
+  `MaCrossConfig` 기본값이 종전 리터럴을 그대로 재현하므로 기존 테스트 11개는 변경 없이 통과.
+  `run_backtest_for_stock`이 `summary`·`df`를 추가로 반환. Strategy 탭에 `MaCrossTab`
+  서브탭 신설(`ui/ma_cross_tab.py`, `MaCrossBacktestThread`). 테스트 +9
+  (`test_signals.py` 설정 검증·진입/청산 조건·설정 반영, `tests/test_ma_cross_tab.py` 입력·실행·렌더).
