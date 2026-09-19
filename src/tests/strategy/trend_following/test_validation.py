@@ -1,7 +1,7 @@
 """tests/strategy/trend_following/test_validation.py — IS/OOS holdout and anchored
 walk-forward validation (trend_following.md 5, 6)."""
 import unittest
-from datetime import date, timedelta
+from datetime import date
 
 import numpy as np
 import polars as pl
@@ -10,13 +10,9 @@ from strategy.trend_following import (
     TrendFollowingConfig, holdout_validation, walk_forward_validation, yearly_folds, window_metrics,
     run_portfolio_backtest,
 )
+from tests.strategy.trend_following.frames import make_frame as _frame
 
 
-def _frame(closes, start):
-    closes = [float(c) for c in closes]
-    dates = [start + timedelta(days=i) for i in range(len(closes))]
-    return pl.DataFrame({"Date": dates, "Open": closes, "High": [c + 1 for c in closes],
-                         "Low": [c - 1 for c in closes], "Close": closes, "Volume": [1.0] * len(closes)})
 
 
 def _walk(n, seed, drift=0.0008):
@@ -29,7 +25,7 @@ def _walk(n, seed, drift=0.0008):
 
 START = date(2020, 1, 1)
 N = 365 * 4 + 1          # 2020-01-01 .. 2023-12-31 (calendar days, one bar per day)
-HIST = {"A": _frame(_walk(N, 1), START), "B": _frame(_walk(N, 2), START), "C": _frame(_walk(N, 3), START)}
+HIST = {"A": _frame(_walk(N, 1), start=START), "B": _frame(_walk(N, 2), start=START), "C": _frame(_walk(N, 3), start=START)}
 GRID = [{"entry_n": 10, "exit_n": 5}, {"entry_n": 30, "exit_n": 15}, {"entry_n": 60, "exit_n": 30}]
 
 

@@ -18,6 +18,9 @@ def _to_polars(df_pd):
             if date_dtype.time_zone:
                 df = df.with_columns(pl.col("Date").dt.replace_time_zone(None))
             df = df.with_columns(pl.col("Date").dt.date())
+        elif date_dtype == pl.String:
+            # e.g. a frame whose date index was already stringified upstream
+            df = df.with_columns(pl.col("Date").str.slice(0, 10).str.to_date("%Y-%m-%d", strict=False))
         elif not isinstance(date_dtype, pl.Date):
             df = df.with_columns(pl.col("Date").cast(pl.Datetime).dt.date())
         df = df.unique(subset=["Date"], keep="last").sort("Date")

@@ -2,21 +2,15 @@
 costs, trade extraction and metrics (trend_following.md 5)."""
 import math
 import unittest
-from datetime import date, timedelta
 from unittest.mock import patch
 
 import numpy as np
 import polars as pl
 
 from strategy.trend_following import TrendFollowingConfig, run_backtest, run_backtest_for_ticker
+from tests.strategy.trend_following.frames import make_frame as _frame
 
 
-def _frame(closes, start=date(2025, 1, 1)):
-    n = len(closes)
-    closes = [float(c) for c in closes]
-    dates = [start + timedelta(days=i) for i in range(n)]
-    return pl.DataFrame({"Date": dates, "Open": closes, "High": [c + 1 for c in closes],
-                         "Low": [c - 1 for c in closes], "Close": closes, "Volume": [1.0] * n})
 
 
 CFG = TrendFollowingConfig(entry_n=3, exit_n=2)

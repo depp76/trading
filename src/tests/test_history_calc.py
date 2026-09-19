@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication([])
 
 from ui.history_tab import TradingHistoryTab  # noqa: E402
+from ui.history_calc import summarize_positions  # noqa: E402
 
 
 def _rec(**kw):
@@ -87,6 +88,75 @@ class TestBuildMonthlyRows(unittest.TestCase):
 
     def test_empty_input(self):
         self.assertEqual(TradingHistoryTab._build_monthly_rows([]), [])
+
+
+class TestSummarizePositions(unittest.TestCase):
+    TODAY = _dt.date(2026, 9, 19)
+
+    def _run(self, open_data, closed_data=(), deposit=0.0, withdrawal=0.0, principal=0.0):
+        return summarize_positions(open_data, list(closed_data), deposit=deposit,
+                                   withdrawal=withdrawal, principal=principal, today=self.TODAY)
+
+    def test_kr_us_split_and_totals(self):
+        kr = _rec(market="KOSPI", buy_amount=1000.0, qty=10.0, curr_price=120.0)   # eval 1200
+        us = _rec(market="NASDAQ", buy_amount=2000.0, qty=4.0, curr_price=450.0)   # eval 1800
+        agg = self._run([kr, us], deposit=500.0, withdrawal=100.0, principal=3000.0)
+
+        self.assertAlmostEqual(agg["kr_cost"], 1000.0)
+        self.assertAlmostEqual(agg["kr_pl"], 200.0)
+        self.assertAlmostEqual(agg["kr_pl_pct"], 20.0)
+        self.assertAlmostEqual(agg["us_cost"], 2000.0)
+        self.assertAlmostEqual(agg["us_pl"], -200.0)
+        self.assertAlmostEqual(agg["us_pl_pct"], -10.0)
+        self.assertAlmostEqual(agg["cost_total"], 3000.0)
+        self.assertAlmostEqual(agg["eval_total"], 3000.0)
+        self.assertAlmostEqual(agg["pos_pl"], 0.0)
+        # total = eval + deposit + withdrawal
+        self.assertAlmostEqual(agg["total"], 3600.0)
+        self.assertAlmostEqual(agg["total_pl"], 600.0)
+        self.assertAlmostEqual(agg["total_pl_pct"], 20.0)
+        self.assertAlmostEqual(agg["total_invest"], 3500.0)
+        self.assertAlmostEqual(agg["deposit_pct"], 500.0 / 3500.0 * 100)
+
+        # per-row fields
+        self.assertAlmostEqual(kr["curr_pl"], 200.0)
+        self.assertAlmostEqual(kr["curr_pl_pct"], 20.0)
+        self.assertAlmostEqual(kr["position_w"], 1200.0 / 3500.0 * 100)
+        self.assertAlmostEqual(kr["curr_pct_pl"], 20.0 * kr["position_w"] / 100.0)
+
+    def test_sp500_label_counts_as_us(self):
+        # Regression: the price thread and the summary used to disagree on this label.
+        row = _rec(market="S&P500", buy_amount=1000.0, qty=1.0, curr_price=1100.0)
+        agg = self._run([row])
+        self.assertAlmostEqual(agg["us_cost"], 1000.0)
+        self.assertAlmostEqual(agg["kr_cost"], 0.0)
+
+    def test_missing_price_carries_position_at_cost(self):
+        row = _rec(market="KOSPI", buy_amount=1000.0, qty=10.0, curr_price=0.0)
+        agg = self._run([row], principal=1000.0)
+        self.assertEqual(row["curr_pl"], 0.0)
+        self.assertEqual(row["curr_pl_pct"], 0.0)
+        self.assertAlmostEqual(agg["eval_total"], 1000.0)
+        self.assertAlmostEqual(agg["total_pl"], 0.0)
+        self.assertAlmostEqual(row["position_w"], 100.0)
+
+    def test_curr_days_from_sell_date_or_buy_date(self):
+        closed = _rec(buy_date="2026-01-01", sell_date="2026-09-09", sell_price=1.0)
+        opened = _rec(buy_date="2026-09-01")
+        bad = _rec(buy_date="garbage")
+        self._run([opened, bad], [closed])
+        self.assertEqual(closed["curr_days"], 10)
+        self.assertEqual(opened["curr_days"], 18)
+        self.assertNotIn("curr_days", bad)
+        self.assertEqual(closed["position_w"], 0.0)
+        self.assertEqual(closed["curr_pct_pl"], 0.0)
+
+    def test_zero_denominators_do_not_raise(self):
+        agg = self._run([], [], deposit=0.0, withdrawal=0.0, principal=0.0)
+        self.assertEqual(agg["total"], 0.0)
+        self.assertEqual(agg["total_pl_pct"], 0.0)
+        self.assertEqual(agg["deposit_pct"], 0.0)
+        self.assertEqual(agg["pos_pl_pct"], 0.0)
 
 
 if __name__ == "__main__":

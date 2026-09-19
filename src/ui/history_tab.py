@@ -18,7 +18,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 
 import trade_db
-from data_fetcher import is_kr_code, is_us_market
+from data_fetcher import is_kr_code
 
 from threads.fetch_threads import (
     PositionPriceFetchThread,
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 from ui.common import create_font, _fmt_num_edit, FONT_FAMILY_CSS, retire_thread
-from ui.history_calc import compute_pl_fields, build_monthly_rows
+from ui.history_calc import compute_pl_fields, build_monthly_rows, summarize_positions
 from ui.history_table import fill_table_rows
 from ui.dialogs.holdings_summary import show_holdings_summary
 from ui.dialogs.ai_diagnosis import show_ai_diagnosis_result
@@ -924,154 +924,54 @@ class TradingHistoryTab(QWidget):
 
     # ---Summary ---
     def _refresh_summary(self):
+        """Recompute the position aggregates (ui.history_calc.summarize_positions)
+        and render them into the dashboard cards."""
         deposit    = self._get_deposit()
         withdrawal = self._get_withdrawal()
         principal  = self._get_principal()
 
-        # ---Dynamic recalculation of curr_days ---
-        # sell info exists: today - sell_date (days passed since sell)
-        # sell info doesn't exist: today - buy_date (days held)
-        today = _dt.date.today()
-        _date_cache: dict[str, _dt.date] = {}
-        def _parse_date(s: str) -> _dt.date | None:
-            if not s:
-                return None
-            if s not in _date_cache:
-                try:
-                    _date_cache[s] = _dt.datetime.strptime(s[:10], "%Y-%m-%d").date()
-                except Exception:
-                    _date_cache[s] = None
-            return _date_cache[s]
-
-        for r in self._closed_data + self._open_data:
-            sell_dt = _parse_date(r.get("sell_date", ""))
-            if sell_dt:
-                r["curr_days"] = (today - sell_dt).days
-            else:
-                buy_dt = _parse_date(r.get("buy_date", ""))
-                if buy_dt:
-                    r["curr_days"] = (today - buy_dt).days
-
-        # ---recalculate per-row P/L: P/L = Current Price * Quantity - Buy Amount ---
-        kr_cost = 0.0
-        kr_eval = 0.0
-        us_cost = 0.0
-        us_eval = 0.0
-
-        cost_total = 0.0
-        eval_total = 0.0
-        
-        for r in self._open_data:
-            buy_amt   = r.get("buy_amount", 0.0)
-            qty       = r.get("qty", 0.0)
-            price     = r.get("curr_price", 0.0)
-            market    = r.get("market", "")
-            
-            is_us = is_us_market(market)
-
-            if price > 0 and qty > 0:
-                eval_val         = price * qty          # Evaluation Amount = Current Price * Quantity
-                r["curr_pl"]     = eval_val - buy_amt   # P/L = Evaluation Amount - Buy Amount
-                r["curr_pl_pct"] = (r["curr_pl"] / buy_amt * 100) if buy_amt else 0.0
-            else:
-                eval_val         = buy_amt
-                r["curr_pl"]     = 0.0
-                r["curr_pl_pct"] = 0.0
-                
-            cost_total += buy_amt
-            eval_total += eval_val
-
-            if is_us:
-                us_cost += buy_amt
-                us_eval += eval_val
-            else:
-                kr_cost += buy_amt
-                kr_eval += eval_val
-
-        # Calculate Position
-        kr_pl = kr_eval - kr_cost
-        kr_pl_pct = (kr_pl / kr_cost * 100) if kr_cost else 0.0
-
-        us_pl = us_eval - us_cost
-        us_pl_pct = (us_pl / us_cost * 100) if us_cost else 0.0
-
-        pos_pl     = eval_total - cost_total
-        pos_pl_pct = (pos_pl / cost_total * 100) if cost_total else 0.0
-
-        # Total = Sum of Evaluation Amount + Deposit + Withdrawal
-        total        = eval_total + deposit + withdrawal
-        total_pl     = total - principal
-        total_pl_pct = (total_pl / principal * 100) if principal > 0 else 0.0
+        agg = summarize_positions(
+            self._open_data, self._closed_data,
+            deposit=deposit, withdrawal=withdrawal, principal=principal,
+        )
+        total, total_pl = agg["total"], agg["total_pl"]
         self.total_asset_updated.emit(total)
 
-        # position_w: weight based on total invest
-        total_invest = total - withdrawal
-        for r in self._open_data:
-            qty   = r.get("qty", 0.0)
-            price = r.get("curr_price", 0.0)
-            ev    = (price * qty) if price > 0 and qty > 0 else r.get("buy_amount", 0.0)
-            r["position_w"]  = (ev / total_invest * 100) if total_invest > 0 else 0.0
-            r["curr_pct_pl"] = r["curr_pl_pct"] * (r["position_w"] / 100.0) if r["position_w"] else 0.0
-
-        for r in self._closed_data:
-            r["position_w"] = 0.0
-            r["curr_pct_pl"] = 0.0
-
-        deposit_base = total - withdrawal
-        deposit_pct = (deposit / deposit_base * 100) if deposit_base > 0 else 0.0
-        if hasattr(self, "_deposit_pct_edit"):
-            self._deposit_pct_edit.setText(f"{deposit_pct:.1f}%")
+        self._deposit_pct_edit.setText(f"{agg['deposit_pct']:.1f}%")
 
         # ---Update Position Summary Table ---
-        if hasattr(self, "_pos_summary_table"):
-            tbl = self._pos_summary_table
-            
-            def _pos_color(v): return "#e74c3c" if v < 0 else "#1a6b3c"
-            def _krw(v):       return f"{v:,.0f}"
-            def _kpct(v):      return f"{v:+.1f}%"
+        tbl = self._pos_summary_table
 
-            def set_item(r, c, text, color=None):
-                it = QTableWidgetItem(text)
-                it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                if color:
-                    it.setForeground(QColor(color))
-                tbl.setItem(r, c, it)
+        def _pos_color(v): return "#e74c3c" if v < 0 else "#1a6b3c"
 
-            # KR Row
-            set_item(0, 0, _krw(kr_cost))
-            set_item(0, 1, f"{kr_pl:+,.0f}", _pos_color(kr_pl))
-            set_item(0, 2, _kpct(kr_pl_pct), _pos_color(kr_pl_pct))
+        def set_item(r, c, text, color=None):
+            it = QTableWidgetItem(text)
+            it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            if color:
+                it.setForeground(QColor(color))
+            tbl.setItem(r, c, it)
 
-            # US Row
-            set_item(1, 0, _krw(us_cost))
-            set_item(1, 1, f"{us_pl:+,.0f}", _pos_color(us_pl))
-            set_item(1, 2, _kpct(us_pl_pct), _pos_color(us_pl_pct))
-
-            # Total Row
-            set_item(2, 0, _krw(cost_total))
-            set_item(2, 1, f"{pos_pl:+,.0f}", _pos_color(pos_pl))
-            set_item(2, 2, _kpct(pos_pl_pct), _pos_color(pos_pl_pct))
+        for row, prefix in ((0, "kr"), (1, "us")):
+            cost, pl, pct = agg[f"{prefix}_cost"], agg[f"{prefix}_pl"], agg[f"{prefix}_pl_pct"]
+            set_item(row, 0, f"{cost:,.0f}")
+            set_item(row, 1, f"{pl:+,.0f}", _pos_color(pl))
+            set_item(row, 2, f"{pct:+.1f}%", _pos_color(pct))
+        set_item(2, 0, f"{agg['cost_total']:,.0f}")
+        set_item(2, 1, f"{agg['pos_pl']:+,.0f}", _pos_color(agg["pos_pl"]))
+        set_item(2, 2, f"{agg['pos_pl_pct']:+.1f}%", _pos_color(agg["pos_pl_pct"]))
 
         # Update Total Asset / P/L inline labels
         INPUT_STYLE_BASE = (
             "QLineEdit { border:1px solid #ccc; "
             "border-radius:4px; padding:3px 6px; font-size:12px; font-weight:bold; }"
         )
-        if hasattr(self, "_total_invest_edit"):
-            self._total_invest_edit.setText(f"{total - withdrawal:,.0f}")
-        if hasattr(self, "_total_asset_edit"):
-            self._total_asset_edit.setText(f"{total:,.0f}")
-        if hasattr(self, "_total_pl_edit"):
-            self._total_pl_edit.setText(f"{total_pl:+,.0f}")
-            self._total_pl_edit.setToolTip(f"Total Asset ({total:,.0f}) - Principal ({principal:,.0f})")
-            self._total_pl_edit.setStyleSheet(
-                INPUT_STYLE_BASE + " QLineEdit { background:#fff; color:#111; }"
-            )
-        if hasattr(self, "_total_pl_pct_edit"):
-            self._total_pl_pct_edit.setText(f"{total_pl_pct:+.1f}%")
-            self._total_pl_pct_edit.setStyleSheet(
-                INPUT_STYLE_BASE + " QLineEdit { background:#fff; color:#111; }"
-            )
+        self._total_invest_edit.setText(f"{agg['total_invest']:,.0f}")
+        self._total_asset_edit.setText(f"{total:,.0f}")
+        self._total_pl_edit.setText(f"{total_pl:+,.0f}")
+        self._total_pl_edit.setToolTip(f"Total Asset ({total:,.0f}) - Principal ({principal:,.0f})")
+        self._total_pl_edit.setStyleSheet(INPUT_STYLE_BASE + " QLineEdit { background:#fff; color:#111; }")
+        self._total_pl_pct_edit.setText(f"{agg['total_pl_pct']:+.1f}%")
+        self._total_pl_pct_edit.setStyleSheet(INPUT_STYLE_BASE + " QLineEdit { background:#fff; color:#111; }")
 
     def _on_search_stock_pl(self):
         query = self._search_stock_pl_edit.text().strip().lower()

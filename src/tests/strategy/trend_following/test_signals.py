@@ -1,21 +1,14 @@
 """tests/strategy/trend_following/test_signals.py — donchian_signal() rules and the
 no-lookahead guarantee (trend_following.md 3, 5)."""
 import unittest
-from datetime import date, timedelta
+from datetime import date
 
 import polars as pl
 
 from strategy.trend_following import TrendFollowingConfig, donchian_signal
+from tests.strategy.trend_following.frames import make_frame as _frame
 
 
-def _frame(closes, highs=None, lows=None, start=date(2025, 1, 1)):
-    n = len(closes)
-    closes = [float(c) for c in closes]
-    highs = highs or [c + 1.0 for c in closes]
-    lows = lows or [c - 1.0 for c in closes]
-    dates = [start + timedelta(days=i) for i in range(n)]
-    return pl.DataFrame({"Date": dates, "Open": closes, "High": highs, "Low": lows,
-                         "Close": closes, "Volume": [1.0] * n})
 
 
 class TestDonchianSignal(unittest.TestCase):

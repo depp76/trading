@@ -1,22 +1,15 @@
 """tests/strategy/trend_following/test_portfolio.py — v3 equal-sleeve portfolio backtest
 (trend_following.md 3 "v3")."""
 import unittest
-from datetime import date, timedelta
 from unittest.mock import patch
 
 import numpy as np
 import polars as pl
 
 from strategy.trend_following import TrendFollowingConfig, run_backtest, run_portfolio_backtest, run_portfolio_backtest_for_tickers
+from tests.strategy.trend_following.frames import make_frame as _frame
 
 
-def _frame(closes, start=date(2025, 1, 1), skip=()):
-    closes = [float(c) for c in closes]
-    rows = [(start + timedelta(days=i), c) for i, c in enumerate(closes) if i not in skip]
-    return pl.DataFrame({
-        "Date": [d for d, _ in rows], "Open": [c for _, c in rows], "High": [c + 1 for _, c in rows],
-        "Low": [c - 1 for _, c in rows], "Close": [c for _, c in rows], "Volume": [1.0] * len(rows),
-    })
 
 
 def _walk(n, seed, drift=0.001):

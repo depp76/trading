@@ -2,22 +2,14 @@
 volatility-target sizing (trend_following.md 3 "v2"), plus v1-equivalence of the defaults."""
 import math
 import unittest
-from datetime import date, timedelta
 
 import numpy as np
 import polars as pl
 
 from strategy.trend_following import TrendFollowingConfig, donchian_signal, run_backtest
+from tests.strategy.trend_following.frames import make_frame as _frame
 
 
-def _frame(closes, highs=None, lows=None, start=date(2025, 1, 1)):
-    closes = [float(c) for c in closes]
-    n = len(closes)
-    highs = highs or [c + 1.0 for c in closes]
-    lows = lows or [c - 1.0 for c in closes]
-    dates = [start + timedelta(days=i) for i in range(n)]
-    return pl.DataFrame({"Date": dates, "Open": closes, "High": highs, "Low": lows,
-                         "Close": closes, "Volume": [1.0] * n})
 
 
 def _random_walk(n=200, seed=3):

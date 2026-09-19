@@ -78,3 +78,97 @@ def build_monthly_rows(all_rows: list):
             "sell_price": 0, "buy_price": 0, "qty": 0, "sell_qty": 0, "days_held": 0, "curr_days": 0,
         }))
     return rows
+
+
+def _parse_ymd(s, cache: dict):
+    """Parse a 'YYYY-MM-DD...' string (memoised); None for blank or malformed."""
+    if not s:
+        return None
+    if s not in cache:
+        try:
+            cache[s] = _dt.datetime.strptime(s[:10], "%Y-%m-%d").date()
+        except Exception:
+            cache[s] = None
+    return cache[s]
+
+
+def summarize_positions(open_data: list, closed_data: list, *, deposit: float,
+                        withdrawal: float, principal: float, today=None) -> dict:
+    """Aggregate the Trading History positions for the dashboard cards.
+
+    Mutates the records in place the same way the tab used to:
+      * every record gets `curr_days` (days since sell for closed rows, days
+        held for open rows);
+      * open records get `curr_pl` / `curr_pl_pct` from `curr_price * qty`
+        (zero while no price has arrived), plus `position_w` (evaluation
+        weight in total invested capital) and `curr_pct_pl`;
+      * closed records get `position_w = curr_pct_pl = 0`.
+
+    Returns a dict with the KR / US / total cost, evaluation, P/L and P/L %
+    figures, the total asset value and its P/L versus `principal`, and the
+    deposit ratio. Pure function (no Qt) so it is unit-testable; the tab only
+    renders the result.
+    """
+    from data.cache import is_us_market
+
+    today = today or _dt.date.today()
+    date_cache: dict = {}
+    for r in closed_data + open_data:
+        sell_dt = _parse_ymd(r.get("sell_date", ""), date_cache)
+        if sell_dt:
+            r["curr_days"] = (today - sell_dt).days
+        else:
+            buy_dt = _parse_ymd(r.get("buy_date", ""), date_cache)
+            if buy_dt:
+                r["curr_days"] = (today - buy_dt).days
+
+    kr_cost = kr_eval = us_cost = us_eval = 0.0
+    for r in open_data:
+        buy_amt = r.get("buy_amount", 0.0)
+        qty = r.get("qty", 0.0)
+        price = r.get("curr_price", 0.0)
+        if price > 0 and qty > 0:
+            eval_val = price * qty
+            r["curr_pl"] = eval_val - buy_amt
+            r["curr_pl_pct"] = (r["curr_pl"] / buy_amt * 100) if buy_amt else 0.0
+        else:
+            eval_val = buy_amt          # no quote yet: carry at cost
+            r["curr_pl"] = 0.0
+            r["curr_pl_pct"] = 0.0
+        if is_us_market(r.get("market", "")):
+            us_cost += buy_amt
+            us_eval += eval_val
+        else:
+            kr_cost += buy_amt
+            kr_eval += eval_val
+
+    cost_total = kr_cost + us_cost
+    eval_total = kr_eval + us_eval
+
+    def _pct(num, den):
+        return (num / den * 100) if den else 0.0
+
+    total = eval_total + deposit + withdrawal
+    total_pl = total - principal
+    total_invest = total - withdrawal
+
+    for r in open_data:
+        qty = r.get("qty", 0.0)
+        price = r.get("curr_price", 0.0)
+        ev = (price * qty) if price > 0 and qty > 0 else r.get("buy_amount", 0.0)
+        r["position_w"] = _pct(ev, total_invest) if total_invest > 0 else 0.0
+        r["curr_pct_pl"] = r["curr_pl_pct"] * (r["position_w"] / 100.0) if r["position_w"] else 0.0
+    for r in closed_data:
+        r["position_w"] = 0.0
+        r["curr_pct_pl"] = 0.0
+
+    return {
+        "kr_cost": kr_cost, "kr_pl": kr_eval - kr_cost, "kr_pl_pct": _pct(kr_eval - kr_cost, kr_cost),
+        "us_cost": us_cost, "us_pl": us_eval - us_cost, "us_pl_pct": _pct(us_eval - us_cost, us_cost),
+        "cost_total": cost_total, "eval_total": eval_total,
+        "pos_pl": eval_total - cost_total, "pos_pl_pct": _pct(eval_total - cost_total, cost_total),
+        "total": total, "total_pl": total_pl,
+        "total_pl_pct": _pct(total_pl, principal) if principal > 0 else 0.0,
+        "total_invest": total_invest,
+        "deposit_pct": _pct(deposit, total_invest) if total_invest > 0 else 0.0,
+    }
