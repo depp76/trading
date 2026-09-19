@@ -26,7 +26,10 @@ from ui.dialogs import TotalAssetsGraphDialog
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, atomic_save_json, safe_load_json, FONT_FAMILY_CSS, ThreadOwnerMixin
+from ui.common import (
+    create_font, atomic_save_json, safe_load_json, FONT_FAMILY_CSS, ThreadOwnerMixin,
+    _ACTION_INSIGHT_COLOR, _ACTION_INSIGHT_HOVER_COLOR,
+)
 
 
 class TradingRecordTab(ThreadOwnerMixin, QWidget):
@@ -88,8 +91,8 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         add_btn.setFont(create_font(10, QFont.Weight.Bold))
         add_btn.setFixedHeight(32)
         add_btn.setStyleSheet(
-            "QPushButton { background:#0078d4; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
-            "QPushButton:hover { background:#005a9e; }"
+            "QPushButton { background:#d35400; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
+            "QPushButton:hover { background:#e67e22; }"
         )
         add_btn.clicked.connect(self._add_record)
 
@@ -106,8 +109,8 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         today_btn.setFont(create_font(10, QFont.Weight.Bold))
         today_btn.setFixedHeight(32)
         today_btn.setStyleSheet(
-            "QPushButton { background:#107c10; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
-            "QPushButton:hover { background:#0b5e0b; }"
+            "QPushButton { background:#6c757d; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
+            "QPushButton:hover { background:#5a6268; }"
         )
         def _select_latest():
             self._date_combo.setCurrentIndex(self._date_combo.count() - 1)
@@ -158,8 +161,8 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         graph_btn.setFont(create_font(10, QFont.Weight.Bold))
         graph_btn.setFixedHeight(32)
         graph_btn.setStyleSheet(
-            "QPushButton { background:#8e44ad; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; " + FONT_FAMILY_CSS + " }"
-            "QPushButton:hover { background:#732d91; }"
+            f"QPushButton {{ background:{_ACTION_INSIGHT_COLOR}; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; {FONT_FAMILY_CSS} }}"
+            f"QPushButton:hover {{ background:{_ACTION_INSIGHT_HOVER_COLOR}; }}"
         )
         graph_btn.clicked.connect(self._show_graph)
         ctrl.addSpacing(6)

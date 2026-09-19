@@ -4,7 +4,6 @@ Split out from: main.py (2026-08-29 feat/3-1-modularize, Phase 4)
 Contains:
   TradingHistoryTab
 """
-import csv
 import logging
 import datetime as _dt
 
@@ -12,7 +11,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QTableWidget, QTableWidgetItem, QLineEdit, QPushButton,
     QLabel, QHeaderView, QComboBox, QMessageBox, QDialog, QFrame,
-    QInputDialog, QFileDialog,
+    QInputDialog,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt6.QtGui import QColor, QFont
@@ -22,7 +21,6 @@ from data_fetcher import is_kr_code
 
 from threads.fetch_threads import (
     PositionPriceFetchThread,
-    GeminiDiagnosisThread,
     AccountDepositThread,
     SingleStockFetchThread,
 )
@@ -38,11 +36,13 @@ from ui.dialogs import (
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, _fmt_num_edit, FONT_FAMILY_CSS, ThreadOwnerMixin
+from ui.common import (
+    create_font, _fmt_num_edit, FONT_FAMILY_CSS, ThreadOwnerMixin,
+    _ACTION_INSIGHT_COLOR, _ACTION_INSIGHT_HOVER_COLOR,
+)
 from ui.history_calc import compute_pl_fields, build_monthly_rows, summarize_positions
 from ui.history_table import fill_table_rows, SectionTable, SECTIONS
 from ui.dialogs.holdings_summary import show_holdings_summary
-from ui.dialogs.ai_diagnosis import show_ai_diagnosis_result
 
 
 # ── Dashboard card styling / widget factories for TradingHistoryTab._build_ui ──
@@ -95,14 +95,14 @@ def _btn_style(bg: str, hover: str) -> str:
 
 
 _BTN_BLUE = _btn_style("#0078d4", "#005a9e")
-_BTN_GREEN = _btn_style("#107c10", "#0b5e0b")
 _BTN_ORANGE = _btn_style("#d35400", "#e67e22")
-_BTN_PURPLE = _btn_style("#6c3483", "#9b59b6")
 _BTN_GREY = _btn_style("#6c757d", "#5a6268")
-_BTN_DEEP_BLUE = _btn_style("#0a3d62", "#1e5799")
-_BTN_NAVY = ("QPushButton { background:#1a5276; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; }"
-             " QPushButton:checked { background:#2874a6; border:2px solid #85c1e9; }"
-             " QPushButton:hover:!checked { background:#21618c; }")
+_BTN_INSIGHT = _btn_style(_ACTION_INSIGHT_COLOR, _ACTION_INSIGHT_HOVER_COLOR)
+# Checkable toggle (roadmap 7-4c: was navy = _ACTION_PORTFOLIO_COLOR, reassigned to grey
+# since "Sort by Date" is a secondary-utility toggle, not a Strategy-tab backtest action).
+_BTN_GREY_CHECKABLE = ("QPushButton { background:#6c757d; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; }"
+                       " QPushButton:checked { background:#495057; border:2px solid #adb5bd; }"
+                       " QPushButton:hover:!checked { background:#5a6268; }")
 
 
 def _create_card(title_text: str) -> tuple:
@@ -198,23 +198,12 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         "20D",        # 20 - 
     ]
 
-    # Section spans: (label, start_col, span)  - kept for reference only
-    _SECTIONS = [
-        ("Trading",  0, 3),
-        ("Buy",      3, 4),
-        ("Sell",     7, 7),
-        ("Position", 14, 4),
-        ("Past",     18, 3),
-    ]
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._closed_data  = []
         self._open_data    = []
         self._current_path = ""
         self._price_thread: QThread | None = None
-        self._ai_diagnosis_thread = None
-        self._ai_diagnosis_loading_dlg = None
         self._deposit_thread = None
         self._row_data: list = []   # (kind, rec) per visible table row
         self._settings = QSettings("PortfolioManagement", "PortfolioManagement")
@@ -360,7 +349,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
 
         # Row 1, cols 6-9: data buttons + KIS deposit status
         self._fetch_dep_btn = _styled_button("🔄 Fetch", _BTN_BLUE, self._fetch_account_deposit)
-        reload_btn = _styled_button("🔄 Reload", _BTN_GREEN, self._reload_current)
+        reload_btn = _styled_button("🔄 Reload", _BTN_BLUE, self._reload_current)
         add_btn = _styled_button("➕ Add Trade", _BTN_ORANGE, self._show_add_trade_dialog)
         self._deposit_status_lbl = QLabel("")
         self._deposit_status_lbl.setStyleSheet("font-size:9pt; color:#107c10; font-weight:bold;")
@@ -384,15 +373,15 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         return edit
 
     def _build_controls_row(self) -> QHBoxLayout:
-        """Summary | Sort by Date | Current Holdings combo | Search | AI Diagnosis | Export"""
+        """Summary | Sort by Date | Current Holdings combo | Search"""
         row = QHBoxLayout()
         row.setSpacing(10)
         row.setContentsMargins(0, 0, 0, 0)
 
-        row.addWidget(_styled_button("Summary", _BTN_PURPLE, self._show_holdings_summary))
+        row.addWidget(_styled_button("Summary", _BTN_INSIGHT, self._show_holdings_summary))
 
         self._sort_by_date = False
-        self._sort_date_btn = _styled_button("Sort by Date", _BTN_NAVY, width=120)
+        self._sort_date_btn = _styled_button("Sort by Date", _BTN_GREY_CHECKABLE, width=120)
         self._sort_date_btn.setCheckable(True)
         self._sort_date_btn.toggled.connect(self._on_sort_date_toggled)
         row.addWidget(self._sort_date_btn)
@@ -413,13 +402,6 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         self._search_stock_pl_edit.returnPressed.connect(self._on_search_stock_pl)
         row.addWidget(self._search_stock_pl_edit)
         row.addWidget(_styled_button("🔍", _BTN_GREY, self._on_search_stock_pl, width=36))
-
-        row.addWidget(_styled_button(
-            "🤖 AI Diagnosis", _BTN_DEEP_BLUE, self._show_ai_diagnosis,
-            tooltip="Analyse portfolio risk, performance, and investment ideas using Gemini AI"))
-        row.addWidget(_styled_button(
-            "📥 Export", _BTN_GREY, self._on_export_clicked,
-            tooltip="Export the currently displayed rows to Excel or CSV"))
         row.addStretch()
         return row
 
@@ -542,9 +524,6 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
 
     def _show_holdings_summary(self):
         show_holdings_summary(self, self._closed_data, self._open_data)
-
-    def _display_ai_diagnosis_result(self, result_text: str):
-        show_ai_diagnosis_result(self, result_text)
 
     def _save_overrides(self):
         """Persist all currently edited/overridden records back to the DB."""
@@ -969,71 +948,6 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         self._open_stocks_combo.setCurrentIndex(0)
         self._open_stocks_combo.blockSignals(False)
 
-    def _show_ai_diagnosis(self):
-        """Show an AI-powered portfolio diagnosis dialog using Gemini API."""
-        if self._ai_diagnosis_thread is not None and self._ai_diagnosis_thread.isRunning():
-            return
-
-        # Show non-blocking loading dialog while the API is called in background thread
-        loading_dlg = QDialog(self)
-        loading_dlg.setWindowTitle("🤖 AI Portfolio Diagnosis")
-        loading_dlg.setModal(True)
-        loading_dlg.resize(400, 110)
-        loading_layout = QVBoxLayout(loading_dlg)
-        loading_layout.setContentsMargins(16, 14, 16, 14)
-        loading_layout.setSpacing(12)
-
-        loading_lbl = QLabel("⏳ Analysing your portfolio with Gemini AI…\nPlease wait.")
-        loading_lbl.setFont(create_font(10, style_name="Semilight"))
-        loading_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        loading_layout.addWidget(loading_lbl)
-
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setFixedWidth(80)
-        cancel_btn.setStyleSheet(
-            "QPushButton { background:#888; color:white; border-radius:4px; padding:3px 8px; }"
-            "QPushButton:hover { background:#666; }"
-        )
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        btn_layout.addWidget(cancel_btn)
-        loading_layout.addLayout(btn_layout)
-
-        # Stashed on self (not captured in a closure) so the finished-signal handler and the
-        # Cancel button can be bound methods — connecting QThread.finished to a plain closure
-        # defeats Qt's automatic cross-thread queuing (it can only detect thread affinity via
-        # a QObject receiver), so the slot would otherwise run on the worker thread.
-        self._ai_diagnosis_loading_dlg = loading_dlg
-        self._track_thread(GeminiDiagnosisThread(self._open_data, self._closed_data), '_ai_diagnosis_thread')
-        self._ai_diagnosis_thread.finished.connect(self._on_ai_diagnosis_finished)
-        cancel_btn.clicked.connect(self._cancel_ai_diagnosis)
-        self._ai_diagnosis_thread.start()
-        loading_dlg.exec()
-
-    def _on_ai_diagnosis_finished(self, result_text: str, err: str):
-        loading_dlg = self._ai_diagnosis_loading_dlg
-        if loading_dlg is None or not loading_dlg.isVisible():
-            return
-        loading_dlg.close()
-        if err:
-            final_text = f"⚠️ AI analysis error:\n{err}"
-        else:
-            final_text = result_text
-        self._display_ai_diagnosis_result(final_text)
-
-    def _cancel_ai_diagnosis(self):
-        """Cancel button handler: actually stops the background Gemini call instead of just
-        hiding the loading dialog, since GeminiDiagnosisThread has no cooperative cancellation
-        (the Gemini HTTP call is blocking) — terminate() mirrors the same forced-stop escape
-        hatch MainWindow.closeEvent already uses for stuck threads."""
-        thread = self._ai_diagnosis_thread
-        if thread is not None and thread.isRunning():
-            thread.terminate()
-            thread.wait(500)
-        loading_dlg = getattr(self, "_ai_diagnosis_loading_dlg", None)
-        if loading_dlg is not None:
-            loading_dlg.reject()
-
     # ---Filter / refresh ---
     def _apply_filter(self, *_):
         closed_rows = [("closed", r) for r in self._closed_data]
@@ -1067,69 +981,6 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         self._update_open_stocks_combo()
         self._fit_columns()
         tbl.scrollToBottom()
-
-    # ---Export (review.md 2-2) ---
-    def _export_headers(self) -> list[str]:
-        """Column headers for export, derived from _SECTIONS/_COLS so they can't
-        drift out of sync with the table -- repeated sub-labels (Date/Price/Q'ty/
-        Amount/Days/P&L/P&L%) get their section name prefixed so the exported
-        file's headers are unambiguous even though the on-screen grouped header
-        only shows the section name once."""
-        headers = []
-        for label, start, span in self._SECTIONS:
-            for i in range(start, start + span):
-                col_name = self._COLS[i]
-                headers.append(col_name if label == "Trading" else f"{label} {col_name}")
-        return headers
-
-    def _on_export_clicked(self):
-        if self._table.rowCount() == 0:
-            QMessageBox.information(self, "Export", "No data to export.")
-            return
-
-        default_name = f"trading_history_{_dt.date.today().strftime('%Y%m%d')}.xlsx"
-        path, selected_filter = QFileDialog.getSaveFileName(
-            self, "Export Trading History", default_name,
-            "Excel Workbook (*.xlsx);;CSV File (*.csv)",
-        )
-        if not path:
-            return
-
-        want_csv = "csv" in selected_filter.lower() or path.lower().endswith(".csv")
-        if want_csv and not path.lower().endswith(".csv"):
-            path += ".csv"
-        elif not want_csv and not path.lower().endswith(".xlsx"):
-            path += ".xlsx"
-
-        headers = self._export_headers()
-        rows = []
-        for r in range(self._table.rowCount()):
-            rows.append([
-                (self._table.item(r, c).text() if self._table.item(r, c) else "")
-                for c in range(self._table.columnCount())
-            ])
-
-        try:
-            if want_csv:
-                with open(path, "w", newline="", encoding="utf-8-sig") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(headers)
-                    writer.writerows(rows)
-            else:
-                from openpyxl import Workbook
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "Trading History"
-                ws.append(headers)
-                for row in rows:
-                    ws.append(row)
-                wb.save(path)
-        except Exception as e:
-            logger.warning("Trading history export failed: %s", e, exc_info=True)
-            QMessageBox.warning(self, "Export Error", f"Failed to export:\n{e}")
-            return
-
-        self.status_message.emit(f"Exported {len(rows)} row(s) to {path}")
 
     # ---Buy/Sell cell double-click edit ---
     # Editable columns: Buy(3=Date, 4=Price, 5=Qty, 6=Amount), Sell(8=Date, 10=Price, 11=Qty, 12=Amount)

@@ -1,5 +1,5 @@
 """ui/dialogs/stock_report.py — Gemini per-stock AI report popup (roadmap 2-1,
-review.md 2-1). Mirrors ai_diagnosis.py's structure for the portfolio-level report."""
+review.md 2-1)."""
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit
 from PyQt6.QtGui import QFont
 

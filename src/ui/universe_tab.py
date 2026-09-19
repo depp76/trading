@@ -2,8 +2,8 @@
 
 Split out from: main.py MainWindow (2026-08-29 feat/3-1-modularize, Phase 5)
 Contains:
-  UniverseTab — "Trading Universe" tab: watchlist table, ticker add/search/AI
-  filter controls, and all market-data-refresh orchestration that used to
+  UniverseTab — "Trading Universe" tab: watchlist table, ticker add/search
+  controls, and all market-data-refresh orchestration that used to
   live directly on MainWindow.
 
 Cross-tab communication (mirrors the TradingHistoryTab pattern from Phase 4):
@@ -28,7 +28,7 @@ from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
-    QPushButton, QMessageBox, QDialog,
+    QPushButton, QMessageBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
@@ -39,7 +39,6 @@ from threads.fetch_threads import (
     AllDataFetchThread,
     UniverseLightweightFetchThread,
     StockMaThread,
-    GeminiFilterThread,
     GeminiStockReportThread,
 )
 from ui.widgets import StockTable
@@ -59,7 +58,7 @@ from ui.common import (
 
 
 class UniverseTab(ThreadOwnerMixin, QWidget):
-    """Trading Universe tab: watchlist table + ticker add/search/AI filter controls."""
+    """Trading Universe tab: watchlist table + ticker add/search controls."""
 
     status_text_changed = pyqtSignal(str)  # -> MainWindow's shared status_label
     sync_time_changed = pyqtSignal(str)    # -> MainWindow's shared update_time_label
@@ -71,10 +70,6 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         super().__init__(parent)
         self.all_data = []
         self.market_status = {}
-        self._ai_filter_thread = None
-        self._ai_filter_dlg = None
-        self._ai_filter_status_lbl = None
-        self._ai_filter_set_busy = None
         self._open_dialogs: list = []
         self._build_ui()
         self.load_custom_settings()
@@ -137,20 +132,6 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
         self.search_input.setFixedWidth(260)
         self.search_input.textChanged.connect(self.filter_table)
         add_layout.addWidget(self.search_input)
-
-        self.ai_filter_btn = QPushButton("🤖 AI Filter")
-        self.ai_filter_btn.setFont(create_font(10, style_name="Semilight"))
-        self.ai_filter_btn.setFixedWidth(90)
-        self.ai_filter_btn.setFixedHeight(28)
-        self.ai_filter_btn.setToolTip("Filter stocks using natural language\nExample: KOSPI stocks with RSI below 30 and high volume")
-        self.ai_filter_btn.setStyleSheet(
-            "QPushButton { background:#0a3d62; color:white; border-radius:4px; padding:2px 6px; font-size:9pt; }"
-            "QPushButton:hover { background:#1e5799; }"
-        )
-        self.ai_filter_btn.clicked.connect(self._show_ai_filter_dialog)
-        add_layout.addWidget(self.ai_filter_btn)
-
-        add_layout.addSpacing(16)
 
         self.tg_filter_btn = QPushButton("Target List")
         self.tg_filter_btn.setFont(create_font(10, style_name="Semilight"))
@@ -352,145 +333,6 @@ class UniverseTab(ThreadOwnerMixin, QWidget):
             text = self.search_input.text()
         tg_only = getattr(self, 'tg_filter_btn', None) is not None and self.tg_filter_btn.isChecked()
         self.table.apply_col_filters(text, tg_only=tg_only)
-
-    def _show_ai_filter_dialog(self):
-        """Open a dialog to input a natural-language filter query, call Gemini, and apply conditions."""
-        dlg = QDialog(self)
-        dlg.setWindowTitle("🤖 AI Natural Language Filter")
-        dlg.resize(500, 220)
-        v = QVBoxLayout(dlg)
-        v.setContentsMargins(16, 14, 16, 14)
-        v.setSpacing(10)
-
-        title_lbl = QLabel("Enter stock filter conditions in natural language")
-        title_lbl.setFont(create_font(11, QFont.Weight.Bold))
-        title_lbl.setStyleSheet("color:#0a3d62;")
-        v.addWidget(title_lbl)
-
-        example_lbl = QLabel(
-            "Example: <i>KOSPI stocks with MA20 divergence below 95%</i><br>"
-            "<i>Stocks with PER below 15 and market cap over 1 trillion KRW</i>"
-        )
-        example_lbl.setTextFormat(Qt.TextFormat.RichText)
-        example_lbl.setFont(create_font(9, style_name="Semilight"))
-        example_lbl.setStyleSheet("color:#555;")
-        v.addWidget(example_lbl)
-
-        query_edit = QLineEdit()
-        query_edit.setFont(create_font(10, style_name="Semilight"))
-        query_edit.setPlaceholderText("Enter filter conditions in Korean or English...")
-        query_edit.setFixedHeight(32)
-        v.addWidget(query_edit)
-
-        # Status label
-        status_lbl = QLabel("")
-        status_lbl.setFont(create_font(9, style_name="Semilight"))
-        status_lbl.setStyleSheet("color:#107c10;")
-        v.addWidget(status_lbl)
-
-        btn_row = QHBoxLayout()
-
-        clear_btn = QPushButton("Reset Filter")
-        clear_btn.setFixedWidth(100)
-        clear_btn.setStyleSheet(
-            "QPushButton { background:#888; color:white; border-radius:4px; padding:3px 8px; }"
-            "QPushButton:hover { background:#666; }"
-        )
-
-        apply_btn = QPushButton("✅ Apply")
-        apply_btn.setDefault(True)
-        apply_btn.setFixedWidth(80)
-        apply_btn.setStyleSheet(
-            "QPushButton { background:#0078d4; color:white; border-radius:4px; padding:3px 8px; }"
-            "QPushButton:hover { background:#005a9e; }"
-        )
-
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setFixedWidth(60)
-        cancel_btn.clicked.connect(dlg.reject)
-
-        btn_row.addWidget(clear_btn)
-        btn_row.addStretch()
-        btn_row.addWidget(cancel_btn)
-        btn_row.addWidget(apply_btn)
-        v.addLayout(btn_row)
-
-        def _set_ui_busy(busy: bool):
-            apply_btn.setEnabled(not busy)
-            clear_btn.setEnabled(not busy)
-            query_edit.setEnabled(not busy)
-
-        def _do_clear():
-            self.table.clear_ai_filter()
-            self.filter_table()
-            self.ai_filter_btn.setStyleSheet(
-                "QPushButton { background:#0a3d62; color:white; border-radius:4px; padding:2px 6px; font-size:9pt; }"
-                "QPushButton:hover { background:#1e5799; }"
-            )
-            dlg.accept()
-
-        def _do_apply():
-            nl_query = query_edit.text().strip()
-            if not nl_query:
-                return
-            if self._ai_filter_thread is not None and self._ai_filter_thread.isRunning():
-                return
-            status_lbl.setStyleSheet("color:#0078d4;")
-            status_lbl.setText("⏳ AI is analysing conditions…")
-            _set_ui_busy(True)
-
-            # Stash the dialog/widgets this run needs so the finished-signal handler can be a
-            # bound method (self._on_ai_filter_finished) instead of a closure — connecting a
-            # QThread.finished signal to a plain closure defeats Qt's automatic cross-thread
-            # queuing (it can only detect thread affinity via a QObject receiver), so the slot
-            # would otherwise run on the worker thread and touch these widgets unsafely.
-            self._ai_filter_dlg = dlg
-            self._ai_filter_status_lbl = status_lbl
-            self._ai_filter_set_busy = _set_ui_busy
-
-            self._ai_filter_thread = self._track_thread(GeminiFilterThread(nl_query))
-            self._ai_filter_thread.finished.connect(self._on_ai_filter_finished)
-            self._ai_filter_thread.start()
-
-        clear_btn.clicked.connect(_do_clear)
-        apply_btn.clicked.connect(_do_apply)
-        query_edit.returnPressed.connect(_do_apply)
-
-        dlg.exec()
-
-    def _on_ai_filter_finished(self, result, err):
-        """Bound-method handler for GeminiFilterThread.finished (see _do_apply's comment
-        in _show_ai_filter_dialog for why this must not be a closure)."""
-        if self._ai_filter_set_busy is not None:
-            self._ai_filter_set_busy(False)
-        dlg = self._ai_filter_dlg
-        status_lbl = self._ai_filter_status_lbl
-        if dlg is None or not dlg.isVisible():
-            return
-
-        if result is None:
-            status_lbl.setStyleSheet("color:#c0392b;")
-            status_lbl.setText(f"⚠️ AI conversion failed: {err or 'Please check API key and network connection.'}")
-            return
-
-        conditions = result.get("conditions", [])
-        text_filter = result.get("text_filter", "")
-        explanation = result.get("explanation", "")
-
-        self.table.set_ai_conditions(conditions)
-        if text_filter:
-            self.search_input.setText(text_filter)
-        self.filter_table()
-
-        # Highlight the AI filter button to indicate an active AI filter
-        self.ai_filter_btn.setStyleSheet(
-            "QPushButton { background:#107c10; color:white; border-radius:4px; padding:2px 6px; font-size:9pt; font-weight:bold; }"
-            "QPushButton:hover { background:#0b5e0b; }"
-        )
-
-        # Show explanation in status bar
-        self.status_text_changed.emit(f"🤖 AI filter applied: {explanation}")
-        dlg.accept()
 
     # ---Per-stock MA (20 + 60) ---
     def _populate_action_buttons(self):

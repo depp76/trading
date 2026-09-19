@@ -53,11 +53,9 @@ from ui.assets_tab import TradingRecordTab
 # --- Phase 5: split out to ui/universe_tab.py ---
 from ui.universe_tab import UniverseTab
 
-# --- rebalance.md 3-1: weekly rebalance signal tab ---
-from ui.auto_trading_tab import AutoTradingTab
-
-# --- trend_following.md 4: Donchian breakout backtest tab ---
-from ui.trend_following_tab import TrendFollowingTab
+# --- roadmap 7-1: Auto Trading + Trend Following (+ future MA Cross) sub-tabs
+# behind a shared "Today's Signals" summary bar ---
+from ui.strategy_tab import StrategyTab
 
 
 class MainWindow(QMainWindow):
@@ -111,16 +109,12 @@ class MainWindow(QMainWindow):
         self.trading_record_tab = TradingRecordTab()
         self.tabs.addTab(self.trading_record_tab, "Total Assets")
 
-        # 5. Auto Trading Tab (rebalance.md 3-1 weekly rebalance signals) —
-        # reads self.universe_tab.all_data on demand (see ui/auto_trading_tab.py
-        # docstring for why this is a direct reference rather than a signal).
-        self.auto_trading_tab = AutoTradingTab(self.universe_tab)
-        self.tabs.addTab(self.auto_trading_tab, "Auto Trading")
-
-        # 6. Trend Following Tab (trend_following.md 4) — same on-demand read of
-        # self.universe_tab.all_data, only to offer watchlist tickers in a combo.
-        self.trend_following_tab = TrendFollowingTab(self.universe_tab)
-        self.tabs.addTab(self.trend_following_tab, "Trend Following")
+        # 5. Strategy Tab (roadmap 7-1) — Auto Trading (rebalance.md 3-1) and Trend
+        # Following (trend_following.md 4) sub-tabs behind a shared summary bar; same
+        # on-demand read of self.universe_tab.all_data the two sub-tabs used directly
+        # before this split (see ui/strategy_tab.py docstring).
+        self.strategy_tab = StrategyTab(self.universe_tab)
+        self.tabs.addTab(self.strategy_tab, "Strategy")
 
         self.trading_history_tab.total_asset_updated.connect(self.trading_record_tab.update_live_asset)
         self.trading_history_tab.status_message.connect(self._on_thread_status_message)
@@ -227,11 +221,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'trading_record_tab'):
             threads_to_stop.extend(self.trading_record_tab.collect_threads_to_stop())
 
-        if hasattr(self, 'auto_trading_tab'):
-            threads_to_stop.extend(self.auto_trading_tab.collect_threads_to_stop())
-
-        if hasattr(self, 'trend_following_tab'):
-            threads_to_stop.extend(self.trend_following_tab.collect_threads_to_stop())
+        if hasattr(self, 'strategy_tab'):
+            threads_to_stop.extend(self.strategy_tab.collect_threads_to_stop())
 
         for t in threads_to_stop:
             try:

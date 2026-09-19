@@ -6,8 +6,8 @@ Contains:
   SingleStockFetchThread, AllDataFetchThread,
   UniverseLightweightFetchThread, PositionPriceFetchThread,
   AutoBackupThread, RebalanceBacktestThread, TrendFollowingBacktestThread,
-  TrendFollowingPortfolioThread,
-  GeminiFilterThread, GeminiDiagnosisThread, AccountDepositThread
+  TrendFollowingPortfolioThread, StrategySummaryThread,
+  AccountDepositThread
 """
 import os
 import shutil
@@ -779,48 +779,73 @@ class TrendFollowingPortfolioThread(QThread):
 
 
 # ---------------------------------------------------------------------------
+# StrategyTab top summary bar thread (roadmap 7-1)
+# ---------------------------------------------------------------------------
+class StrategySummaryThread(QThread):
+    """Background thread for StrategyTab's "Today's Signals" bar: the rebalance
+    buy/sell candidate counts (strategy.rebalance.compute_weekly_rebalance_signals,
+    cheap -- reuses the Trading Universe's already-fetched in-memory data, no
+    network) plus, for a market-cap-capped subset of watchlist tickers, whether
+    strategy.trend_following.run_backtest_for_ticker() currently holds a position
+    (one get_historical_data() call per ticker; cached after the first run, but
+    still the reason this always runs off the UI thread -- see roadmap 7-1's
+    open issue on bounding this cost)."""
+    finished = pyqtSignal(dict, str)  # result dict ({} on failure), error message ("" on success)
+
+    def __init__(self, universe_data: list, current_holdings: set, top_n_by_market: dict,
+                 band_multiplier: float, tf_tickers: list, tf_start: str):
+        super().__init__()
+        self.universe_data = universe_data
+        self.current_holdings = current_holdings
+        self.top_n_by_market = top_n_by_market
+        self.band_multiplier = band_multiplier
+        self.tf_tickers = tf_tickers
+        self.tf_start = tf_start
+
+    def run(self):
+        from strategy.rebalance import compute_weekly_rebalance_signals
+        from strategy.trend_following import run_backtest_for_ticker
+        try:
+            rebalance = compute_weekly_rebalance_signals(
+                self.universe_data,
+                current_holdings=self.current_holdings,
+                top_n_by_market=self.top_n_by_market,
+                band_multiplier=self.band_multiplier,
+            )
+            in_position = flat = errors = 0
+            for ticker in self.tf_tickers:
+                try:
+                    res = run_backtest_for_ticker(ticker, self.tf_start)
+                    if res.get("error"):
+                        errors += 1
+                        continue
+                    sig = res["signals"]
+                    is_in_position = bool(sig["position"][-1]) if sig.height else False
+                except Exception:
+                    logger.warning("Strategy summary: trend-following check failed for %s", ticker, exc_info=True)
+                    errors += 1
+                    continue
+                if is_in_position:
+                    in_position += 1
+                else:
+                    flat += 1
+            result = {
+                "buy_count": len(rebalance.get("buy_candidates", [])),
+                "sell_count": len(rebalance.get("sell_candidates", [])),
+                "tf_in_position": in_position,
+                "tf_flat": flat,
+                "tf_errors": errors,
+                "tf_total": len(self.tf_tickers),
+            }
+            self.finished.emit(result, "")
+        except Exception as e:
+            logger.warning("Strategy summary computation failed", exc_info=True)
+            self.finished.emit({}, str(e))
+
+
+# ---------------------------------------------------------------------------
 # Gemini AI Background Threads
 # ---------------------------------------------------------------------------
-class GeminiFilterThread(QThread):
-    """Background thread to convert natural language query into filter conditions via Gemini."""
-    finished = pyqtSignal(object, str)  # result dict | None, error_message ("" on success)
-
-    def __init__(self, nl_query: str):
-        super().__init__()
-        self.nl_query = nl_query
-
-    def run(self):
-        try:
-            import gemini_helper
-            result = gemini_helper.nl_to_filter(self.nl_query)
-            if result is None:
-                self.finished.emit(None, "AI conversion failed or returned empty result.")
-            else:
-                self.finished.emit(result, "")
-        except Exception as e:
-            logger.warning("Gemini filter query failed", exc_info=True)
-            self.finished.emit(None, str(e))
-
-
-class GeminiDiagnosisThread(QThread):
-    """Background thread to perform AI portfolio diagnosis via Gemini."""
-    finished = pyqtSignal(str, str)  # result_text, error_message ("" on success)
-
-    def __init__(self, open_data: list, closed_data: list):
-        super().__init__()
-        self.open_data = open_data
-        self.closed_data = closed_data
-
-    def run(self):
-        try:
-            import gemini_helper
-            result_text = gemini_helper.portfolio_diagnosis(self.open_data, self.closed_data)
-            self.finished.emit(result_text, "")
-        except Exception as e:
-            logger.warning("Gemini portfolio diagnosis failed", exc_info=True)
-            self.finished.emit("", str(e))
-
-
 class GeminiStockReportThread(QThread):
     """Background thread for the per-stock AI report (roadmap 2-1, review.md 2-1)."""
     finished = pyqtSignal(str, str, str, str)  # ticker, name, result_text, error_message ("" on success)

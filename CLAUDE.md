@@ -4,13 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio, with five tabs:
-"Trading Universe" (KOSPI/KOSDAQ watchlist with live prices and indicators; the US market
-code paths still exist but are commented out in the UI), "Trading History" (manually-entered
-trade log backed by SQLite), "Total Assets" (weekly asset snapshots vs. KOSPI and USD), and
-"Auto Trading" (weekly factor-scoring rebalance signals plus a walk-forward backtest), and
-"Trend Following" (Donchian channel breakout backtest for one ticker). The strategy tabs are
-signal generation and research only; nothing places orders.
+A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio, with four
+top-level tabs: "Trading Universe" (KOSPI/KOSDAQ watchlist with live prices and indicators;
+the US market code paths still exist but are commented out in the UI), "Trading History"
+(manually-entered trade log backed by SQLite), "Total Assets" (weekly asset snapshots vs.
+KOSPI and USD), and "Strategy" (roadmap 7-1) — a `QTabWidget` of sub-tabs behind a shared
+"Today's Signals" summary bar: "Auto Trading" (weekly factor-scoring rebalance signals plus
+a walk-forward backtest), "Trend Following" (Donchian channel breakout backtest for one
+ticker or a multi-ticker portfolio), and a "MA Cross" placeholder (spec exists, no UI yet).
+The strategy sub-tabs are signal generation and research only; nothing places orders.
 
 The repo is a git repository (branch `master`). Commit or branch as usual; the old
 `archive/backup_<timestamp>/` copy-before-editing convention is no longer needed.
@@ -57,27 +59,31 @@ Dev tooling is in `requirements-dev.txt`
   Update" checkbox starts and stops it and everything downstream), the app stylesheet, and
   logging setup (root INFO; `app.log` gets INFO and above, the console WARNING and above).
 - **`src/ui/`**: `universe_tab.py` (`UniverseTab`), `history_tab.py` (`TradingHistoryTab`),
-  `assets_tab.py` (`TradingRecordTab`), `auto_trading_tab.py` (`AutoTradingTab`),
-  `trend_following_tab.py` (`TrendFollowingTab`),
+  `assets_tab.py` (`TradingRecordTab`), `strategy_tab.py` (`StrategyTab`, roadmap 7-1 — the
+  "Strategy" top-level tab: a `QTabWidget` hosting `auto_trading_tab.py` (`AutoTradingTab`),
+  `trend_following_tab.py` (`TrendFollowingTab`), and a `MA Cross` placeholder, behind a
+  "Today's Signals" summary bar driven by `threads.fetch_threads.StrategySummaryThread`),
   `widgets.py` (`StockTable`, `FilterPopup`, `GroupedHeaderView`), `dialogs/` (one module per
   dialog group: `index_ma`, `stock_ma`, `trade_edit`, `trade_history`, `assets_graph`,
   `backtest_result`, `trend_following_chart`, `trend_following_portfolio`, `holdings_summary`,
-  `ai_diagnosis`, `stock_report`; import from
+  `stock_report`; import from
   `ui.dialogs`),
   `history_table.py` (cell factories, `fill_table_rows`, `SectionTable` + the column
   `SECTIONS` for the history grid), `history_calc.py` (pure P/L maths, no Qt:
   `compute_pl_fields`, `build_monthly_rows`, `summarize_positions`), `common.py`
-  (`create_font`, `FONT_FAMILY_CSS`, input validators, `atomic_save_json` /
+  (`create_font`, `FONT_FAMILY_CSS`, `action_button_style` + role/status color constants,
+  input validators, `atomic_save_json` /
   `safe_load_json`, `retire_thread`, `ThreadOwnerMixin`). Tabs never
   reference each other
   directly; `MainWindow` connects their signals (`status_message`, `refresh_started`,
-  `auto_lightweight_tick`, `total_asset_updated`). The one exception is `AutoTradingTab`,
-  which reads `UniverseTab.all_data` on demand (`TrendFollowingTab` does the same, only
-  to list watchlist tickers).
+  `auto_lightweight_tick`, `total_asset_updated`). The one exception is `AutoTradingTab`
+  and `TrendFollowingTab` (now reached through `StrategyTab` rather than directly from
+  `MainWindow`), which read `UniverseTab.all_data` on demand (`TrendFollowingTab` only to
+  list watchlist tickers).
 - **`src/threads/`**: every network call the UI triggers runs in a `QThread` subclass here
   (`AllDataFetchThread`, `UniverseLightweightFetchThread`, `PositionPriceFetchThread`,
   `RealtimePriceThread`, `StockMaThread`, `AccountDepositThread`, `RebalanceBacktestThread`,
-  `TrendFollowingBacktestThread`, `TrendFollowingPortfolioThread`,
+  `TrendFollowingBacktestThread`, `TrendFollowingPortfolioThread`, `StrategySummaryThread`,
   the Gemini threads, `AutoBackupThread`). Never call `data_fetcher` functions from a slot on
   the UI thread; add a thread class instead. Connect `finished` signals to bound methods,
   not closures, so Qt queues them onto the UI thread; when a slot needs per-request
@@ -127,8 +133,9 @@ Dev tooling is in `requirements-dev.txt`
   back into the record.
 - **`tools/register_secret.py`**: standalone CLI for pushing secrets to Google Cloud Secret
   Manager; unrelated to the app runtime. **`docs/history/`**: dated one-off documents.
-- **`src/gemini_helper.py`**: Gemini calls for the AI filter, portfolio diagnosis, and
-  per-stock report features (`GOOGLE_API_KEY` in `.env`). Prompts were rewritten from
+- **`src/gemini_helper.py`**: Gemini calls for the per-stock AI report feature
+  (`GOOGLE_API_KEY` in `.env`); the AI filter (2026-09-19) and portfolio diagnosis
+  (2026-09-19) features were removed. Prompts were rewritten from
   Korean to English in the 2026-09-18 source-code-wide English-only pass; none of them
   pin a response language anymore, so Gemini's replies are no longer guaranteed Korean
   (previously they explicitly were, for the app's Korean-speaking end user) — revisit if

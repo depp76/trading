@@ -14,6 +14,7 @@
 4. [장기 개선 (3개월+)](#4-장기-개선-3개월)
 5. [우선순위 매트릭스](#5-우선순위-매트릭스)
 6. [코드 분석 기반 개선 항목 (2026-09-17)](#6-코드-분석-기반-개선-항목-2026-09-17)
+7. [UI 개선 항목 (2026-09-19)](#7-ui-개선-항목-2026-09-19)
 
 ---
 
@@ -34,7 +35,7 @@
 - **데이터**: pykrx / FinanceDataReader / yfinance / yahooquery / Naver / KIS(한국투자증권) REST·WebSocket
 - **연산**: polars (내부) → pandas (외부 라이브러리 경계)
 - **DB**: SQLite (WAL 모드), `trade_db.py`
-- **AI**: `google-genai` (`gemini_helper.py`로 포트폴리오 진단·자연어 필터에 실사용 중), `google-cloud-aiplatform` (requirements에 포함, 미사용)
+- **AI**: `google-genai` (`gemini_helper.py`로 포트폴리오 진단·종목 리포트에 실사용 중; 자연어 필터는 2026-09-19 삭제), `google-cloud-aiplatform` (requirements에 포함, 미사용)
 
 ### 소스 코드 구조 (2026-09-19 갱신)
 
@@ -48,7 +49,7 @@ src/
 ├── paths.py                # BASE_DIR 등 경로 상수 (6-1d, cwd 무관)
 ├── data_fetcher.py          # data/·strategy/ 재노출 파사드 (하위 호환용)
 ├── trade_db.py               # SQLite 거래 이력 (portfolio.db, WAL)
-├── gemini_helper.py            # Gemini 기반 포트폴리오 진단 / 자연어 필터
+├── gemini_helper.py            # Gemini 기반 포트폴리오 진단 / 종목 리포트
 ├── data/                        # 순수 데이터 접근 계층
 │   ├── cache.py                   # 전역 캐시/세션 상수
 │   ├── indicators.py               # RSI/MA 등 지표
@@ -65,7 +66,8 @@ src/
 ├── ui/
 │   ├── common.py / widgets.py           # 공용 폰트·위젯 헬퍼
 │   ├── common.py                        # 폰트·검증·JSON I/O·retire_thread·ThreadOwnerMixin
-│   ├── universe_tab.py / history_tab.py / assets_tab.py / auto_trading_tab.py / trend_following_tab.py
+│   ├── universe_tab.py / history_tab.py / assets_tab.py / strategy_tab.py (7-1: Auto
+│   │     Trading·Trend Following 서브탭 + 요약 바) / auto_trading_tab.py / trend_following_tab.py
 │   ├── history_table.py / history_calc.py # History 탭 셀 팩토리·SectionTable / 순수 계산(summarize_positions 등)
 │   └── dialogs/                           # 다이얼로그 11개 (stock_ma.py는 메서드 단위로 재구성)
 ├── threads/                       # fetch_threads.py, realtime.py
@@ -544,6 +546,120 @@ tests/
 
 ---
 
+## 7. UI 개선 항목 (2026-09-19)
+
+> 사용자 요청("현재 SW의 UI를 검토해서 개선점을 도출할 예정")에 따라 코드 기반으로 진행한 UI 리뷰 결과.
+> 이번 1차는 computer-use 스크린샷 없이 `ui/main.py`, `ui/common.py`, `ui/auto_trading_tab.py`,
+> `ui/trend_following_tab.py` 정독만으로 도출했다 — 화면 캡처를 곁들인 2차 리뷰는 필요 시 별도 진행.
+> **상태**: 7-1~7-4 전부 구현 완료(2026-09-19 7차·10차, 변경 이력 참고). computer-use 화면 캡처를
+> 곁들인 2차 리뷰는 필요 시 별도 진행.
+
+### 7-1. Strategy 상위 탭 도입 — ✅ 완료
+
+**구현 (2026-09-19 7차)**: `ui/strategy_tab.py::StrategyTab` 신설 — 내부 `QTabWidget`에
+`AutoTradingTab`/`TrendFollowingTab`을 그대로 재사용해 붙이고, 아직 UI가 없는 `MA Cross`는
+안내 문구만 있는 서브탭으로 자리를 비워둠. 상단 요약 바는 리밸런싱 쪽은
+`compute_weekly_rebalance_signals()`를 그대로 호출(이미 메모리에 있는 Universe 데이터라 네트워크
+없음), 추세추종 쪽은 시가총액 상위 30종목(`_TF_SUMMARY_MAX_TICKERS`)에 대해서만
+`run_backtest_for_ticker()`를 호출해 최종 행의 `position`으로 보유중/관망을 집계(설계 문서의
+"오픈 이슈"에 대한 이번 구현 결정: 전 종목이 아니라 상위 N종목만, 400일 lookback으로 조회 비용
+제한) — 새 `threads/fetch_threads.py::StrategySummaryThread`에서 백그라운드로 실행하고 탭이 처음
+보일 때(`showEvent`) 1회 자동 실행 + "🔄 Refresh Signals" 버튼으로 수동 재계산. `main.py`는 최상위
+탭 5→4개로 축소(`auto_trading_tab`/`trend_following_tab` 직접 참조를 `strategy_tab` 하나로 교체),
+`closeEvent`의 스레드 정리도 `StrategyTab.collect_threads_to_stop()`(내부적으로 두 서브탭의
+`collect_threads_to_stop()`를 합침) 하나로 교체. 오프스크린 스모크 스크립트로 탭 구조·서브탭
+개수·요약 바 텍스트(rebalance/trend-following 함수를 모킹)를 확인. 검증: pytest 220/220, ruff 0건.
+
+| 항목 | 내용 |
+|------|------|
+| 배경 | 최상위 탭 5개(Universe/History/Assets/Auto Trading/Trend Following) 중 마지막 둘은 사실상 "전략 실행 + 백테스트"라는 같은 역할인데 나란히 최상위에 노출됨. `ma_cross`는 아예 탭이 없어 전략 간 노출 수준도 불균등(3-4·6-x와 별개로 이번 리뷰에서 새로 발견) |
+| 결정 | 최상위 탭을 **Universe / History / Assets / Strategy** 4개로 재편. `Auto Trading`·`Trend Following`(추후 `MA Cross`)은 `Strategy` 탭 내부 `QTabWidget` 서브탭으로 이동 |
+| 요약 바 | 서브탭 전환기 **위쪽**에 전체 전략 통합 "오늘의 신호" 요약 바를 상시 노출(사용자 선택: 서브탭별 개별 노출이 아니라 상단 통합 방식). rebalance는 `compute_weekly_rebalance_signals()`의 buy/sell 상위 후보 요약, trend_following은 `donchian_signal()` 마지막 행의 `position`/`entry`/`exit`을 관심종목 전반에 대해 가볍게 계산해 "보유중 N · 관망 M" 형태로 요약(전량 백테스트를 상단 바에서 재실행하지는 않음 — 기존 "Run Backtest"/"Run Portfolio" 버튼과는 별개 경로) |
+| 구현 방향 | 신규 `ui/strategy_tab.py::StrategyTab(QWidget, ThreadOwnerMixin)` — 내부 `QTabWidget`(기존 `AutoTradingTab`/`TrendFollowingTab` 그대로 재사용) + 상단 요약 바 위젯. `main.py`는 최상위 탭 5→4개로 축소하고 `StrategyTab` 하나만 추가. `closeEvent`의 `collect_threads_to_stop` 체인에 `StrategyTab` 경유 단계 추가 |
+| 범위 | `ma_cross`는 아직 UI 자체가 없으므로 이번 1차에서는 서브탭 자리만 비워두거나 "준비 중"으로 표시 — 실제 `MaCrossTab` 구현은 별도 작업으로 분리 |
+| 오픈 이슈 | 요약 바가 관심종목 전체에 대해 매번 신호를 재계산하면 탭 전환마다 지연이 생길 수 있음 — `UniverseTab.all_data` 캐시 재사용 여부·갱신 주기는 구현 시 확정 필요 |
+
+### 7-2. 버튼 색상 중앙화 — ✅ 완료
+
+**구현 (2026-09-19 7차)**: `ui/common.py`에 역할별 상수(`_ACTION_BACKTEST_COLOR/_HOVER`,
+`_ACTION_PORTFOLIO_COLOR/_HOVER`, `_ACTION_VALIDATE_COLOR/_HOVER`, `_STATUS_SUCCESS_COLOR`,
+`_STATUS_FAIL_COLOR`, `_SECONDARY_BUTTON_STYLE`) + `action_button_style(color, hover_color)`
+헬퍼 추가. 세 색상 계열을 하나로 합치지 않고 역할별로 이름만 부여한 이유: Auto Trading·Trend
+Following의 "Run Backtest"는 이미 같은 `#8e44ad`였고(그대로 `_ACTION_BACKTEST_COLOR` 공유),
+"Run Portfolio"/"Validate"는 서로 다른 동작이라 구분 유지가 사용자에게 더 유용. `ui/auto_trading_tab.py`의
+Run Backtest, `ui/trend_following_tab.py`의 Run Backtest/Run Portfolio/Validate/Chart/Use
+Universe/risk-gate 셀 색상을 전부 상수 참조로 교체.
+
+| # | 현재 상태 | 위치 | 조치 |
+|---|-----------|------|------|
+| 7-2a | "실행" 계열 버튼 색이 탭마다 제각각: Auto Trading "Run Backtest" `#8e44ad`, Trend Following "Run Backtest"도 동일 `#8e44ad`이지만 "Run Portfolio"는 `#1a5276`, "Validate (IS/OOS)"는 또 다른 `#6c3483` | `ui/auto_trading_tab.py`, `ui/trend_following_tab.py` | `ui/common.py`에 역할별 색상 상수 신설(예: `_ACTION_BACKTEST_COLOR`=`#8e44ad` 계열로 통일, `_ACTION_PORTFOLIO_COLOR`) 후 각 탭이 상수를 참조하도록 교체 |
+| 7-2b | "Chart", "Use Universe" 버튼은 스타일 지정이 전혀 없어 OS 기본 버튼으로 노출 — 다른 버튼들과 톤이 어긋남 | `ui/trend_following_tab.py` | 보조 액션용 공통 스타일(무채색 계열) 1종을 `ui/common.py`에 추가해 적용 |
+| 7-2c | 상태 표시 색(risk gate PASS `#107c10` / FAIL `#c0392b`)도 인라인으로만 정의되어 있어 다른 곳에서 같은 패턴을 또 하드코딩할 위험 | `ui/trend_following_tab.py` | `_STATUS_SUCCESS_COLOR`/`_STATUS_FAIL_COLOR` 상수화 |
+| 참고 | `_ACCENT_COLOR`(`#0078d4`)/`_ACCENT_HOVER_COLOR`는 앱 전역 QSS 기본 버튼에만 쓰이는 "주 액션" 색으로 유지, 위 상수들은 그 옆에 "보조 액션군" 색상 세트로 추가 | `ui/common.py` | — |
+
+### 7-3. 탭 간 컨트롤 밀도 조정 — ✅ 완료
+
+**구현 (2026-09-19 7차)**: `QGroupBox` 대신 토글 `QPushButton`(체크 가능) + 내용을 담은
+`QWidget`의 `setVisible()`로 구현(`TrendFollowingTab._make_collapsible()`) — `QGroupBox`는
+체크 해제 시에도 프레임·타이틀이 그대로 차지해 실제로 행이 접히지 않는 반면, 이 방식은 기본
+`False`(접힘)일 때 본문 위젯 자체가 숨어 세로 공간을 실제로 돌려준다. v2 오버레이 행·v3
+포트폴리오/검증 행 모두 기본 접힘, 토글 시 화살표(▶/▼)와 라벨 텍스트가 함께 바뀜. 숨겨진
+위젯도 `setValue()`/`text()` 등은 그대로 동작하므로 기존 테스트(`test_trend_following_tab.py`)
+영향 없음.
+
+| 항목 | 내용 |
+|------|------|
+| 현황 | Auto Trading은 2행(신호 계산 버튼+라벨 / 백테스트 lookback 콤보+버튼)인데, Trend Following은 4행(티커·기간 / entry·exit·비용 / v2 오버레이 5종 / v3 포트폴리오+검증 6종)으로 같은 "전략 탭" 레벨에서 복잡도 격차가 큼 |
+| 조치 | v2 오버레이 행과 v3 포트폴리오/검증 행을 접이식 `QGroupBox`(또는 토글 버튼)로 감싸 기본 노출을 1~2행 수준으로 축소. v2는 기본값이 전부 off, v3는 별도 버튼으로 트리거되는 독립 기능이라 접었을 때 기존 워크플로에 영향 없음 |
+| 연계 | 7-1의 `StrategyTab` 재구성과 함께 진행하면 레이아웃을 한 번에 정리할 수 있음 |
+
+### 7-4. History/Assets 탭 버튼 색상 재사용 충돌 (7-2 후속) — ✅ 완료
+
+**구현 (2026-09-19 10차)**: 아래 "제안하는 역할별 재배치" 표를 그대로 적용. `ui/common.py`에
+`_ACTION_INSIGHT_COLOR`/`_ACTION_INSIGHT_HOVER_COLOR`(`#0a3d62`/`#1e5799`, 삭제된 AI Diagnosis
+버튼 색 재활용) 신설 + `_SECONDARY_BUTTON_STYLE`을 `#888`→`#6c757d`로 교체(7-4f). `ui/assets_tab.py`:
+Add Record 파랑→주황(`#d35400`, History Add Trade와 동일 hex), This Week 초록→회색(`#6c757d`),
+Graph 보라(`_ACTION_BACKTEST_COLOR`)→`_ACTION_INSIGHT_COLOR`. `ui/history_tab.py`: Reload
+초록(`_BTN_GREEN`)→파랑(`_BTN_BLUE`, Fetch와 동일 역할), Summary 보라(`_BTN_PURPLE`)→신규
+`_BTN_INSIGHT`(`_ACTION_INSIGHT_COLOR` 참조), Sort by Date 네이비(`_BTN_NAVY` =
+`_ACTION_PORTFOLIO_COLOR`)→신규 체크 가능한 회색 `_BTN_GREY_CHECKABLE`(선택 상태는 더 짙은
+회색 `#495057` + 테두리로 구분, 네이비의 체크/호버 구조는 유지). 이제 안 쓰는
+`_BTN_GREEN`/`_BTN_PURPLE`/`_BTN_NAVY` 제거. Delete Selected(빨강)·Export/검색 아이콘(회색)·
+Trend Following Chart/Use Universe(공용 `_SECONDARY_BUTTON_STYLE`, 색만 자동 반영)는 표 그대로라
+변경 없음. 오프스크린 스모크로 버튼 10개의 실제 `styleSheet()` hex를 표와 대조해 확인. 검증:
+pytest 219/219, ruff 0건.
+
+> 7-2는 Strategy 탭(`ui/auto_trading_tab.py`/`ui/trend_following_tab.py`) 범위로 구현되어
+> `_ACTION_BACKTEST_COLOR`(`#8e44ad`)/`_ACTION_PORTFOLIO_COLOR`(`#1a5276`)/`_ACTION_VALIDATE_COLOR`
+> (`#6c3483`)라는 이름 있는 상수로 정리됐다. 사용자가 제공한 Total Assets/Trading History 탭
+> 스크린샷을 코드(`ui/assets_tab.py`, `ui/history_tab.py`)와 대조해보니, 정확히 같은 hex가
+> 전혀 다른 의미의 버튼에도 쓰이고 있어 — "이 색은 backtest/portfolio/validate를 뜻한다"는
+> 7-2의 명명 규칙과 정면으로 충돌한다. History 탭의 AI Diagnosis/Export 버튼은 이후
+> (2026-09-19 8차)에 삭제되어 아래 목록에서는 제외했다.
+
+| # | 충돌 | 위치 | 문제 |
+|---|------|------|------|
+| 7-4a | Assets "Graph" `#8e44ad` = `_ACTION_BACKTEST_COLOR` | `ui/assets_tab.py` | 자산 그래프 보기(읽기전용)가 "백테스트 실행"과 같은 색 |
+| 7-4b | History "Summary" `#6c3483` = `_ACTION_VALIDATE_COLOR` | `ui/history_tab.py` | 보유 요약 팝업(읽기전용)이 "IS/OOS 검증 실행"과 같은 색 |
+| 7-4c | History "Sort by Date" `#1a5276` = `_ACTION_PORTFOLIO_COLOR` | `ui/history_tab.py` | 정렬 토글이 "포트폴리오 백테스트 실행"과 같은 색 |
+| 7-4d | Assets "This Week" · History "Reload" `#107c10` = `_STATUS_SUCCESS_COLOR` | `ui/assets_tab.py`, `ui/history_tab.py` | 7-2c가 초록을 "상태 표시 전용"으로 명시했는데 액션 버튼 2곳이 여전히 같은 색을 씀 |
+| 7-4e | Assets "Add Record" `#0078d4`(파랑) vs History "Add Trade" `#d35400`(주황) | `ui/assets_tab.py`, `ui/history_tab.py` | 같은 "새 항목 추가" 동작인데 색이 다름 |
+| 7-4f | `_SECONDARY_BUTTON_STYLE`(7-2b 신설, `#888`) vs 기존 Export/검색 버튼 `#6c757d` | `ui/common.py`, `ui/assets_tab.py`, `ui/history_tab.py` | "보조 액션" 역할의 회색이 `#888`/`#6c757d` 두 가지로 갈라짐 |
+
+**제안하는 역할별 재배치** (기존에 이미 쓰이던 값 위주로 재사용, 신규 상수는 `_ACTION_INSIGHT_COLOR` 하나만 추가):
+
+| 역할 | 색상 | 대상 |
+|---|---|---|
+| 데이터 가져오기/새로고침 | 파랑 `#0078d4`(`_ACCENT_COLOR`) | Fetch, Reload(초록 → 파랑) |
+| 전략 실행 (7-2 명명 유지, 탭 범위 한정) | `_ACTION_BACKTEST/PORTFOLIO/VALIDATE_COLOR` | Auto Trading·Trend Following 내부 전용 — 다른 탭에서 재사용 금지 |
+| 인사이트 보기 (읽기전용 팝업/차트) | 신규 `_ACTION_INSIGHT_COLOR` = `#0a3d62`(구 AI Diagnosis 색, 삭제 후 비어 있어 재활용) | Assets "Graph", History "Summary" |
+| 추가/생성 | 주황 `#d35400`(`_BTN_ORANGE`) | History "Add Trade", Assets "Add Record"(파랑 → 주황) |
+| 삭제 | 빨강 `#c0392b` | Assets "Delete Selected" (변경 없음) |
+| 상태 표시 전용 (액션 버튼에 쓰지 않음) | 초록 `_STATUS_SUCCESS_COLOR` / 빨강 `_STATUS_FAIL_COLOR` | risk-gate PASS/FAIL 등 상태 셀만 |
+| 보조 유틸리티 | 회색 `#6c757d`로 통일(`_SECONDARY_BUTTON_STYLE`도 `#888` → `#6c757d`로 교체) | Export, 검색 아이콘, History "Sort by Date"(네이비 → 회색), Assets "This Week"(초록 → 회색), Trend Following "Chart"/"Use Universe" |
+
+---
+
 ## 변경 이력
 
 | 날짜 | 변경 내용 |
@@ -590,3 +706,9 @@ tests/
 | 2026-09-19 (2차) | 구조 재점검 후속 조치 1~2단계. (1) US 마켓 판별 튜플 4곳(`PositionPriceFetchThread` 3곳은 `"S&P500"` 누락, `history_tab._refresh_summary`는 포함)을 `data.cache.is_us_market()` 하나로 통합 — `S&P500` 포지션이 가격 조회에서는 KR로, 요약에서는 US로 분류되던 불일치 해소. (2) `_refresh_summary`의 KR/US/총자산 집계·`curr_days`·비중 계산을 `ui.history_calc.summarize_positions()`(순수 함수)로 분리하고 테스트 5건 추가(총자산 계산은 이전까지 테스트 0건); `_build_ui`에서 항상 만들어지는 위젯에 대한 `hasattr` 방어 코드 제거. (3) 테스트 공백 보강: `data.listing._singleflight_cache`(일 단위 만료·LRU·동시 호출 dedup), `data.frames._to_polars`(문자열 Date 컬럼도 캐스팅하도록 보강), `ui.history_table` 셀 팩토리·`fill_table_rows` 컬럼 배치. `test_phase2.py`를 `test_kis_realtime`/`test_history_bonds`/`test_gemini_threads`/`test_auto_trading_tab`으로 분리, trend_following 테스트 5개 파일의 `_frame` 복사본을 `tests/strategy/trend_following/frames.py`로 통합. pytest 184→214. |
 | 2026-09-19 (3차) | 구조 재점검 후속 조치 3단계(거대 메서드 분할, 동작 불변 검증). (1) `ui/dialogs/stock_ma.py` `StockMaDialog.__init__`(약 890줄, 중첩 함수 16개)을 우측 패널 테이블·축별 플롯·hover·팬/줌/스크롤바·토글 4종 등 25개 메서드로 재구성, 미사용 `diff_fmt` 제거. 오프스크린 특성화 스크립트로 9가지 입력(KR/US 종목, 지수, WTI 선물 커브, VIX, 채권 bp, 데이터 없음, MA 컬럼 누락)에 대해 축·선·범례·테이블·토글 시퀀스·휠 줌·드래그 팬·스크롤바·Y줌 스냅샷을 전후 비교 → 차이 0. (2) `history_tab._build_ui`(380줄)를 `_build_position_card`/`_build_metrics_card`/`_build_metrics_grid`/`_build_controls_row`/`_build_history_table`과 모듈 수준 위젯 팩토리·스타일 상수로 분할, `_SectionTable`을 `ui.history_table.SectionTable`(+`SECTIONS`)로 이동. 레이아웃 트리·위젯 속성·시그널 수신자 수 덤프 전후 비교 → 클래스명 변경 외 차이 0. |
 | 2026-09-19 (4차) | 구조 재점검 후속 조치 4단계(정리). (1) `ui.common.ThreadOwnerMixin` 신설 — 탭마다 손으로 나열하던 `collect_threads_to_stop()`을 `_track_thread()` 등록 기반으로 통일. 기존 목록에서 빠져 있던 Universe 탭의 경량 갱신·AI 필터 스레드, History 탭의 AI 진단 스레드가 종료 시 정리 대상에 포함됨. (2) `QThread.finished`에 람다를 연결하던 4곳(Universe 추가/시작 시 재조회, Universe·Auto Trading MA 차트, History 티커 편집 종목명 조회) 제거 — `SingleStockFetchThread.finished`가 `ticker`, `StockMaThread.finished`가 `market`/`change_mode`를 함께 emit하도록 확장해 슬롯을 바운드 메서드로 전환(CLAUDE.md 규칙 준수). 티커 편집 후 종목명 반영은 해당 티커를 가진 모든 레코드에 적용. (3) `data_fetcher.py` 파사드를 실제 외부 사용 이름 약 30개로 축소(79→30; 내부 캐시 이름 대부분 제거). (4) 잔여 `hasattr(self, …)` 방어 코드 제거, `AGENTS.md`를 `CLAUDE.md` 포인터로 교체(내용 중복·드리프트 방지). 검토 후 유지로 결정한 항목: `MainWindow`의 네이티브 상태바(일시 메시지)와 하단 `status_label`(지속 상태)은 역할이 다름, `main.py`의 `os._exit()`는 `terminate()`된 QThread 안의 ThreadPoolExecutor 워커가 종료를 막는 경우의 안전장치. 미결: 저장소에 추적 중이던 옵시디언 볼트(`Portfolio Management/`)가 작업 트리에서 삭제되고 `obsidian/`으로 옮겨진 상태 — 추적 여부는 사용자 결정 필요. pytest 214→222. |
+| 2026-09-19 (5차) | 섹션 7(UI 개선 항목) 신설 — 코드 기반 UI 리뷰(computer-use 스크린샷 미승인으로 이번 1차는 코드만 정독) 결과를 정리: (1) 최상위 탭을 Universe/History/Assets/Strategy 4개로 재편하고 Auto Trading·Trend Following(추후 MA Cross)을 `StrategyTab` 내부 서브탭으로 이동, 서브탭 위에 전체 전략 통합 "오늘의 신호" 요약 바 상시 노출(사용자 결정: 서브탭별 개별 노출이 아닌 상단 통합 방식), (2) `ui/auto_trading_tab.py`·`ui/trend_following_tab.py`의 액션 버튼 색상(`#8e44ad`/`#1a5276`/`#6c3483` 등 하드코딩 혼재, "Chart"/"Use Universe"는 무스타일)을 `ui/common.py` 역할별 상수로 중앙화, (3) Trend Following 탭의 4행 컨트롤(v2 오버레이·v3 포트폴리오/검증)을 접이식 그룹으로 감싸 Auto Trading 수준의 밀도로 축소. 설계만 확정, 구현은 로컬 CLI 세션에서 착수 예정. 코드 변경 없음. |
+| 2026-09-19 (6차) | 사용자 요청으로 Trading Universe 탭의 AI Filter(자연어 조건 → 필터) 기능 전면 삭제: `ui/universe_tab.py`의 "🤖 AI Filter" 버튼·`_show_ai_filter_dialog`·`_on_ai_filter_finished`·관련 상태 필드 제거, `ui/widgets.py`의 `StockTable._numeric_conditions`·`set_ai_conditions`·`clear_ai_filter`(및 `apply_col_filters`의 조건 매칭 블록·`_ops` 딕셔너리) 제거, `threads/fetch_threads.py`의 `GeminiFilterThread` 삭제, `gemini_helper.py`의 `nl_to_filter`·`_COLUMN_METADATA`·`_NL_FILTER_SCHEMA` 삭제, `tests/test_gemini_threads.py`에서 관련 테스트 2건 제거. AI Stock Report/AI 포트폴리오 진단 등 다른 Gemini 기능은 그대로 유지. 검증: pytest 222/222, ruff 0건. |
+| 2026-09-19 (7차) | 섹션 7(UI 개선 항목) 1~3 전체 구현. **7-1**: `ui/strategy_tab.py::StrategyTab` 신설(최상위 탭 5→4개, `Auto Trading`/`Trend Following`을 내부 서브탭으로, `MA Cross`는 안내문 자리만 확보) + "Today's Signals" 요약 바(rebalance는 캐시된 Universe 데이터로 즉시 계산, trend following은 시총 상위 30종목만 `StrategySummaryThread`로 백그라운드 계산 — 전 종목 스캔의 지연 우려는 이번 구현에서 상위 N종목 제한으로 해소), `main.py`/`closeEvent`를 `StrategyTab` 하나로 단순화. **7-2**: `ui/common.py`에 역할별 버튼 색상(`_ACTION_BACKTEST/PORTFOLIO/VALIDATE_COLOR` + `action_button_style()`), 보조 버튼 스타일(`_SECONDARY_BUTTON_STYLE`), 상태색(`_STATUS_SUCCESS/FAIL_COLOR`) 상수화 후 Auto Trading·Trend Following 버튼 전체 교체. **7-3**: `TrendFollowingTab._make_collapsible()`(체크 가능한 토글 버튼 + `QWidget.setVisible()`)으로 v2 오버레이·v3 포트폴리오/검증 행을 기본 접힘 처리 — `QGroupBox`는 체크 해제해도 프레임이 차지하는 공간이 그대로라 선택하지 않음. 오프스크린 스모크 스크립트(`StrategyTab` 구조·버튼 스타일·기본 접힘 상태·요약 바 텍스트를 rebalance/trend-following 함수 모킹으로 확인)로 검증. CLAUDE.md 탭 구성·`src/ui/`·`src/threads/` 설명 갱신. 검증: pytest 220/220(main.py 탭 구조 변경에 직접 의존하는 테스트 없음 — 오프스크린 스모크로 별도 확인), ruff 0건. |
+| 2026-09-19 (8차) | 사용자 요청으로 Trading History 탭의 AI Diagnosis(포트폴리오 진단)·Export(xlsx/csv 내보내기) 기능 전면 삭제: `ui/history_tab.py`의 "🤖 AI Diagnosis"/"📥 Export" 버튼, `_show_ai_diagnosis`/`_on_ai_diagnosis_finished`/`_cancel_ai_diagnosis`/`_display_ai_diagnosis_result`/`_export_headers`/`_on_export_clicked`와 관련 상태 필드(`_ai_diagnosis_thread`, `_ai_diagnosis_loading_dlg`), 이제 쓰이지 않는 `_BTN_DEEP_BLUE`/`_SECTIONS`(export 전용)·`csv`/`QFileDialog` import 제거. `ui/dialogs/ai_diagnosis.py` 삭제(다른 호출자 없음 확인), `threads/fetch_threads.py`의 `GeminiDiagnosisThread` 삭제, `gemini_helper.py`의 `portfolio_diagnosis` 삭제(다른 호출자 없음), 전용 테스트만 있던 `tests/test_gemini_threads.py` 삭제. Total Assets 탭(`ui/assets_tab.py`)의 Export 버튼은 이번 요청 범위 밖이라 유지(`openpyxl` 의존성도 그대로). AI Stock Report 등 다른 Gemini 기능은 영향 없음. CLAUDE.md의 `dialogs/` 모듈 목록·`gemini_helper.py` 설명 갱신. 오프스크린 스모크로 버튼 목록에 AI Diagnosis/Export가 더는 없음을 확인. 검증: pytest 219/219, ruff 0건. |
+| 2026-09-19 (9차) | 7-4 신설(7-2 후속, 미착수): 사용자가 제공한 Total Assets/Trading History 탭 스크린샷을 `ui/assets_tab.py`·`ui/history_tab.py`와 대조해 7-2에서 이름 붙인 `_ACTION_BACKTEST/PORTFOLIO/VALIDATE_COLOR`가 다른 탭의 무관한 버튼(Assets "Graph", History "Summary"/"Sort by Date")에 같은 hex로 재사용되고 있음을 발견 — 이름 규칙과 실제 사용이 충돌. 그 외 상태 전용으로 못박은 초록이 액션 버튼("This Week"/"Reload")에 남아있는 점, "Add Record"(파랑)와 "Add Trade"(주황)의 색 불일치, `_SECONDARY_BUTTON_STYLE`(`#888`)과 기존 Export 회색(`#6c757d`)의 이중화도 함께 정리. 신규 상수 1개(`_ACTION_INSIGHT_COLOR`, 삭제된 AI Diagnosis 색 `#0a3d62` 재활용)만 추가하고 나머지는 기존 값으로 재배치하는 안을 표로 기록. 코드 변경 없음 — 구현은 로컬 CLI 세션에서 착수 예정. |
+| 2026-09-19 (10차) | 7-4에서 표로 확정한 재배치를 그대로 구현. `ui/common.py`에 `_ACTION_INSIGHT_COLOR`/`_ACTION_INSIGHT_HOVER_COLOR` 신설 + `_SECONDARY_BUTTON_STYLE`을 `#888`→`#6c757d`로 통일. `ui/assets_tab.py`: Add Record 파랑→주황, This Week 초록→회색, Graph 보라→`_ACTION_INSIGHT_COLOR`. `ui/history_tab.py`: Reload 초록→파랑(Fetch와 동일 역할), Summary 보라→신규 `_BTN_INSIGHT`, Sort by Date 네이비(`_ACTION_PORTFOLIO_COLOR`와 충돌)→신규 체크 가능한 회색 `_BTN_GREY_CHECKABLE`(선택 상태는 `#495057` + 테두리로 구분); 이제 안 쓰는 `_BTN_GREEN`/`_BTN_PURPLE`/`_BTN_NAVY` 제거. Delete Selected·Export·검색 아이콘·Trend Following Chart/Use Universe는 표 그대로라 변경 없음. 오프스크린 스모크로 버튼 10개의 `styleSheet()` hex를 표와 대조 확인. 검증: pytest 219/219, ruff 0건. |

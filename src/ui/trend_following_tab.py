@@ -19,7 +19,13 @@ from PyQt6.QtGui import QFont, QColor
 
 from strategy.trend_following import TrendFollowingConfig
 from threads.fetch_threads import TrendFollowingBacktestThread, TrendFollowingPortfolioThread
-from ui.common import create_font, _validate_date_str, _normalize_date_str, _set_field_error, ThreadOwnerMixin
+from ui.common import (
+    create_font, _validate_date_str, _normalize_date_str, _set_field_error, ThreadOwnerMixin,
+    action_button_style, _ACTION_BACKTEST_COLOR, _ACTION_BACKTEST_HOVER_COLOR,
+    _ACTION_PORTFOLIO_COLOR, _ACTION_PORTFOLIO_HOVER_COLOR,
+    _ACTION_VALIDATE_COLOR, _ACTION_VALIDATE_HOVER_COLOR,
+    _SECONDARY_BUTTON_STYLE, _STATUS_SUCCESS_COLOR, _STATUS_FAIL_COLOR,
+)
 from ui.dialogs.trend_following_chart import TrendFollowingChartDialog
 from ui.dialogs.trend_following_portfolio import TrendFollowingPortfolioDialog, TrendFollowingValidationDialog
 
@@ -118,11 +124,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._run_btn = QPushButton("▶ Run Backtest")
         self._run_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._run_btn.setFixedHeight(32)
-        self._run_btn.setStyleSheet(
-            "QPushButton { background:#8e44ad; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
-            "QPushButton:hover { background:#732d91; }"
-            "QPushButton:disabled { background:#bbb; }"
-        )
+        self._run_btn.setStyleSheet(action_button_style(_ACTION_BACKTEST_COLOR, _ACTION_BACKTEST_HOVER_COLOR))
         self._run_btn.clicked.connect(self._on_run_clicked)
         row2.addWidget(self._run_btn)
 
@@ -130,6 +132,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._chart_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._chart_btn.setFixedHeight(32)
         self._chart_btn.setEnabled(False)
+        self._chart_btn.setStyleSheet(_SECONDARY_BUTTON_STYLE)
         self._chart_btn.clicked.connect(self._on_chart_clicked)
         row2.addWidget(self._chart_btn)
 
@@ -185,7 +188,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._maxw_spin.setToolTip("Cap on the position weight (1.0 = no leverage)")
         row3.addWidget(self._maxw_spin)
         row3.addStretch()
-        root.addLayout(row3)
+        root.addLayout(self._make_collapsible("v2 — Regime MA / ATR stop / Vol target (optional overlays, off by default)", row3))
 
         # Row 4: v3 portfolio + IS/OOS validation (trend_following.md 3 "v3", 5)
         row4 = QHBoxLayout()
@@ -205,17 +208,14 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
 
         self._use_universe_btn = QPushButton("Use Universe")
         self._use_universe_btn.setToolTip("Fill the ticker list with the top-N Trading Universe stocks by market cap")
+        self._use_universe_btn.setStyleSheet(_SECONDARY_BUTTON_STYLE)
         self._use_universe_btn.clicked.connect(self._on_use_universe)
         row4.addWidget(self._use_universe_btn)
 
         self._portfolio_btn = QPushButton("\u25b6 Run Portfolio")
         self._portfolio_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._portfolio_btn.setFixedHeight(32)
-        self._portfolio_btn.setStyleSheet(
-            "QPushButton { background:#1a5276; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
-            "QPushButton:hover { background:#21618c; }"
-            "QPushButton:disabled { background:#bbb; }"
-        )
+        self._portfolio_btn.setStyleSheet(action_button_style(_ACTION_PORTFOLIO_COLOR, _ACTION_PORTFOLIO_HOVER_COLOR))
         self._portfolio_btn.setToolTip("Equal-sleeve portfolio backtest with the parameters above")
         self._portfolio_btn.clicked.connect(lambda: self._on_portfolio_clicked("portfolio"))
         row4.addWidget(self._portfolio_btn)
@@ -231,17 +231,13 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._validate_btn = QPushButton("\u2696 Validate (IS/OOS)")
         self._validate_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._validate_btn.setFixedHeight(32)
-        self._validate_btn.setStyleSheet(
-            "QPushButton { background:#6c3483; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
-            "QPushButton:hover { background:#9b59b6; }"
-            "QPushButton:disabled { background:#bbb; }"
-        )
+        self._validate_btn.setStyleSheet(action_button_style(_ACTION_VALIDATE_COLOR, _ACTION_VALIDATE_HOVER_COLOR))
         self._validate_btn.setToolTip("Holdout + anchored yearly walk-forward over the 12-config default grid "
                                       "(entry/exit x vol target x ATR stop); the parameters above are the base config. "
                                       "Use a Start date well before the OOS years.")
         self._validate_btn.clicked.connect(lambda: self._on_portfolio_clicked("validate"))
         row4.addWidget(self._validate_btn)
-        root.addLayout(row4)
+        root.addLayout(self._make_collapsible("v3 — Portfolio backtest / IS-OOS validation (multi-ticker)", row4))
 
         # Summary metrics (one row, one column per metric)
         self._summary_tbl = QTableWidget(1, len(_METRICS) + 1)
@@ -282,6 +278,39 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         lbl = QLabel(text)
         lbl.setFont(create_font(10, style_name="Semilight"))
         return lbl
+
+    @staticmethod
+    def _make_collapsible(header_text: str, body_layout) -> QVBoxLayout:
+        """Wrap an existing row layout behind a toggle button, collapsed by default
+        (roadmap 7-3) — keeps the tab's default exposure to rows 1-2 while the v2/v3
+        controls stay one click away instead of always taking up screen space."""
+        container = QVBoxLayout()
+        container.setContentsMargins(0, 0, 0, 0)
+        container.setSpacing(2)
+
+        toggle_btn = QPushButton(f"▶ {header_text}")
+        toggle_btn.setCheckable(True)
+        toggle_btn.setChecked(False)
+        toggle_btn.setFont(create_font(9, style_name="Semilight"))
+        toggle_btn.setStyleSheet(
+            "QPushButton { text-align:left; background:transparent; border:none; color:#7f8c8d; padding:2px 0; }"
+            "QPushButton:checked { color:#0078d4; font-weight:bold; }"
+        )
+
+        body = QWidget()
+        body.setLayout(body_layout)
+        body.setVisible(False)
+
+        def _on_toggled(checked):
+            body.setVisible(checked)
+            arrow = "▼" if checked else "▶"
+            toggle_btn.setText(f"{arrow} {header_text}")
+
+        toggle_btn.toggled.connect(_on_toggled)
+
+        container.addWidget(toggle_btn)
+        container.addWidget(body)
+        return container
 
     @staticmethod
     def _pct_spin():
@@ -489,7 +518,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
             gate = bool(s.get("passes_risk_gate"))
             gate_it = QTableWidgetItem("PASS" if gate else "FAIL")
             gate_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            gate_it.setForeground(QColor("#107c10" if gate else "#c0392b"))
+            gate_it.setForeground(QColor(_STATUS_SUCCESS_COLOR if gate else _STATUS_FAIL_COLOR))
             tbl.setItem(0, len(_METRICS), gate_it)
         finally:
             tbl.setUpdatesEnabled(True)

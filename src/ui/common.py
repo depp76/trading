@@ -52,6 +52,54 @@ _FIELD_ERROR_STYLE = "border: 1px solid #e74c3c; background-color: #fdecea;"
 # stylesheet string: "QLabel { " + FONT_FAMILY_CSS + " font-size: 9pt; }"
 FONT_FAMILY_CSS = "font-family: 'Malgun Gothic Semilight', '맑은 고딕 Semilight', 'Malgun Gothic';"
 
+# ---------------------------------------------------------------------------
+# Role-based action button colors (roadmap 7-2a) — Auto Trading and Trend
+# Following each hardcoded their own palette for the same three roles (run a
+# single-instrument backtest, run a portfolio backtest, run walk-forward
+# validation); centralised here so the same role gets the same hue in every
+# tab that has it, and a future tab can pick a role instead of a new hex.
+# ---------------------------------------------------------------------------
+_ACTION_BACKTEST_COLOR = "#8e44ad"
+_ACTION_BACKTEST_HOVER_COLOR = "#732d91"
+_ACTION_PORTFOLIO_COLOR = "#1a5276"
+_ACTION_PORTFOLIO_HOVER_COLOR = "#21618c"
+_ACTION_VALIDATE_COLOR = "#6c3483"
+_ACTION_VALIDATE_HOVER_COLOR = "#9b59b6"
+
+# Read-only insight views (roadmap 7-4) — popups/charts that only display data
+# (Total Assets "Graph", Trading History "Summary"), as opposed to the action
+# colors above which all *run* something. Reuses the hex the now-deleted AI
+# Diagnosis button used, so no visible color is newly introduced.
+_ACTION_INSIGHT_COLOR = "#0a3d62"
+_ACTION_INSIGHT_HOVER_COLOR = "#1e5799"
+
+# Status text colors (roadmap 7-2c) — e.g. a risk-gate PASS/FAIL cell. Reserved
+# for status display only (roadmap 7-4d): an action button must not reuse these,
+# even one whose action happens to succeed/fail, so status color always means
+# "this is a status", never "this is a runnable action that turned out fine".
+_STATUS_SUCCESS_COLOR = "#107c10"
+_STATUS_FAIL_COLOR = "#c0392b"
+
+# Secondary/neutral action button (roadmap 7-2b) — for buttons like "Chart" or
+# "Use Universe" that previously had no style at all and stood out against the
+# tab's other, colored buttons. Grey matches the grey Trading History/Total
+# Assets already used for Export/search (roadmap 7-4f: one grey, not two).
+_SECONDARY_BUTTON_STYLE = (
+    "QPushButton { background:#6c757d; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
+    "QPushButton:hover { background:#5a6268; }"
+    "QPushButton:disabled { background:#bbb; }"
+)
+
+
+def action_button_style(color: str, hover_color: str) -> str:
+    """QPushButton stylesheet for a role-colored primary action button (roadmap
+    7-2a) — the template Auto Trading/Trend Following's "Run ..." buttons share."""
+    return (
+        f"QPushButton {{ background:{color}; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }}"
+        f"QPushButton:hover {{ background:{hover_color}; }}"
+        "QPushButton:disabled { background:#bbb; }"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Input formatters & validators

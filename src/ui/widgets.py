@@ -224,7 +224,6 @@ class StockTable(QTableWidget):
         self._filter_header.filter_requested.connect(self._show_filter_popup)
         self.setHorizontalHeader(self._filter_header)
         self._col_filters = {}  # col_index -> frozenset | None
-        self._numeric_conditions: list[dict] = []  # [{col, op, val}, ...] for AI filters
         self.verticalHeader().setVisible(False)
         self.verticalHeader().setDefaultSectionSize(22)
         self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
@@ -716,15 +715,6 @@ class StockTable(QTableWidget):
         self.setUpdatesEnabled(False)  # suppress repaints while toggling row visibility
         self.setSortingEnabled(False)
 
-        _ops = {
-            "<":  lambda a, b: a <  b,
-            "<=": lambda a, b: a <= b,
-            "==": lambda a, b: a == b,
-            ">=": lambda a, b: a >= b,
-            ">":  lambda a, b: a >  b,
-            "contains": lambda a, b: b.lower() in str(a).lower(),
-        }
-
         for row in range(self.rowCount()):
             hidden = False
             # Column filters (excel-style set membership)
@@ -734,37 +724,6 @@ class StockTable(QTableWidget):
                 if cell_val not in vals:
                     hidden = True
                     break
-
-            # AI numeric/string conditions
-            if not hidden and self._numeric_conditions:
-                for cond in self._numeric_conditions:
-                    col = cond.get("col")
-                    op  = cond.get("op", "==")
-                    val = cond.get("val")
-                    if col is None or val is None:
-                        continue
-                    item = self.item(row, col)
-                    if item is None:
-                        hidden = True
-                        break
-                    raw = item.data(Qt.ItemDataRole.EditRole)
-                    # Fall back to text if EditRole has no numeric data
-                    if raw is None:
-                        raw = item.text()
-                    cmp_fn = _ops.get(op)
-                    if cmp_fn is None:
-                        continue
-                    try:
-                        if isinstance(val, str):
-                            match = cmp_fn(str(raw), val)
-                        else:
-                            match = cmp_fn(float(raw), float(val))
-                        if not match:
-                            hidden = True
-                            break
-                    except (TypeError, ValueError):
-                        hidden = True
-                        break
 
             if not hidden and tg_only:
                 btn = self.cellWidget(row, 1)
@@ -787,14 +746,6 @@ class StockTable(QTableWidget):
         self.setSortingEnabled(True)
         hdr.setSortIndicator(sort_col, sort_order)
         self.setUpdatesEnabled(True)
-
-    def clear_ai_filter(self):
-        """Remove any AI-applied numeric conditions."""
-        self._numeric_conditions = []
-
-    def set_ai_conditions(self, conditions: list[dict]):
-        """Apply a list of numeric/string conditions from the AI natural-language filter."""
-        self._numeric_conditions = conditions
 
 
 # ---------------------------------------------------------------------------

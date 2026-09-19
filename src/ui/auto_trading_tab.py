@@ -41,7 +41,7 @@ from ui.dialogs import BacktestResultDialog, StockMaDialog
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, ThreadOwnerMixin
+from ui.common import create_font, ThreadOwnerMixin, action_button_style, _ACTION_BACKTEST_COLOR, _ACTION_BACKTEST_HOVER_COLOR
 
 
 class AutoTradingTab(ThreadOwnerMixin, QWidget):
@@ -128,11 +128,7 @@ class AutoTradingTab(ThreadOwnerMixin, QWidget):
         self._backtest_btn = QPushButton("▶ Run Backtest")
         self._backtest_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._backtest_btn.setFixedHeight(32)
-        self._backtest_btn.setStyleSheet(
-            "QPushButton { background:#8e44ad; color:white; border-radius:4px; padding:4px 14px; font-weight:bold; }"
-            "QPushButton:hover { background:#732d91; }"
-            "QPushButton:disabled { background:#bbb; }"
-        )
+        self._backtest_btn.setStyleSheet(action_button_style(_ACTION_BACKTEST_COLOR, _ACTION_BACKTEST_HOVER_COLOR))
         self._backtest_btn.clicked.connect(self._on_backtest_clicked)
         backtest_row.addWidget(self._backtest_btn)
 
