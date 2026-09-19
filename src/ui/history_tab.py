@@ -38,7 +38,7 @@ from ui.dialogs import (
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, _fmt_num_edit, FONT_FAMILY_CSS, retire_thread
+from ui.common import create_font, _fmt_num_edit, FONT_FAMILY_CSS, ThreadOwnerMixin
 from ui.history_calc import compute_pl_fields, build_monthly_rows, summarize_positions
 from ui.history_table import fill_table_rows, SectionTable, SECTIONS
 from ui.dialogs.holdings_summary import show_holdings_summary
@@ -167,7 +167,7 @@ def _lbl_field_pair(grid: QGridLayout, row: int, col: int, lbl_text: str, widget
     grid.addWidget(widget, row, col + 1, Qt.AlignmentFlag.AlignVCenter)
 
 
-class TradingHistoryTab(QWidget):
+class TradingHistoryTab(ThreadOwnerMixin, QWidget):
     """Trading History tab - load from Excel and display closed/open positions."""
     total_asset_updated = pyqtSignal(float)
     status_message = pyqtSignal(str)  # forwards background-thread progress text to MainWindow's status bar
@@ -216,7 +216,6 @@ class TradingHistoryTab(QWidget):
         self._ai_diagnosis_thread = None
         self._ai_diagnosis_loading_dlg = None
         self._deposit_thread = None
-        self._ticker_resolve_threads: list = []
         self._row_data: list = []   # (kind, rec) per visible table row
         self._settings = QSettings("PortfolioManagement", "PortfolioManagement")
         self._settings_save_timer = QTimer(self)
@@ -602,28 +601,10 @@ class TradingHistoryTab(QWidget):
         if self._rt_price_thread is not None and self._rt_price_thread.isRunning():
             return
             
-        self._rt_price_thread = RealtimePriceThread(list(kr_tickers), list(us_tickers))
+        self._track_thread(RealtimePriceThread(list(kr_tickers), list(us_tickers)), '_rt_price_thread')
         self._rt_price_thread.prices_fetched.connect(self._on_realtime_prices_fetched)
         self._rt_price_thread.status_message.connect(self.status_message.emit)
         self._rt_price_thread.start()
-
-    def collect_threads_to_stop(self):
-        """Return every QThread this tab may have started, for MainWindow.closeEvent
-        (mirrors UniverseTab.collect_threads_to_stop())."""
-        threads = []
-        pt = getattr(self, '_price_thread', None)
-        if pt is not None:
-            threads.append(pt)
-        rt = getattr(self, '_rt_price_thread', None)
-        if rt is not None:
-            threads.append(rt)
-        dt = getattr(self, '_deposit_thread', None)
-        if dt is not None:
-            threads.append(dt)
-        threads.extend(getattr(self, '_ticker_resolve_threads', []))
-        for t in getattr(self, '_zombie_threads', []):
-            threads.append(t)
-        return threads
 
     def _on_realtime_prices_fetched(self, prices_dict):
         if not prices_dict:
@@ -664,9 +645,6 @@ class TradingHistoryTab(QWidget):
         """Launch a background thread to fetch current prices for open positions, and tickers for all."""
         if not self._open_data and not self._closed_data:
             return
-
-        # Retire previous thread safely without garbage collecting while running
-        retire_thread(self, '_price_thread')
 
         names      = []
         tickers    = []
@@ -709,12 +687,11 @@ class TradingHistoryTab(QWidget):
             buy_amts.append(r["buy_amount"])
             is_open.append(True)
 
-        thread = PositionPriceFetchThread(
+        thread = self._track_thread(PositionPriceFetchThread(
             names, tickers, markets, buy_prices, qtys, buy_amts, is_open, skip_fetch,
-        )
+        ), '_price_thread')
         thread.prices_ready.connect(self._on_prices_ready)
         thread.status_message.connect(self.status_message.emit)
-        self._price_thread = thread
         self._path_label.setText("⏳ Loading Current Prices...")
         thread.start()
 
@@ -825,7 +802,7 @@ class TradingHistoryTab(QWidget):
         self._deposit_status_lbl.setStyleSheet("font-size:10pt; color:#0078d4; font-weight:bold;")
         self._deposit_status_lbl.setText("⏳ Fetching deposit...")
         self.status_message.emit("Fetching account deposit from KIS...")
-        self._deposit_thread = AccountDepositThread()
+        self._track_thread(AccountDepositThread(), '_deposit_thread')
         self._deposit_thread.finished.connect(self._on_account_deposit_fetched)
         self._deposit_thread.start()
 
@@ -922,9 +899,6 @@ class TradingHistoryTab(QWidget):
         dlg.exec()
 
     def _update_open_stocks_combo(self):
-        if not hasattr(self, '_open_stocks_combo'):
-            return
-            
         self._open_stocks_combo.blockSignals(True)
         self._open_stocks_combo.clear()
         self._open_stocks_combo.addItem("Current Holdings...")
@@ -997,7 +971,7 @@ class TradingHistoryTab(QWidget):
 
     def _show_ai_diagnosis(self):
         """Show an AI-powered portfolio diagnosis dialog using Gemini API."""
-        if hasattr(self, "_ai_diagnosis_thread") and self._ai_diagnosis_thread is not None and self._ai_diagnosis_thread.isRunning():
+        if self._ai_diagnosis_thread is not None and self._ai_diagnosis_thread.isRunning():
             return
 
         # Show non-blocking loading dialog while the API is called in background thread
@@ -1030,7 +1004,7 @@ class TradingHistoryTab(QWidget):
         # defeats Qt's automatic cross-thread queuing (it can only detect thread affinity via
         # a QObject receiver), so the slot would otherwise run on the worker thread.
         self._ai_diagnosis_loading_dlg = loading_dlg
-        self._ai_diagnosis_thread = GeminiDiagnosisThread(self._open_data, self._closed_data)
+        self._track_thread(GeminiDiagnosisThread(self._open_data, self._closed_data), '_ai_diagnosis_thread')
         self._ai_diagnosis_thread.finished.connect(self._on_ai_diagnosis_finished)
         cancel_btn.clicked.connect(self._cancel_ai_diagnosis)
         self._ai_diagnosis_thread.start()
@@ -1052,7 +1026,7 @@ class TradingHistoryTab(QWidget):
         hiding the loading dialog, since GeminiDiagnosisThread has no cooperative cancellation
         (the Gemini HTTP call is blocking) — terminate() mirrors the same forced-stop escape
         hatch MainWindow.closeEvent already uses for stuck threads."""
-        thread = getattr(self, "_ai_diagnosis_thread", None)
+        thread = self._ai_diagnosis_thread
         if thread is not None and thread.isRunning():
             thread.terminate()
             thread.wait(500)
@@ -1203,14 +1177,8 @@ class TradingHistoryTab(QWidget):
                 # Resolve the company name for the new ticker in the background
                 # (used to be a synchronous fetch_single_stock call on the UI
                 # thread, roadmap 6-1c). The record is updated again when it lands.
-                self._ticker_resolve_threads = [
-                    t for t in self._ticker_resolve_threads if t.isRunning()
-                ]
-                thread = SingleStockFetchThread(rec.get("market", ""), new_ticker)
-                thread.finished.connect(
-                    lambda result, error, r=rec: self._on_ticker_name_resolved(r, result, error)
-                )
-                self._ticker_resolve_threads.append(thread)
+                thread = self._track_thread(SingleStockFetchThread(rec.get("market", ""), new_ticker))
+                thread.finished.connect(self._on_ticker_name_resolved)
                 thread.start()
             return
 
@@ -1255,12 +1223,20 @@ class TradingHistoryTab(QWidget):
                 self._save_overrides()
             return
 
-    def _on_ticker_name_resolved(self, rec: dict, result, error: str):
-        """SingleStockFetchThread callback for the ticker-cell edit above."""
-        if not result or not result.get("name") or rec.get("company") == result["name"]:
+    def _on_ticker_name_resolved(self, result, error: str, ticker: str):
+        """SingleStockFetchThread.finished for the ticker-cell edit above: apply the
+        resolved company name to every record now carrying that ticker."""
+        name = (result or {}).get("name")
+        if not name:
             return
-        rec["company"] = result["name"]
-        rec["is_overridden"] = True
+        changed = False
+        for rec in self._open_data + self._closed_data:
+            if rec.get("ticker") == ticker and rec.get("company") != name:
+                rec["company"] = name
+                rec["is_overridden"] = True
+                changed = True
+        if not changed:
+            return
         self._save_overrides()
         self._refresh_summary()
         self._apply_filter()

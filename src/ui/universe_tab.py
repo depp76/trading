@@ -54,11 +54,11 @@ from ui.common import (
     _MARKET_ORDER,
     atomic_save_json,
     safe_load_json,
-    retire_thread,
+    ThreadOwnerMixin,
 )
 
 
-class UniverseTab(QWidget):
+class UniverseTab(ThreadOwnerMixin, QWidget):
     """Trading Universe tab: watchlist table + ticker add/search/AI filter controls."""
 
     status_text_changed = pyqtSignal(str)  # -> MainWindow's shared status_label
@@ -75,6 +75,7 @@ class UniverseTab(QWidget):
         self._ai_filter_dlg = None
         self._ai_filter_status_lbl = None
         self._ai_filter_set_busy = None
+        self._open_dialogs: list = []
         self._build_ui()
         self.load_custom_settings()
 
@@ -284,12 +285,20 @@ class UniverseTab(QWidget):
         self.add_ticker_btn.setEnabled(False)
         self.status_text_changed.emit(f"Fetching '{ticker}' from {market}...")
 
-        retire_thread(self, '_single_fetch_thread')
-        self._single_fetch_thread = SingleStockFetchThread(market, ticker)
-        self._single_fetch_thread.finished.connect(lambda r, e: self.on_single_stock_loaded(r, e, False))
-        self._single_fetch_thread.start()
+        thread = self._track_thread(SingleStockFetchThread(market, ticker), '_single_fetch_thread')
+        thread.finished.connect(self.on_single_stock_loaded)
+        thread.start()
 
-    def on_single_stock_loaded(self, result, error, is_startup=False, ticker_hint=""):
+    def on_single_stock_loaded(self, result, error, ticker=""):
+        """SingleStockFetchThread.finished for the Add button."""
+        self._handle_single_stock_loaded(result, error, is_startup=False, ticker_hint=ticker)
+
+    def _on_startup_stock_loaded(self, result, error, ticker=""):
+        """SingleStockFetchThread.finished for user-added tickers re-fetched after a
+        full refresh (on_finished_all); a failure removes the ticker from settings."""
+        self._handle_single_stock_loaded(result, error, is_startup=True, ticker_hint=ticker)
+
+    def _handle_single_stock_loaded(self, result, error, is_startup, ticker_hint):
         if not is_startup:
             self.add_ticker_btn.setEnabled(True)
         if error or result is None:
@@ -439,7 +448,7 @@ class UniverseTab(QWidget):
             self._ai_filter_status_lbl = status_lbl
             self._ai_filter_set_busy = _set_ui_busy
 
-            self._ai_filter_thread = GeminiFilterThread(nl_query)
+            self._ai_filter_thread = self._track_thread(GeminiFilterThread(nl_query))
             self._ai_filter_thread.finished.connect(self._on_ai_filter_finished)
             self._ai_filter_thread.start()
 
@@ -504,23 +513,19 @@ class UniverseTab(QWidget):
 
     def show_stock_ma(self, ticker, name, market, change_mode='pct'):
         self.status_text_changed.emit(f"Loading MA20 & MA50 for {name} ({ticker})...")
-        # Purge completed threads to prevent unbounded list growth
-        self._stock_ma_threads = [t for t in getattr(self, '_stock_ma_threads', []) if t.isRunning()]
-        thread = StockMaThread(ticker, name, market, change_mode)
-        thread.finished.connect(lambda t, n, df, e, inv, cm=change_mode: self.on_stock_ma_loaded(t, n, df, e, inv, cm))
-        self._stock_ma_threads.append(thread)
+        thread = self._track_thread(StockMaThread(ticker, name, market, change_mode))
+        thread.finished.connect(self.on_stock_ma_loaded)
         thread.start()
 
-    def on_stock_ma_loaded(self, ticker, name, df, error, investor_data=None, change_mode='pct'):
+    def on_stock_ma_loaded(self, ticker, name, df, error, investor_data, market, change_mode):
         self.status_text_changed.emit(f"MA chart loaded for {name} ({ticker}).")
         if error and df is None:
             QMessageBox.warning(self, "Error", f"Failed to load data for {ticker}:\n{error}")
             return
-        market = next((d.get('market', '') for d in self.all_data if d.get('ticker') == ticker), "")
+        if not market:
+            market = next((d.get('market', '') for d in self.all_data if d.get('ticker') == ticker), "")
         dlg = StockMaDialog(ticker, name, market, df, investor_data=investor_data, parent=None, change_mode=change_mode)
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        if not hasattr(self, '_open_dialogs'):
-            self._open_dialogs = []
         active_dialogs = []
         for d in self._open_dialogs:
             try:
@@ -540,12 +545,8 @@ class UniverseTab(QWidget):
             return
         name = item.get('name', ticker)
         self.status_text_changed.emit(f"🤖 Generating AI report for {name} ({ticker})...")
-        self._stock_report_threads = [
-            t for t in getattr(self, '_stock_report_threads', []) if t.isRunning()
-        ]
-        thread = GeminiStockReportThread(item)
+        thread = self._track_thread(GeminiStockReportThread(item))
         thread.finished.connect(self._on_stock_report_ready)
-        self._stock_report_threads.append(thread)
         thread.start()
 
     def _on_stock_report_ready(self, ticker: str, name: str, result_text: str, error: str):
@@ -562,8 +563,7 @@ class UniverseTab(QWidget):
         self.market_status = {m: "Waiting" for m in ("Indices", "KOSPI", "KOSDAQ")} #, "NASDAQ 100", "S&P500")}
         self.update_status_display()
 
-        retire_thread(self, 'fetch_thread')
-        self.fetch_thread = AllDataFetchThread()
+        self._track_thread(AllDataFetchThread(), 'fetch_thread')
         self.fetch_thread.market_loaded.connect(self.on_market_loaded)
         self.fetch_thread.market_progress.connect(self.on_market_progress)
         self.fetch_thread.finished_all.connect(self.on_finished_all)
@@ -581,7 +581,7 @@ class UniverseTab(QWidget):
             if getattr(self, '_lw_fetch_thread', None) is not None and self._lw_fetch_thread.isRunning():
                 return
 
-            self._lw_fetch_thread = UniverseLightweightFetchThread(self.all_data)
+            self._track_thread(UniverseLightweightFetchThread(self.all_data), '_lw_fetch_thread')
             self._lw_fetch_thread.finished_all.connect(self._on_universe_lightweight_loaded)
             self._lw_fetch_thread.status_message.connect(self.status_message)
             self._lw_fetch_thread.start()
@@ -684,15 +684,9 @@ class UniverseTab(QWidget):
             existing_tickers = {x.get("ticker") for x in self.all_data}
             missing_added = [x for x in added if x["ticker"] not in existing_tickers and x["ticker"] not in deleted]
 
-            self._startup_threads = getattr(self, "_startup_threads", [])
             for item in missing_added:
-                _ticker = item["ticker"]
-                _market = item["market"]
-                thread = SingleStockFetchThread(_market, _ticker)
-                thread.finished.connect(
-                    lambda r, e, t=_ticker: self.on_single_stock_loaded(r, e, is_startup=True, ticker_hint=t)
-                )
-                self._startup_threads.append(thread)
+                thread = self._track_thread(SingleStockFetchThread(item["market"], item["ticker"]))
+                thread.finished.connect(self._on_startup_stock_loaded)
                 thread.start()
 
         except Exception as e:
@@ -700,20 +694,3 @@ class UniverseTab(QWidget):
             self.status_text_changed.emit(f"Data sort/load error: {e}")
         finally:
             self.refresh_btn.setEnabled(True)
-
-    def collect_threads_to_stop(self):
-        """Return every QThread this tab may have started, for MainWindow.closeEvent."""
-        threads = []
-        ft = getattr(self, 'fetch_thread', None)
-        if ft is not None:
-            threads.append(ft)
-        for t in getattr(self, '_startup_threads', []):
-            threads.append(t)
-        for t in getattr(self, '_stock_ma_threads', []):
-            threads.append(t)
-        sft = getattr(self, '_single_fetch_thread', None)
-        if sft is not None:
-            threads.append(sft)
-        threads.extend(getattr(self, '_stock_report_threads', []))
-        threads.extend(getattr(self, '_zombie_threads', []))
-        return threads

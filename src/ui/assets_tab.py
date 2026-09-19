@@ -26,10 +26,10 @@ from ui.dialogs import TotalAssetsGraphDialog
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font, atomic_save_json, safe_load_json, FONT_FAMILY_CSS, retire_thread
+from ui.common import create_font, atomic_save_json, safe_load_json, FONT_FAMILY_CSS, ThreadOwnerMixin
 
 
-class TradingRecordTab(QWidget):
+class TradingRecordTab(ThreadOwnerMixin, QWidget):
     """Tab for recording periodic total-asset snapshots with weekly/cumulative return calculations."""
 
     _JSON_FILE = TRADING_RECORD_FILE
@@ -296,25 +296,13 @@ class TradingRecordTab(QWidget):
 
     # ---Background metrics warm-up (roadmap 2026-09-18, review.md 1-2) ---
     def _start_metrics_preload(self):
-        retire_thread(self, '_metrics_thread')
-        thread = AssetMetricsPreloadThread()
+        thread = self._track_thread(AssetMetricsPreloadThread(), '_metrics_thread')
         thread.finished.connect(self._on_metrics_preloaded)
-        self._metrics_thread = thread
         thread.start()
 
     def _on_metrics_preloaded(self):
         self._metrics_ready = True
         self._refresh_table()
-
-    def collect_threads_to_stop(self):
-        """Return every QThread this tab may have started, for MainWindow.closeEvent
-        (mirrors TradingHistoryTab.collect_threads_to_stop())."""
-        threads = []
-        mt = getattr(self, '_metrics_thread', None)
-        if mt is not None:
-            threads.append(mt)
-        threads.extend(getattr(self, '_zombie_threads', []))
-        return threads
 
     # ---CRUD ---
     def _add_record(self):
@@ -689,7 +677,6 @@ class TradingRecordTab(QWidget):
         self._update_live_asset_labels()
 
     def _update_live_asset_labels(self):
-        if not hasattr(self, 'live_asset_lbl'): return
         
         curr_val = getattr(self, '_current_live_asset', 0.0)
         if curr_val > 0:

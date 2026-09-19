@@ -52,7 +52,10 @@ class IndexMaThread(QThread):
 # ---------------------------------------------------------------------------
 class StockMaThread(QThread):
     """Background thread: fetch MA20 + MA50 for a single stock in one call."""
-    finished = pyqtSignal(str, str, object, str, list)  # ticker, name, df|None, error, investor_data
+    # ticker, name, df|None, error, investor_data, market, change_mode -- the last
+    # two echo the constructor args so slots can be plain bound methods instead of
+    # closures capturing per-request context (CLAUDE.md threads rule).
+    finished = pyqtSignal(str, str, object, str, list, str, str)
 
     def __init__(self, ticker, name, market, change_mode='pct'):
         super().__init__()
@@ -88,15 +91,19 @@ class StockMaThread(QThread):
         elif self.ticker == "CL=F":
             from data_fetcher import fetch_wti_futures_curve
             investor_data = fetch_wti_futures_curve()
-        self.finished.emit(self.ticker, self.name, df, err or "", investor_data)
+        self.finished.emit(self.ticker, self.name, df, err or "", investor_data, self.market, self.change_mode)
 
 
 # ---------------------------------------------------------------------------
 # Single stock fetch thread
 # ---------------------------------------------------------------------------
 class SingleStockFetchThread(QThread):
-    """Background thread to fetch a single stock without blocking the UI."""
-    finished = pyqtSignal(object, str)
+    """Background thread to fetch a single stock without blocking the UI.
+
+    finished(result | None, error, ticker): the requested ticker is echoed so
+    callers that fan out several lookups can tell the results apart in a bound
+    method slot."""
+    finished = pyqtSignal(object, str, str)
 
     def __init__(self, market, ticker):
         super().__init__()
@@ -105,7 +112,7 @@ class SingleStockFetchThread(QThread):
 
     def run(self):
         result, error = fetch_single_stock(self.market, self.ticker)
-        self.finished.emit(result, error or "")
+        self.finished.emit(result, error or "", self.ticker)
 
 
 # ---------------------------------------------------------------------------

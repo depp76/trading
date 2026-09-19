@@ -41,10 +41,10 @@ from ui.dialogs import BacktestResultDialog, StockMaDialog
 logger = logging.getLogger(__name__)
 
 
-from ui.common import create_font
+from ui.common import create_font, ThreadOwnerMixin
 
 
-class AutoTradingTab(QWidget):
+class AutoTradingTab(ThreadOwnerMixin, QWidget):
     """Weekly rebalance signal tab (rebalance.md 3-1: factor scoring + rank rebalancing).
 
     rebalance.md decisions this implementation follows:
@@ -71,7 +71,6 @@ class AutoTradingTab(QWidget):
         self._universe_tab = universe_tab
         self._last_result = None
         self._backtest_thread = None
-        self._stock_ma_threads: list = []
         self._open_dialogs: list = []
         self._build_ui()
 
@@ -304,18 +303,14 @@ class AutoTradingTab(QWidget):
     def _show_stock_ma(self, ticker, name, market):
         if not ticker:
             return
-        self._stock_ma_threads = [t for t in self._stock_ma_threads if t.isRunning()]
-        thread = StockMaThread(ticker, name, market)
-        # Default-arg lambda (same pattern as UniverseTab.show_stock_ma) so the
-        # dialog gets the market this specific double-click was for, not
-        # whatever a later double-click's thread happens to resolve first.
-        thread.finished.connect(
-            lambda t, n, df, e, inv, m=market: self._on_stock_ma_loaded(t, n, df, e, inv, m)
-        )
-        self._stock_ma_threads.append(thread)
+        # The thread echoes `market` back in its finished signal, so the dialog
+        # gets the market this specific double-click was for even when several
+        # lookups are in flight.
+        thread = self._track_thread(StockMaThread(ticker, name, market))
+        thread.finished.connect(self._on_stock_ma_loaded)
         thread.start()
 
-    def _on_stock_ma_loaded(self, ticker, name, df, error, investor_data, market):
+    def _on_stock_ma_loaded(self, ticker, name, df, error, investor_data, market, _change_mode):
         if error and df is None:
             QMessageBox.warning(self, "Error", f"Failed to load data for {ticker}:\n{error}")
             return
@@ -357,10 +352,10 @@ class AutoTradingTab(QWidget):
         self._backtest_btn.setEnabled(False)
         self._backtest_status_label.setText(f"Fetching history for {len(tickers)} tickers... (0/{len(tickers)})")
 
-        self._backtest_thread = RebalanceBacktestThread(
+        self._track_thread(RebalanceBacktestThread(
             tickers, lookback_years, self.TOP_N_BY_MARKET, self.BAND_MULTIPLIER, self.INITIAL_CAPITAL,
             market_by_ticker=market_by_ticker,
-        )
+        ), '_backtest_thread')
         self._backtest_thread.progress.connect(self._on_backtest_progress)
         self._backtest_thread.finished.connect(self._on_backtest_finished)
         self._backtest_thread.start()
@@ -383,13 +378,3 @@ class AutoTradingTab(QWidget):
             ticker_name_map=getattr(self, "_backtest_ticker_name_map", None),
         )
         dlg.exec()
-
-    def collect_threads_to_stop(self):
-        """Return every QThread this tab may have started, for MainWindow.closeEvent
-        (mirrors UniverseTab.collect_threads_to_stop() / TradingHistoryTab's)."""
-        threads = []
-        bt = getattr(self, "_backtest_thread", None)
-        if bt is not None:
-            threads.append(bt)
-        threads.extend(getattr(self, "_stock_ma_threads", []))
-        return threads

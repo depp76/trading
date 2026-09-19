@@ -178,6 +178,50 @@ def retire_thread(owner, attr_name: str) -> None:
     setattr(owner, attr_name, None)
 
 
+class ThreadOwnerMixin:
+    """Bookkeeping for the QThreads a tab starts, so MainWindow.closeEvent can
+    stop every one of them.
+
+    Tabs call ``self._track_thread(thread, attr)`` right after constructing a
+    worker: the thread is remembered in ``self._tracked_threads`` (finished
+    ones are pruned on each call) and, when ``attr`` is given, the previous
+    thread stored under that attribute is retired first (see retire_thread)
+    and the new one stored there. ``collect_threads_to_stop()`` returns the
+    live tracked threads plus any retired-but-still-running zombies. Before
+    this mixin each tab hand-listed its thread attributes in its own
+    collect_threads_to_stop(), and two of them (the Universe tab's lightweight
+    refresh and AI-filter threads, the History tab's AI-diagnosis thread) had
+    been left out.
+    """
+
+    def _track_thread(self, thread, attr: str = None):
+        if attr is not None:
+            retire_thread(self, attr)
+            setattr(self, attr, thread)
+        tracked = [t for t in getattr(self, "_tracked_threads", []) if not _thread_is_finished(t)]
+        tracked.append(thread)
+        self._tracked_threads = tracked
+        return thread
+
+    def collect_threads_to_stop(self) -> list:
+        """Every QThread this widget may still have running, for MainWindow.closeEvent."""
+        seen: set = set()
+        out = []
+        for t in list(getattr(self, "_tracked_threads", [])) + list(getattr(self, "_zombie_threads", [])):
+            if id(t) in seen or _thread_is_finished(t):
+                continue
+            seen.add(id(t))
+            out.append(t)
+        return out
+
+
+def _thread_is_finished(thread) -> bool:
+    try:
+        return bool(thread.isFinished())
+    except RuntimeError:   # underlying C++ object already deleted
+        return True
+
+
 # ---------------------------------------------------------------------------
 # Atomic file I/O helpers
 # ---------------------------------------------------------------------------

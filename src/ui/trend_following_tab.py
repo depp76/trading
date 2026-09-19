@@ -19,7 +19,7 @@ from PyQt6.QtGui import QFont, QColor
 
 from strategy.trend_following import TrendFollowingConfig
 from threads.fetch_threads import TrendFollowingBacktestThread, TrendFollowingPortfolioThread
-from ui.common import create_font, _validate_date_str, _normalize_date_str, _set_field_error
+from ui.common import create_font, _validate_date_str, _normalize_date_str, _set_field_error, ThreadOwnerMixin
 from ui.dialogs.trend_following_chart import TrendFollowingChartDialog
 from ui.dialogs.trend_following_portfolio import TrendFollowingPortfolioDialog, TrendFollowingValidationDialog
 
@@ -38,7 +38,7 @@ _METRICS = [
 ]
 
 
-class TrendFollowingTab(QWidget):
+class TrendFollowingTab(ThreadOwnerMixin, QWidget):
 
     def __init__(self, universe_tab=None, parent=None):
         super().__init__(parent)
@@ -378,7 +378,7 @@ class TrendFollowingTab(QWidget):
         self._run_btn.setEnabled(False)
         self._chart_btn.setEnabled(False)
         self._status_lbl.setText(f"Fetching {ticker} history from {start}...")
-        self._backtest_thread = TrendFollowingBacktestThread(ticker, start, config)
+        self._track_thread(TrendFollowingBacktestThread(ticker, start, config), '_backtest_thread')
         self._backtest_thread.finished.connect(self._on_backtest_finished)
         self._backtest_thread.start()
 
@@ -428,8 +428,9 @@ class TrendFollowingTab(QWidget):
         self._portfolio_btn.setEnabled(False)
         self._validate_btn.setEnabled(False)
         self._status_lbl.setText(f"{'Validating' if mode == 'validate' else 'Portfolio backtest'}: {len(tickers)} tickers from {start}...")
-        self._portfolio_thread = TrendFollowingPortfolioThread(tickers, start, config, mode=mode,
-                                                               oos_first_year=oos_first, oos_last_year=oos_last)
+        self._track_thread(TrendFollowingPortfolioThread(tickers, start, config, mode=mode,
+                                                         oos_first_year=oos_first, oos_last_year=oos_last),
+                           '_portfolio_thread')
         self._portfolio_thread.progress.connect(self._status_lbl.setText)
         self._portfolio_thread.finished.connect(self._on_portfolio_finished)
         self._portfolio_thread.start()
@@ -524,7 +525,3 @@ class TrendFollowingTab(QWidget):
                     tt.setItem(r, c, it)
         finally:
             tt.setUpdatesEnabled(True)
-
-    def collect_threads_to_stop(self):
-        """For MainWindow.closeEvent (mirrors the other tabs)."""
-        return [t for t in (getattr(self, "_backtest_thread", None), getattr(self, "_portfolio_thread", None)) if t is not None]
