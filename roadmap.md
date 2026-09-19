@@ -36,6 +36,47 @@
 - **DB**: SQLite (WAL 모드), `trade_db.py`
 - **AI**: `google-genai` (`gemini_helper.py`로 포트폴리오 진단·자연어 필터에 실사용 중), `google-cloud-aiplatform` (requirements에 포함, 미사용)
 
+### 소스 코드 구조 (2026-09-19 갱신)
+
+> **구조가 바뀔 때마다(폴더/파일 신설·이동·삭제) 이 섹션을 최신 상태로 갱신할 것.** 3-1의
+> "현재 파일 구조"는 Phase 0~5 리팩토링 당시의 역사적 기록이라 갱신 대상이 아니고, 지금
+> 시점의 실제 트리를 반영하는 곳은 이 섹션 하나로 유지한다.
+
+```
+src/
+├── main.py                # PyQt6 진입점 + MainWindow, 공용 헬퍼
+├── paths.py                # BASE_DIR 등 경로 상수 (6-1d, cwd 무관)
+├── data_fetcher.py          # data/·strategy/ 재노출 파사드 (하위 호환용)
+├── trade_db.py               # SQLite 거래 이력 (portfolio.db, WAL)
+├── gemini_helper.py            # Gemini 기반 포트폴리오 진단 / 자연어 필터
+├── data/                        # 순수 데이터 접근 계층
+│   ├── cache.py                   # 전역 캐시/세션 상수
+│   ├── indicators.py               # RSI/MA 등 지표
+│   ├── market.py                    # 시세 집계
+│   ├── history.py                    # 과거 시세 조회
+│   ├── listing.py                     # 종목 리스팅
+│   ├── frames.py                       # 데이터프레임 변환 유틸
+│   ├── fx.py                            # 환율
+│   └── collectors/                       # kis.py / krx.py / naver.py / yahoo.py
+├── strategy/                    # 매매 전략 로직 계층 (2026-09-17 data/에서 분리)
+│   ├── rebalance/                 # 팩터 스코어링 + 워크포워드 백테스트 (+ rebalance.md 스펙)
+│   ├── ma_cross/                    # 개별종목 MA20/60 골든크로스 전략 (+ ma_cross.md)
+│   └── trend_following/               # Donchian 채널 돌파 추세추종 (+ trend_following.md 스펙)
+├── ui/
+│   ├── common.py / widgets.py           # 공용 폰트·위젯 헬퍼
+│   ├── common.py                        # 폰트·검증·JSON I/O·retire_thread·ThreadOwnerMixin
+│   ├── universe_tab.py / history_tab.py / assets_tab.py / auto_trading_tab.py / trend_following_tab.py
+│   ├── history_table.py / history_calc.py # History 탭 셀 팩토리·SectionTable / 순수 계산(summarize_positions 등)
+│   └── dialogs/                           # 다이얼로그 11개 (stock_ma.py는 메서드 단위로 재구성)
+├── threads/                       # fetch_threads.py, realtime.py
+└── tests/                          # test_<모듈>.py 단위 테스트 + strategy/{ma_cross,rebalance,trend_following}/
+                                    #   (trend_following/frames.py = 공용 OHLCV 프레임 헬퍼)
+```
+
+전략별 상세 스펙·의사결정 이력은 `strategy/<전략명>/<전략명>.md`에 각각 둔다(코드와 같은
+폴더) — `rebalance.md`, `ma_cross.md`, `trend_following.md`. 예전에 저장소 루트에 있던
+`changelog_optimization.md`/`test_plan.md`는 `docs/history/`로 이관되었다.
+
 ### 기존 최적화 내역
 
 - 2026-08-11 1차: LRU 캐시, 배치 upsert, yf_quote_batch 통합, deepcopy 제거 등 7건
@@ -532,6 +573,7 @@ tests/
 | 2026-09-17 (6차) | 전략별 폴더+md 규칙 적용 마무리: `strategy/ma_cross.py` → `strategy/ma_cross/`(`__init__.py` 파사드 + `backtest.py`) + 코드 분석 기반 스펙 `ma_cross.md` 신규 작성, 루트 `trend_following.md`를 `src/strategy/trend_following/trend_following.md`로 이동·통합(폴더의 짧은 안내문 흡수). CLAUDE.md/AGENTS.md 갱신. 검증: pytest 119/119, ruff 0건. |
 | 2026-09-17 (7차) | 구조 검토 후속 정리: `tests/strategy/test_ma_cross.py` → `tests/strategy/ma_cross/test_backtest.py`(전략별 테스트 폴더 규칙), `data/__init__.py`의 재노출 목록을 `data_fetcher.py` 한 곳으로 통합(중복 제거), 테스트 9개 파일의 `_PROJ_ROOT` sys.path 보일러플레이트 삭제(`conftest.py`로 일원화), `test_plan.md`·`changelog_optimization.md` → `docs/history/`(날짜 접미사), `src/register_secret.py` → `tools/`, 빈 `paperclipai/` 삭제, `.agents/rules/optimize-code.md`를 CLAUDE.md와 동기화(archive 백업 규칙 제거, 경로 갱신), `.vscode/settings.json` extraPaths에 `./src` 추가. 검증: pytest 119/119, ruff 0건. |
 | 2026-09-17 (8차) | 구조 검토 잔여 2건 처리. (1) `data/` 내부 지연 import 순환 해소: `frames.py`(`_to_polars`), `listing.py`(종목 리스팅 캐시), `history.py`(`get_historical_data`/`_fetch_historical_uncached`), `fx.py`(USD/KRW) 신설, `_YF_BULK_CACHE`를 `cache.py`로 이동, `indicators.py`·`collectors/yahoo.py`가 하위 모듈을 모듈 수준에서 import — AST 기반 그래프 검사로 순환 0건(지연 import 포함) 확인, `market.py`는 542줄로 축소(기존 이름 재노출 유지). (2) `ui/dialogs.py`(1,926줄) → `ui/dialogs/` 패키지 6개 모듈 + `__init__` 재노출; `ui/history_tab.py` 1,901→1,442줄: 순수 계산 `ui/history_calc.py`, 표 렌더링 `ui/history_table.py`, 보유 요약·AI 진단 팝업 `ui/dialogs/holdings_summary.py`·`ai_diagnosis.py`로 추출(클래스에 위임 메서드 유지). 검증: pytest 119/119, ruff 0건, offscreen 표 렌더링 스모크. |
+| 2026-09-19 | 1장(현황 요약)에 상시 갱신용 "소스 코드 구조" 섹션 신설 — 3-1 "현재 파일 구조"는 Phase 0~5 당시의 역사적 스냅샷으로 남겨두고, 지금 시점의 실제 트리(`data/`·`strategy/`·`ui/dialogs/`·`tests/strategy/` 등, 전략별 `<이름>.md` 스펙 위치 포함)를 반영하는 곳을 이 섹션 하나로 일원화. 앞으로 구조가 바뀔 때마다 이 섹션을 갱신하는 것을 관례로 명시. 코드 변경 없음. |
 | 2026-09-17 (9차) | 추세추종 전략 구현(`src/strategy/trend_following/`, 스펙 `trend_following.md` 3~4장): `TrendFollowingConfig`, no-lookahead `donchian_signal`(직전 n일 채널, 종가 돌파, 롱온리 단일 포지션), `run_backtest`(position.shift(1) 방식, 총수익·CAGR·변동성·Sharpe·MDD·트레이드/승률/노출·리스크 게이트, 편도 비용 파라미터), `run_backtest_for_ticker`. 테스트 18개 추가(look-ahead 없음 검증 포함) → 137/137. `tests/` 하위에 `__init__.py` 추가(전략별 폴더의 동일 파일명 충돌 해결). 실데이터 예비 백테스트(6종목×3조합, 2021~2026)를 스펙 5장에 기록 — 리스크 게이트 통과 조합 없음, v2 방향(손절·사이징·레짐 필터) 도출. UI 연결 없음. |
 | 2026-09-17 (10차) | 추세추종 전략 UI 연결: 메인 윈도우 6번째 탭 "Trend Following"(`ui/trend_following_tab.py`) — 티커/Universe 콤보/시작일/entry_n·exit_n/편도 비용 입력, `TrendFollowingBacktestThread`(신규)로 백그라운드 실행, 지표 요약 행(리스크 게이트 색상)과 트레이드 표, `ui/dialogs/trend_following_chart.py`(종가+채널+진입/청산 마커, 전략 vs 매수&보유 에쿼티). `closeEvent` 스레드 정리에 포함. 헤드리스 UI 테스트 7개 추가 → 144/144. 주문 실행 없음. CLAUDE.md/AGENTS.md 탭 5개로 갱신. |
 | 2026-09-17 (11차) | (다른 에이전트 작업, 커밋 `db862dd`에 함께 포함) `data/collectors/naver.py`에 `_KR3Y_API_DISABLED = True` 추가 — 네이버 `interestDailyQuote.naver` 금리 페이지가 모든 코드에 HTTP 410 Gone을 반환해 KR 3년물 금리 조회를 비활성화. `_get_kr3y_df()`는 캐시(없으면 None)만 반환하며 호출자(`data/history.py`, `data/market.py`, `_load_ohlcv_window`)는 None/빈 프레임을 처리하므로 KR3YT 행이 Universe에서 빠지는 것 외 영향 없음. 확인: pytest 145/145. |
@@ -545,3 +587,6 @@ tests/
 | 2026-09-18 (5차) | **2-2** Trading History·Total Assets 탭에 Excel(.xlsx)/CSV Export 버튼 추가. 두 탭 모두 현재 화면에 렌더링된 `QTableWidget`을 그대로 읽어(`item(r,c).text()`) 내보내므로 필터·정렬 상태가 그대로 반영됨(별도 export 전용 데이터 경로를 새로 만들지 않음). `TradingHistoryTab`은 `_COLS`/`_SECTIONS`(기존 컬럼 정의)로부터 헤더를 동적으로 구성해 Buy/Sell 구간에서 중복되는 "Date/Price/Q'ty/Amount/Days/P&L/P&L%" 라벨에 섹션명을 접두(`Buy Date`, `Sell Date` 등)해 모호함 제거 — 헤더 목록을 손으로 중복 작성하지 않아 `_COLS` 변경 시 자동으로 따라감. `TradingRecordTab`은 15개 컬럼이 고정이라 `_EXPORT_HEADERS` 명시적 리스트 사용. xlsx는 `openpyxl`(이미 의존성에 있음), csv는 표준 `csv` 모듈, 저장 경로는 `QFileDialog.getSaveFileName`(파일 필터로 형식 선택, 확장자 자동 보정). 빈 테이블일 때는 안내 메시지만 띄우고 저장하지 않음. 오프스크린 스모크로 두 탭×두 포맷(xlsx/csv) 모두 헤더·데이터 내용이 화면 표시값과 일치함을 `openpyxl`/`csv` 재파싱으로 확인, 빈 테이블 가드도 확인. 검증: pytest 178/178, ruff 0건. |
 | 2026-09-18 (6차) | **4-2** (범위 축소: 팩터 가중치 커스터마이징은 보류, Sharpe/변동성 지표만) `strategy/rebalance/backtest.py`에 `_sharpe_and_vol()` 신설 — 주간 에쿼티 커브(리밸런싱 금요일마다 1포인트)의 기간별 수익률로 연 52기간 기준 Sharpe·연환산 변동성 계산, 무위험수익률은 0% 가정(`RebalanceConfig`에 아직 필드 없음 — `trend_following.return_metrics()`와 같은 방식이나 연환산 기준은 주간 vs 일별로 다름). `_summarize_backtest()` 반환 dict에 `sharpe`/`annual_vol_pct` 추가(빈 커브일 때도 0.0으로 채워 키 누락 없음), `BacktestResultDialog` 헤더에 표시. `rebalance.md` 4-3에 산출 지표·연환산 방식 기록. 단위테스트 5개 추가(`tests/strategy/rebalance/test_walkforward.py`: 빈/단일 포인트 0 처리, 분산 0인 flat 커브에서 0-division 아닌 0 반환, 직접 계산한 numpy 기준값과 일치, `_summarize_backtest` 배선 확인) → 183/183. 랜덤 20케이스(2~260포인트) 스크립트로도 수동 계산과 정확히 일치함을 추가 확인. 검증: pytest 183/183, ruff 0건. |
 | 2026-09-18 (7차) | **2-1** Trading Universe `StockTable`에 우클릭 컨텍스트 메뉴 "🤖 AI Stock Report" 추가. 원안(리포트+MA차트+거래추가 3개 메뉴)에서 이번 요청 범위인 AI 리포트 1건으로 축소. `gemini_helper.stock_report_summary(item)` 신설 — 새 OHLCV 히스토리를 다시 받지 않고 `StockTable`이 이미 화면에 갖고 있는 지표(현재가, PER, MA20/50 이격도, 52주 고/저 대비, 3D~120D 수익률)만으로 3줄 브리핑(추세/위치, 밸류에이션, 참고 지지·저항)을 Gemini에 요청 — 클릭당 추가 네트워크 호출 없이 즉시 응답. `threads/fetch_threads.py`에 `GeminiStockReportThread`(기존 `GeminiDiagnosisThread`와 동일 패턴), `ui/dialogs/stock_report.py`에 `show_stock_report_result()`(`ai_diagnosis.py`와 동일 구조, `ui.dialogs.__init__`에는 미등록 — 두 모듈 모두 클래스가 아닌 헬퍼 함수라 기존 관례를 따름). `StockTable.contextMenuEvent()`는 클릭된 행의 티커를 `load_data()`에 넘긴 리스트 인덱스가 아니라 화면에 실제 렌더링된 셀 텍스트에서 직접 읽어(`item(row,3).text()`) 정렬 후에도 안전하도록 구현(`setSortingEnabled(True)`라 시각적 행 순서가 로드 순서와 달라질 수 있음). `UniverseTab._on_ai_report_requested`가 `all_data`에서 티커로 전체 dict를 찾아 스레드에 전달, `collect_threads_to_stop()`에도 추가. 오프스크린 스모크로 성공/미지원 티커/API 실패 3개 경로 확인(실제 QMenu 팝업 클릭은 headless에서 검증 불가라 시그널 직접 emit으로 대체). CLAUDE.md/AGENTS.md 다이얼로그 모듈 목록에 `stock_report` 추가. 검증: pytest 183/183, ruff 0건. |
+| 2026-09-19 (2차) | 구조 재점검 후속 조치 1~2단계. (1) US 마켓 판별 튜플 4곳(`PositionPriceFetchThread` 3곳은 `"S&P500"` 누락, `history_tab._refresh_summary`는 포함)을 `data.cache.is_us_market()` 하나로 통합 — `S&P500` 포지션이 가격 조회에서는 KR로, 요약에서는 US로 분류되던 불일치 해소. (2) `_refresh_summary`의 KR/US/총자산 집계·`curr_days`·비중 계산을 `ui.history_calc.summarize_positions()`(순수 함수)로 분리하고 테스트 5건 추가(총자산 계산은 이전까지 테스트 0건); `_build_ui`에서 항상 만들어지는 위젯에 대한 `hasattr` 방어 코드 제거. (3) 테스트 공백 보강: `data.listing._singleflight_cache`(일 단위 만료·LRU·동시 호출 dedup), `data.frames._to_polars`(문자열 Date 컬럼도 캐스팅하도록 보강), `ui.history_table` 셀 팩토리·`fill_table_rows` 컬럼 배치. `test_phase2.py`를 `test_kis_realtime`/`test_history_bonds`/`test_gemini_threads`/`test_auto_trading_tab`으로 분리, trend_following 테스트 5개 파일의 `_frame` 복사본을 `tests/strategy/trend_following/frames.py`로 통합. pytest 184→214. |
+| 2026-09-19 (3차) | 구조 재점검 후속 조치 3단계(거대 메서드 분할, 동작 불변 검증). (1) `ui/dialogs/stock_ma.py` `StockMaDialog.__init__`(약 890줄, 중첩 함수 16개)을 우측 패널 테이블·축별 플롯·hover·팬/줌/스크롤바·토글 4종 등 25개 메서드로 재구성, 미사용 `diff_fmt` 제거. 오프스크린 특성화 스크립트로 9가지 입력(KR/US 종목, 지수, WTI 선물 커브, VIX, 채권 bp, 데이터 없음, MA 컬럼 누락)에 대해 축·선·범례·테이블·토글 시퀀스·휠 줌·드래그 팬·스크롤바·Y줌 스냅샷을 전후 비교 → 차이 0. (2) `history_tab._build_ui`(380줄)를 `_build_position_card`/`_build_metrics_card`/`_build_metrics_grid`/`_build_controls_row`/`_build_history_table`과 모듈 수준 위젯 팩토리·스타일 상수로 분할, `_SectionTable`을 `ui.history_table.SectionTable`(+`SECTIONS`)로 이동. 레이아웃 트리·위젯 속성·시그널 수신자 수 덤프 전후 비교 → 클래스명 변경 외 차이 0. |
+| 2026-09-19 (4차) | 구조 재점검 후속 조치 4단계(정리). (1) `ui.common.ThreadOwnerMixin` 신설 — 탭마다 손으로 나열하던 `collect_threads_to_stop()`을 `_track_thread()` 등록 기반으로 통일. 기존 목록에서 빠져 있던 Universe 탭의 경량 갱신·AI 필터 스레드, History 탭의 AI 진단 스레드가 종료 시 정리 대상에 포함됨. (2) `QThread.finished`에 람다를 연결하던 4곳(Universe 추가/시작 시 재조회, Universe·Auto Trading MA 차트, History 티커 편집 종목명 조회) 제거 — `SingleStockFetchThread.finished`가 `ticker`, `StockMaThread.finished`가 `market`/`change_mode`를 함께 emit하도록 확장해 슬롯을 바운드 메서드로 전환(CLAUDE.md 규칙 준수). 티커 편집 후 종목명 반영은 해당 티커를 가진 모든 레코드에 적용. (3) `data_fetcher.py` 파사드를 실제 외부 사용 이름 약 30개로 축소(79→30; 내부 캐시 이름 대부분 제거). (4) 잔여 `hasattr(self, …)` 방어 코드 제거, `AGENTS.md`를 `CLAUDE.md` 포인터로 교체(내용 중복·드리프트 방지). 검토 후 유지로 결정한 항목: `MainWindow`의 네이티브 상태바(일시 메시지)와 하단 `status_label`(지속 상태)은 역할이 다름, `main.py`의 `os._exit()`는 `terminate()`된 QThread 안의 ThreadPoolExecutor 워커가 종료를 막는 경우의 안전장치. 미결: 저장소에 추적 중이던 옵시디언 볼트(`Portfolio Management/`)가 작업 트리에서 삭제되고 `obsidian/`으로 옮겨진 상태 — 추적 여부는 사용자 결정 필요. pytest 214→222. |

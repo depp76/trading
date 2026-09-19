@@ -31,7 +31,7 @@ working directory:
 ### Verification
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest src\tests -q      # ~120 tests, no network, ~10 s
+.\.venv\Scripts\python.exe -m pytest src\tests -q      # ~225 tests, no network, ~10 s
 .\.venv\Scripts\ruff.exe check src                      # pyflakes rules only (ruff.toml)
 ```
 
@@ -39,10 +39,14 @@ Run pytest from the repo root or from `src/` (`tests/conftest.py` puts `src/` on
 the `tests/` folders are packages so test files in different strategy folders may share
 a basename).
 Tests patch the implementation modules (`data.cache`, `data.history`, `data.fx`, `data.collectors.yahoo`),
-never names on the `data_fetcher` facade. GUI behaviour cannot be exercised headlessly here;
-for non-trivial changes to fetch/backtest logic write a throwaway script comparing old vs.
-new behaviour on random inputs (`docs/history/changelog_optimization_2026-08-11.md` shows the
-pattern; `docs/history/test_plan_2026-08-29.md` is an old manual-check list kept for reference).
+never names on the `data_fetcher` facade. Widgets can be built and driven headlessly with
+`QT_QPA_PLATFORM=offscreen` (the tests construct tabs and dialogs that way), but nothing can be
+looked at, so for UI refactors write a throwaway characterisation script that dumps widget /
+matplotlib-axes state before and after and diff the two (done for `StockMaDialog` and
+`TradingHistoryTab._build_ui` on 2026-09-19); for non-trivial changes to fetch/backtest logic
+write a throwaway script comparing old vs. new behaviour on random inputs
+(`docs/history/changelog_optimization_2026-08-11.md` shows the pattern;
+`docs/history/test_plan_2026-08-29.md` is an old manual-check list kept for reference).
 Dev tooling is in `requirements-dev.txt`
 (`-r requirements.txt` + pytest + ruff); runtime pins are in `requirements.txt`.
 
@@ -60,9 +64,11 @@ Dev tooling is in `requirements-dev.txt`
   `backtest_result`, `trend_following_chart`, `trend_following_portfolio`, `holdings_summary`,
   `ai_diagnosis`, `stock_report`; import from
   `ui.dialogs`),
-  `history_table.py` (cell factories + `fill_table_rows` for the history grid),
-  `history_calc.py` (pure P/L maths, no Qt), `common.py` (`create_font`, `FONT_FAMILY_CSS`,
-  input validators, `atomic_save_json` / `safe_load_json`, `retire_thread`). Tabs never
+  `history_table.py` (cell factories, `fill_table_rows`, `SectionTable` + the column
+  `SECTIONS` for the history grid), `history_calc.py` (pure P/L maths, no Qt:
+  `compute_pl_fields`, `build_monthly_rows`, `summarize_positions`), `common.py`
+  (`create_font`, `FONT_FAMILY_CSS`, input validators, `atomic_save_json` /
+  `safe_load_json`, `retire_thread`, `ThreadOwnerMixin`). Tabs never
   reference each other
   directly; `MainWindow` connects their signals (`status_message`, `refresh_started`,
   `auto_lightweight_tick`, `total_asset_updated`). The one exception is `AutoTradingTab`,
@@ -74,10 +80,14 @@ Dev tooling is in `requirements-dev.txt`
   `TrendFollowingBacktestThread`, `TrendFollowingPortfolioThread`,
   the Gemini threads, `AutoBackupThread`). Never call `data_fetcher` functions from a slot on
   the UI thread; add a thread class instead. Connect `finished` signals to bound methods,
-  not closures, so Qt queues them onto the UI thread.
+  not closures, so Qt queues them onto the UI thread; when a slot needs per-request
+  context (which ticker, which market, which change mode), have the thread echo it back
+  in the signal (`SingleStockFetchThread.finished(result, error, ticker)`,
+  `StockMaThread.finished(..., market, change_mode)`) instead of capturing it in a lambda.
 - **`src/data/`**: all external data access, layered bottom-up with no import cycles
   (module-level or lazy): `cache.py` (HTTP sessions, `_HIST_CACHE` LRU with
-  `_HIST_CACHE_STATS`, `_YF_BULK_CACHE`, `start_date()`, `is_kr_code()`, `safe_float`) ->
+  `_HIST_CACHE_STATS`, `_YF_BULK_CACHE`, `start_date()`, `is_kr_code()`, `is_us_market()`,
+  `safe_float`) ->
   `frames.py` (`_to_polars`) -> `collectors/naver.py`, `kis.py`, `krx.py` -> `listing.py`
   (`get_stock_listing`, day-scoped single-flight cache), `history.py` (`get_historical_data`
   routing KR codes to Naver, bonds to cached series, else yfinance/yahooquery/FDR), `fx.py`
@@ -107,7 +117,10 @@ Dev tooling is in `requirements-dev.txt`
   never via `data_fetcher`.
 - **`src/data_fetcher.py`**: the single re-export facade over `data/` (data access only, no
   strategy symbols) so UI and thread code import from one place; `data/__init__.py` itself
-  re-exports nothing. Nothing in `data/` imports the facade back; keep it that way.
+  re-exports nothing. Nothing in `data/` imports the facade back; keep it that way. It
+  lists only the names callers outside `data/` use (about 30; trimmed from 79 on
+  2026-09-19), so add a name there when a new UI/thread caller needs it rather than
+  importing `data.*` directly.
 - **`src/trade_db.py`**: SQLite persistence (`portfolio.db`, WAL mode). Prefer
   `upsert_trades()` for batches. Do not generate `orig_key` values in callers:
   `upsert_trade()` without a key claims a collision-free one inside the INSERT and writes it
@@ -157,9 +170,13 @@ not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
   repeating the font-family list.
 - Bulk table repaints are wrapped in `setUpdatesEnabled(False)` / `finally:
   setUpdatesEnabled(True)`.
-- Replacing a possibly-running `QThread` stored on a widget goes through
-  `ui.common.retire_thread(self, "<attr>")`; every tab exposes `collect_threads_to_stop()`
-  for `MainWindow.closeEvent`.
+- Every tab mixes in `ui.common.ThreadOwnerMixin` and registers each worker it starts with
+  `self._track_thread(thread, "<attr>")` (the optional attr retires the previous thread
+  stored there via `retire_thread` and stores the new one); the mixin's
+  `collect_threads_to_stop()` is what `MainWindow.closeEvent` calls, so a thread that is
+  not tracked will not be stopped at shutdown.
+- KR-vs-US position labels go through `is_us_market()` (one set, shared by the price
+  thread and the Trading History summary).
 - KR-vs-US ticker routing uses `is_kr_code()`; the daily-history lookback start is
   `start_date()` (a function, not an import-time constant).
 - Strategy specs live next to their code as `src/strategy/<name>/<name>.md` (see the
