@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QInputDialog, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont
 
 import trade_db
 from data_fetcher import is_kr_code
@@ -40,9 +40,131 @@ logger = logging.getLogger(__name__)
 
 from ui.common import create_font, _fmt_num_edit, FONT_FAMILY_CSS, retire_thread
 from ui.history_calc import compute_pl_fields, build_monthly_rows, summarize_positions
-from ui.history_table import fill_table_rows
+from ui.history_table import fill_table_rows, SectionTable, SECTIONS
 from ui.dialogs.holdings_summary import show_holdings_summary
 from ui.dialogs.ai_diagnosis import show_ai_diagnosis_result
+
+
+# ── Dashboard card styling / widget factories for TradingHistoryTab._build_ui ──
+_BTN_H = 28
+_FLD_W = 110   # field (label + widget) width per column
+
+_INPUT_STYLE = (
+    "QLineEdit { background:#fff; color:#111; border:1px solid #ccc; "
+    "border-radius:4px; padding:3px 6px; font-size:12px; font-weight:bold; }"
+)
+_COMBO_STYLE = (
+    "QComboBox { background:#fff; color:#111; border:1px solid #ccc; border-radius:4px; padding:3px 6px; font-size:9pt; font-weight:bold; }"
+    "QComboBox::drop-down { border-left:1px solid #ccc; }"
+)
+_CARD_STYLE = """
+                QFrame#DashboardCard {
+                    background-color: #ffffff;
+                    border: 1px solid #dcdcdc;
+                    border-radius: 8px;
+                }
+            """
+_POS_TABLE_STYLE = """
+            QTableWidget {
+                border: 1px solid #c8c8c8;
+                border-radius: 6px;
+                background-color: #ffffff;
+                gridline-color: #e4e4e4;
+                """ + FONT_FAMILY_CSS + """
+                font-size: 12px;
+                font-weight: bold;
+                color: #1a1a2e;
+            }
+            QHeaderView::section {
+                background-color: #f0f2f5;
+                border: none;
+                border-right: 1px solid #d0d0d0;
+                border-bottom: 1px solid #d0d0d0;
+                """ + FONT_FAMILY_CSS + """
+                font-weight: bold;
+                font-size: 12px;
+                color: #444;
+                padding: 2px 4px;
+            }
+        """
+
+
+def _btn_style(bg: str, hover: str) -> str:
+    return (f"QPushButton {{ background:{bg}; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; }}"
+            f" QPushButton:hover {{ background:{hover}; }}")
+
+
+_BTN_BLUE = _btn_style("#0078d4", "#005a9e")
+_BTN_GREEN = _btn_style("#107c10", "#0b5e0b")
+_BTN_ORANGE = _btn_style("#d35400", "#e67e22")
+_BTN_PURPLE = _btn_style("#6c3483", "#9b59b6")
+_BTN_GREY = _btn_style("#6c757d", "#5a6268")
+_BTN_DEEP_BLUE = _btn_style("#0a3d62", "#1e5799")
+_BTN_NAVY = ("QPushButton { background:#1a5276; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; }"
+             " QPushButton:checked { background:#2874a6; border:2px solid #85c1e9; }"
+             " QPushButton:hover:!checked { background:#21618c; }")
+
+
+def _create_card(title_text: str) -> tuple:
+    """White rounded dashboard card; returns (frame, its QVBoxLayout)."""
+    card = QFrame()
+    card.setObjectName("DashboardCard")
+    card.setStyleSheet(_CARD_STYLE)
+    vbox = QVBoxLayout(card)
+    vbox.setContentsMargins(12, 10, 12, 10)
+    vbox.setSpacing(5)
+    vbox.setAlignment(Qt.AlignmentFlag.AlignTop)
+    if title_text:
+        lbl = QLabel(title_text)
+        lbl.setStyleSheet("font-size: 10pt; font-weight: bold; color: #0078d4;")
+        vbox.addWidget(lbl)
+    return card, vbox
+
+
+def _styled_button(text: str, style: str, on_click=None, *, width: int = _FLD_W,
+                   height: int = _BTN_H, tooltip: str = "") -> QPushButton:
+    btn = QPushButton(text)
+    btn.setFixedHeight(height)
+    btn.setFixedWidth(width)
+    btn.setStyleSheet(style)
+    if tooltip:
+        btn.setToolTip(tooltip)
+    if on_click is not None:
+        btn.clicked.connect(on_click)
+    return btn
+
+
+def _make_lbl(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setStyleSheet("font-size:12px; font-weight:bold; color:#444;")
+    lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    return lbl
+
+
+def _make_ro_edit(align=Qt.AlignmentFlag.AlignRight) -> QLineEdit:
+    e = QLineEdit("-")
+    e.setAlignment(align)
+    e.setFixedWidth(110)
+    e.setFixedHeight(_BTN_H)
+    e.setStyleSheet(_INPUT_STYLE)
+    e.setReadOnly(True)
+    return e
+
+
+def _make_rw_edit(placeholder: str = "") -> QLineEdit:
+    e = QLineEdit()
+    e.setPlaceholderText(placeholder)
+    e.setAlignment(Qt.AlignmentFlag.AlignRight)
+    e.setFixedWidth(110)
+    e.setFixedHeight(_BTN_H)
+    e.setStyleSheet(_INPUT_STYLE)
+    return e
+
+
+def _lbl_field_pair(grid: QGridLayout, row: int, col: int, lbl_text: str, widget) -> None:
+    """Label at `col` (left-aligned), widget at `col + 1`."""
+    grid.addWidget(_make_lbl(lbl_text), row, col, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    grid.addWidget(widget, row, col + 1, Qt.AlignmentFlag.AlignVCenter)
 
 
 class TradingHistoryTab(QWidget):
@@ -150,374 +272,177 @@ class TradingHistoryTab(QWidget):
         root.setSpacing(6)
         root.setContentsMargins(10, 8, 10, 8)
 
-        # --------------------------------
-        # TOP PANEL: Styled Dashboard Cards (1. Position Summary, 2. Metrics, 3. Control Center)
-        # --------------------------------
+        # Top panel: dashboard cards (position summary | account metrics + controls)
         top_panel = QHBoxLayout()
         top_panel.setSpacing(5)
         top_panel.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        top_panel.addWidget(self._build_position_card())
+        top_panel.addWidget(self._build_metrics_card())
+        top_panel.addStretch()
+        root.addLayout(top_panel, 0)          # stretch=0: top panel does not grow
 
-        def _create_card(title_text):
-            card = QFrame()
-            card.setObjectName("DashboardCard")
-            card.setStyleSheet("""
-                QFrame#DashboardCard {
-                    background-color: #ffffff;
-                    border: 1px solid #dcdcdc;
-                    border-radius: 8px;
-                }
-            """)
-            vbox = QVBoxLayout(card)
-            vbox.setContentsMargins(12, 10, 12, 10)
-            vbox.setSpacing(5)
-            vbox.setAlignment(Qt.AlignmentFlag.AlignTop)
-            if title_text:
-                lbl = QLabel(title_text)
-                lbl.setStyleSheet("font-size: 10pt; font-weight: bold; color: #0078d4;")
-                vbox.addWidget(lbl)
-            return card, vbox
+        root.addWidget(self._build_history_table(), 1)   # stretch=1: fills the rest
 
-        # ---Card 1: Position Summary ---
-        pos_card, pos_layout = _create_card("")
-        pos_card.setFixedWidth(420)
-        pos_card.setFixedHeight(125)
-        pos_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Center vertically since there is no title label
+    def _build_position_card(self) -> QFrame:
+        """Card 1: the 3x3 KR / US / Total position summary table."""
+        card, layout = _create_card("")
+        card.setFixedWidth(420)
+        card.setFixedHeight(125)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)  # no title label: centre vertically
 
-        pos_table = QTableWidget(3, 3)
-        self._pos_summary_table = pos_table
-        pos_table.setHorizontalHeaderLabels(["Position", "P/L", "Total"])
-        pos_table.setVerticalHeaderLabels(["KR", "US", "Total"])
-        # Table font setting: Malgun Gothic Semilight
-        pos_table.setFont(create_font(9, QFont.Weight.Bold))
-        pos_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        pos_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        pos_table.setAlternatingRowColors(True)
-        # Column widths: 0 and 1 stretch, 2 is interactive with fixed width to prevent clipping
-        pos_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        pos_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        pos_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        pos_table.setColumnWidth(2, 90)
-        pos_table.verticalHeader().setDefaultSectionSize(26)
-        pos_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        pos_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        pos_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        pos_table.setFixedWidth(400)
-        pos_table.setFixedHeight(110)
-        pos_table.setStyleSheet("""
-            QTableWidget {
-                border: 1px solid #c8c8c8;
-                border-radius: 6px;
-                background-color: #ffffff;
-                gridline-color: #e4e4e4;
-                """ + FONT_FAMILY_CSS + """
-                font-size: 12px;
-                font-weight: bold;
-                color: #1a1a2e;
-            }
-            QHeaderView::section {
-                background-color: #f0f2f5;
-                border: none;
-                border-right: 1px solid #d0d0d0;
-                border-bottom: 1px solid #d0d0d0;
-                """ + FONT_FAMILY_CSS + """
-                font-weight: bold;
-                font-size: 12px;
-                color: #444;
-                padding: 2px 4px;
-            }
-        """)
-        pos_layout.addWidget(pos_table)
-        top_panel.addWidget(pos_card)
+        tbl = self._pos_summary_table = QTableWidget(3, 3)
+        tbl.setHorizontalHeaderLabels(["Position", "P/L", "Total"])
+        tbl.setVerticalHeaderLabels(["KR", "US", "Total"])
+        tbl.setFont(create_font(9, QFont.Weight.Bold))
+        tbl.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        tbl.setAlternatingRowColors(True)
+        # Columns 0/1 stretch; column 2 stays interactive at a fixed width so it never clips
+        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        tbl.setColumnWidth(2, 90)
+        tbl.verticalHeader().setDefaultSectionSize(26)
+        tbl.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        tbl.setFixedWidth(400)
+        tbl.setFixedHeight(110)
+        tbl.setStyleSheet(_POS_TABLE_STYLE)
+        layout.addWidget(tbl)
+        return card
 
-        # ---Card 2: Account Metrics + Controls (unified, 3 rows) ---
-        metrics_card, metrics_layout = _create_card("")
-        metrics_card.setFixedHeight(126)
-        metrics_layout.setContentsMargins(12, 6, 12, 2)
-        metrics_layout.setSpacing(2)
-        metrics_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    def _build_metrics_card(self) -> QFrame:
+        """Card 2: account metric fields (2 grid rows) + the action/control row."""
+        card, layout = _create_card("")
+        card.setFixedHeight(126)
+        layout.setContentsMargins(12, 6, 12, 2)
+        layout.setSpacing(2)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        INPUT_STYLE = (
-            "QLineEdit { background:#fff; color:#111; border:1px solid #ccc; "
-            "border-radius:4px; padding:3px 6px; font-size:12px; font-weight:bold; }"
-        )
-        BTN_H = 28
-        FLD_W = 110   # field (label + widget) width per column
-
-        def make_lbl(text):
-            l = QLabel(text)
-            l.setStyleSheet("font-size:12px; font-weight:bold; color:#444;")
-            l.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            return l
-
-        def make_ro_edit(align=Qt.AlignmentFlag.AlignRight):
-            e = QLineEdit("-")
-            e.setAlignment(align)
-            e.setFixedWidth(110)
-            e.setFixedHeight(BTN_H)
-            e.setStyleSheet(INPUT_STYLE)
-            e.setReadOnly(True)
-            return e
-
-        def make_rw_edit(placeholder=""):
-            e = QLineEdit()
-            e.setPlaceholderText(placeholder)
-            e.setAlignment(Qt.AlignmentFlag.AlignRight)
-            e.setFixedWidth(110)
-            e.setFixedHeight(BTN_H)
-            e.setStyleSheet(INPUT_STYLE)
-            return e
-
-        def lbl_field_pair(grid, row, col, lbl_text, widget):
-            """Insert label at col (left-aligned in cell), widget at col+1."""
-            lbl = make_lbl(lbl_text)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            grid.addWidget(lbl, row, col,
-                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            grid.addWidget(widget, row, col + 1, Qt.AlignmentFlag.AlignVCenter)
-
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(20)
-        grid.setVerticalSpacing(5)
-        grid.setContentsMargins(0, 0, 0, 0)
-        # Label cols(even) stretch=0 - sized to text content only
-        # Field cols(odd)  stretch=1 - share remaining space equally
-        # - label-ield gap = horizontalSpacing uniformly across all pairs
-        # Columns: 0=lbl, 1=val, 2=lbl, 3=val, 4=lbl, 5=val, 6=lbl, 7=val, 8=lbl, 9=val
-        for c in range(10):
-            grid.setColumnStretch(c, 0 if c % 2 == 0 else 1)
-
-        # ---Row 0: Total Asset | P/L | P/L(%) | Withdrawal | Principal ---
-        self._total_asset_edit = make_ro_edit()
-        lbl_field_pair(grid, 0, 0, "Total Asset:", self._total_asset_edit)
-
-        self._total_pl_edit = make_ro_edit()
-        lbl_field_pair(grid, 0, 2, "Total P/L:", self._total_pl_edit)
-
-        self._total_pl_pct_edit = make_ro_edit()
-        lbl_field_pair(grid, 0, 4, "Total P/L(%):", self._total_pl_pct_edit)
-
-        self._withdrawal_edit = make_rw_edit("e.g. 5,000,000")
-        self._withdrawal_edit.textEdited.connect(self._on_deposit_changed)
-        self._withdrawal_edit.textEdited.connect(lambda t: _fmt_num_edit(self._withdrawal_edit, t))
-        lbl_field_pair(grid, 0, 6, "Withdrawal:", self._withdrawal_edit)
-
-        self._principal_edit = make_rw_edit("e.g. 50,000,000")
-        self._principal_edit.textEdited.connect(self._on_deposit_changed)
-        self._principal_edit.textEdited.connect(lambda t: _fmt_num_edit(self._principal_edit, t))
-        lbl_field_pair(grid, 0, 8, "Principal:", self._principal_edit)
-
-        # ---Row 1: Total Invest | Deposit | Deposit(%) ---
-        self._total_invest_edit = make_ro_edit()
-        lbl_field_pair(grid, 1, 0, "Total Invest:", self._total_invest_edit)
-
-        self._deposit_edit = make_rw_edit("e.g. 10,000,000")
-        self._deposit_edit.textEdited.connect(self._on_deposit_changed)
-        self._deposit_edit.textEdited.connect(lambda t: _fmt_num_edit(self._deposit_edit, t))
-        lbl_field_pair(grid, 1, 2, "Deposit:", self._deposit_edit)
-
-        self._deposit_pct_edit = make_ro_edit()
-        lbl_field_pair(grid, 1, 4, "Deposit(%):", self._deposit_pct_edit)
-
-        # ---Row 2: Summary | Sort by Date | Current Holdings | Search Company ---
-        btn_style_blue = "QPushButton { background:#0078d4; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; } QPushButton:hover { background:#005a9e; }"
-        btn_style_green = "QPushButton { background:#107c10; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; } QPushButton:hover { background:#0b5e0b; }"
-        btn_style_orange = "QPushButton { background:#d35400; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; } QPushButton:hover { background:#e67e22; }"
-        btn_style_purple = "QPushButton { background:#6c3483; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; } QPushButton:hover { background:#9b59b6; }"
-        btn_style_navy = "QPushButton { background:#1a5276; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; } QPushButton:checked { background:#2874a6; border:2px solid #85c1e9; } QPushButton:hover:!checked { background:#21618c; }"
-
-        summary_btn = QPushButton("Summary")
-        summary_btn.setFixedHeight(BTN_H)
-        summary_btn.setFixedWidth(FLD_W)
-        summary_btn.setStyleSheet(btn_style_purple)
-        summary_btn.clicked.connect(self._show_holdings_summary)
-        # summary_btn - controls_row (below)
-
-        self._sort_by_date = False
-        self._sort_date_btn = QPushButton("Sort by Date")
-        self._sort_date_btn.setFixedHeight(BTN_H)
-        self._sort_date_btn.setFixedWidth(120)
-        self._sort_date_btn.setCheckable(True)
-        self._sort_date_btn.setStyleSheet(btn_style_navy)
-        def _on_sort_date_toggled(checked, btn=self._sort_date_btn):
-            self._sort_by_date = checked
-            btn.setText("🔄 Sort by Position" if checked else "📅 Sort by Date")
-            self._apply_filter()
-        self._sort_date_btn.toggled.connect(_on_sort_date_toggled)
-        # sort_date_btn - controls_row (below)
-
-        self._open_stocks_combo = QComboBox()
-        self._open_stocks_combo.addItem("Current Holdings...")
-        self._open_stocks_combo.setFixedHeight(BTN_H)
-        self._open_stocks_combo.setFixedWidth(250)
-        self._open_stocks_combo.setStyleSheet(
-            "QComboBox { background:#fff; color:#111; border:1px solid #ccc; border-radius:4px; padding:3px 6px; font-size:9pt; font-weight:bold; }"
-            "QComboBox::drop-down { border-left:1px solid #ccc; }"
-        )
-        self._open_stocks_combo.currentTextChanged.connect(self._on_open_stock_combo_changed)
-        # open_stocks_combo - controls_row (below)
-
-        # Search Company (QLineEdit +  btn spanning remaining columns)
-        self._search_stock_pl_edit = QLineEdit()
-        self._search_stock_pl_edit.setPlaceholderText("Search Company")
-        self._search_stock_pl_edit.setFixedHeight(BTN_H)
-        self._search_stock_pl_edit.setFixedWidth(250)
-        self._search_stock_pl_edit.setStyleSheet(INPUT_STYLE)
-        self._search_stock_pl_edit.returnPressed.connect(self._on_search_stock_pl)
-        # search_stock_pl_edit - controls_row (below)
-
-        search_pl_btn = QPushButton("🔍")
-        search_pl_btn.setFixedHeight(BTN_H)
-        search_pl_btn.setFixedWidth(36)
-        search_pl_btn.setStyleSheet(
-            "QPushButton { background:#6c757d; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; }"
-            "QPushButton:hover { background:#5a6268; }"
-        )
-        search_pl_btn.clicked.connect(self._on_search_stock_pl)
-        # search_pl_btn - controls_row (below)
-
-        fetch_dep_btn = self._fetch_dep_btn = QPushButton("🔄 Fetch")
-        fetch_dep_btn.setFixedHeight(BTN_H)
-        fetch_dep_btn.setFixedWidth(FLD_W)
-        fetch_dep_btn.setStyleSheet(btn_style_blue)
-        fetch_dep_btn.clicked.connect(self._fetch_account_deposit)
-
-        reload_btn = QPushButton("🔄 Reload")
-        reload_btn.setFixedHeight(BTN_H)
-        reload_btn.setFixedWidth(FLD_W)
-        reload_btn.setStyleSheet(btn_style_green)
-        reload_btn.clicked.connect(self._reload_current)
-
-        add_btn = QPushButton("➕ Add Trade")
-        add_btn.setFixedHeight(BTN_H)
-        add_btn.setFixedWidth(FLD_W)
-        add_btn.setStyleSheet(btn_style_orange)
-        add_btn.clicked.connect(self._show_add_trade_dialog)
-       
-        # Status label in row 1, rightmost
-        self._deposit_status_lbl = QLabel("")
-        self._deposit_status_lbl.setStyleSheet("font-size:9pt; color:#107c10; font-weight:bold;")
-        self._deposit_status_lbl.setFixedHeight(BTN_H)
-
-        # Spanned horizontal layout for buttons in row 1, col 6-9
-        row1_buttons_layout = QHBoxLayout()
-        row1_buttons_layout.setSpacing(5)
-        row1_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        row1_buttons_layout.addWidget(fetch_dep_btn)
-        row1_buttons_layout.addWidget(reload_btn)
-        row1_buttons_layout.addWidget(add_btn)
-        row1_buttons_layout.addWidget(self._deposit_status_lbl)
-        row1_buttons_layout.addStretch()
-        grid.addLayout(row1_buttons_layout, 1, 6, 1, 4, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-        # Spaced lower row for buttons/combobox/search (separate layout so columns don't affect each other)
-        lower_layout = QHBoxLayout()
-        lower_layout.setSpacing(10)
-        lower_layout.setContentsMargins(0, 0, 0, 0)
-        lower_layout.addWidget(summary_btn)
-        lower_layout.addWidget(self._sort_date_btn)
-        lower_layout.addWidget(self._open_stocks_combo)
-        lower_layout.addWidget(self._search_stock_pl_edit)
-        lower_layout.addWidget(search_pl_btn)
-
-        ai_diag_btn = QPushButton("🤖 AI Diagnosis")
-        ai_diag_btn.setFixedHeight(BTN_H)
-        ai_diag_btn.setFixedWidth(FLD_W)
-        ai_diag_btn.setToolTip("Analyse portfolio risk, performance, and investment ideas using Gemini AI")
-        ai_diag_btn.setStyleSheet(
-            "QPushButton { background:#0a3d62; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; }"
-            "QPushButton:hover { background:#1e5799; }"
-        )
-        ai_diag_btn.clicked.connect(self._show_ai_diagnosis)
-        lower_layout.addWidget(ai_diag_btn)
-
-        export_btn = QPushButton("📥 Export")
-        export_btn.setFixedHeight(BTN_H)
-        export_btn.setFixedWidth(FLD_W)
-        export_btn.setToolTip("Export the currently displayed rows to Excel or CSV")
-        export_btn.setStyleSheet(
-            "QPushButton { background:#6c757d; color:white; border-radius:4px; padding:2px; font-weight:bold; font-size:9pt; }"
-            "QPushButton:hover { background:#5a6268; }"
-        )
-        export_btn.clicked.connect(self._on_export_clicked)
-        lower_layout.addWidget(export_btn)
-
-        lower_layout.addStretch()
-
-        metrics_layout.addLayout(grid)
-        metrics_layout.addSpacing(6)
-        metrics_layout.addLayout(lower_layout)
+        layout.addLayout(self._build_metrics_grid())
+        layout.addSpacing(6)
+        layout.addLayout(self._build_controls_row())
 
         self._path_label = QLabel("")
         self._path_label.setStyleSheet("color:#777; font-size:9px; border:none;")
         self._path_label.setFixedHeight(12)
-        metrics_layout.addWidget(self._path_label)
+        layout.addWidget(self._path_label)
+        return card
 
-        top_panel.addWidget(metrics_card)
-        top_panel.addStretch()
+    def _build_metrics_grid(self) -> QGridLayout:
+        """Row 0: Total Asset | P/L | P/L(%) | Withdrawal | Principal
+        Row 1: Total Invest | Deposit | Deposit(%) | [Fetch] [Reload] [Add Trade] status"""
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(20)
+        grid.setVerticalSpacing(5)
+        grid.setContentsMargins(0, 0, 0, 0)
+        # Label columns (even) size to their text; field columns (odd) share the rest.
+        for c in range(10):
+            grid.setColumnStretch(c, 0 if c % 2 == 0 else 1)
 
-        root.addLayout(top_panel, 0)  # stretch=0: top panel does not grow)
+        self._total_asset_edit = _make_ro_edit()
+        _lbl_field_pair(grid, 0, 0, "Total Asset:", self._total_asset_edit)
+        self._total_pl_edit = _make_ro_edit()
+        _lbl_field_pair(grid, 0, 2, "Total P/L:", self._total_pl_edit)
+        self._total_pl_pct_edit = _make_ro_edit()
+        _lbl_field_pair(grid, 0, 4, "Total P/L(%):", self._total_pl_pct_edit)
+        self._withdrawal_edit = self._make_money_input("e.g. 5,000,000")
+        _lbl_field_pair(grid, 0, 6, "Withdrawal:", self._withdrawal_edit)
+        self._principal_edit = self._make_money_input("e.g. 50,000,000")
+        _lbl_field_pair(grid, 0, 8, "Principal:", self._principal_edit)
 
+        self._total_invest_edit = _make_ro_edit()
+        _lbl_field_pair(grid, 1, 0, "Total Invest:", self._total_invest_edit)
+        self._deposit_edit = self._make_money_input("e.g. 10,000,000")
+        _lbl_field_pair(grid, 1, 2, "Deposit:", self._deposit_edit)
+        self._deposit_pct_edit = _make_ro_edit()
+        _lbl_field_pair(grid, 1, 4, "Deposit(%):", self._deposit_pct_edit)
 
-        # ---Main Data Table ---
-        sections = [
-            ("Trading",  0,  3, "#444444"),
-            ("Buy",       3,  4, "#1a6b3c"),
-            ("Sell",      7,  7, "#c0392b"),
-            ("Position", 14,  4, "#0078d4"),
-            ("Past",     18,  3, "#6d28d9"),
-        ]
+        # Row 1, cols 6-9: data buttons + KIS deposit status
+        self._fetch_dep_btn = _styled_button("🔄 Fetch", _BTN_BLUE, self._fetch_account_deposit)
+        reload_btn = _styled_button("🔄 Reload", _BTN_GREEN, self._reload_current)
+        add_btn = _styled_button("➕ Add Trade", _BTN_ORANGE, self._show_add_trade_dialog)
+        self._deposit_status_lbl = QLabel("")
+        self._deposit_status_lbl.setStyleSheet("font-size:9pt; color:#107c10; font-weight:bold;")
+        self._deposit_status_lbl.setFixedHeight(_BTN_H)
 
-        class _SectionTable(QTableWidget):
-            """QTableWidget that draws section separator lines after cell painting."""
-            def __init__(self_, secs):
-                super().__init__()
-                self_._secs     = secs
-                self_._last_col = max(s + sp - 1 for _, s, sp, _ in secs)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(5)
+        buttons.setContentsMargins(0, 0, 0, 0)
+        for w in (self._fetch_dep_btn, reload_btn, add_btn, self._deposit_status_lbl):
+            buttons.addWidget(w)
+        buttons.addStretch()
+        grid.addLayout(buttons, 1, 6, 1, 4, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        return grid
 
-            def viewportEvent(self_, event):
-                result = super().viewportEvent(event)
-                if int(event.type()) == 12:  # QPaintEvent
-                    self_._draw_section_lines()
-                return result
+    def _make_money_input(self, placeholder: str) -> QLineEdit:
+        """Editable KRW field: re-formats with thousands separators as you type
+        and schedules a debounced QSettings save."""
+        edit = _make_rw_edit(placeholder)
+        edit.textEdited.connect(self._on_deposit_changed)
+        edit.textEdited.connect(lambda t, e=edit: _fmt_num_edit(e, t))
+        return edit
 
-            def _draw_section_lines(self_):
-                vp = self_.viewport()
-                painter = QPainter(vp)
-                if not painter.isActive():
-                    return
-                painter.save()
-                h = vp.height()
-                pen = QPen()
-                pen.setWidth(1)
-                pen.setCosmetic(True)
-                for _, start, span, color in self_._secs:
-                    end_col = start + span - 1
-                    pen.setColor(QColor(color))
-                    painter.setPen(pen)
-                    xl = self_.columnViewportPosition(start)
-                    painter.drawLine(xl, 0, xl, h - 1)
-                    if end_col == self_._last_col:
-                        xr = self_.columnViewportPosition(end_col) + self_.columnWidth(end_col) - 1
-                        painter.drawLine(xr, 0, xr, h - 1)
-                painter.restore()
+    def _build_controls_row(self) -> QHBoxLayout:
+        """Summary | Sort by Date | Current Holdings combo | Search | AI Diagnosis | Export"""
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.setContentsMargins(0, 0, 0, 0)
 
-        tbl = self._table = _SectionTable(sections)
+        row.addWidget(_styled_button("Summary", _BTN_PURPLE, self._show_holdings_summary))
+
+        self._sort_by_date = False
+        self._sort_date_btn = _styled_button("Sort by Date", _BTN_NAVY, width=120)
+        self._sort_date_btn.setCheckable(True)
+        self._sort_date_btn.toggled.connect(self._on_sort_date_toggled)
+        row.addWidget(self._sort_date_btn)
+
+        self._open_stocks_combo = QComboBox()
+        self._open_stocks_combo.addItem("Current Holdings...")
+        self._open_stocks_combo.setFixedHeight(_BTN_H)
+        self._open_stocks_combo.setFixedWidth(250)
+        self._open_stocks_combo.setStyleSheet(_COMBO_STYLE)
+        self._open_stocks_combo.currentTextChanged.connect(self._on_open_stock_combo_changed)
+        row.addWidget(self._open_stocks_combo)
+
+        self._search_stock_pl_edit = QLineEdit()
+        self._search_stock_pl_edit.setPlaceholderText("Search Company")
+        self._search_stock_pl_edit.setFixedHeight(_BTN_H)
+        self._search_stock_pl_edit.setFixedWidth(250)
+        self._search_stock_pl_edit.setStyleSheet(_INPUT_STYLE)
+        self._search_stock_pl_edit.returnPressed.connect(self._on_search_stock_pl)
+        row.addWidget(self._search_stock_pl_edit)
+        row.addWidget(_styled_button("🔍", _BTN_GREY, self._on_search_stock_pl, width=36))
+
+        row.addWidget(_styled_button(
+            "🤖 AI Diagnosis", _BTN_DEEP_BLUE, self._show_ai_diagnosis,
+            tooltip="Analyse portfolio risk, performance, and investment ideas using Gemini AI"))
+        row.addWidget(_styled_button(
+            "📥 Export", _BTN_GREY, self._on_export_clicked,
+            tooltip="Export the currently displayed rows to Excel or CSV"))
+        row.addStretch()
+        return row
+
+    def _on_sort_date_toggled(self, checked: bool):
+        self._sort_by_date = checked
+        self._sort_date_btn.setText("🔄 Sort by Position" if checked else "📅 Sort by Date")
+        self._apply_filter()
+
+    def _build_history_table(self) -> QTableWidget:
+        """The unified closed/open/monthly trade grid with the two-row grouped header."""
+        tbl = self._table = SectionTable(SECTIONS)
         tbl.setColumnCount(len(self._COLS))
         tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         tbl.setAlternatingRowColors(False)
         tbl.setSortingEnabled(False)
         tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
-        # Table font: Pretendard, Noto Sans KR, Segoe UI, Malgun Gothic 9pt (set appropriate size to prevent text cutoff)
-        tbl_font = create_font(9, style_name="Semilight")
-        tbl.setFont(tbl_font)
-        # Fixed row height: 22px (secure margin against font)
-        tbl.verticalHeader().setDefaultSectionSize(22)
+        tbl.setFont(create_font(9, style_name="Semilight"))
+        tbl.verticalHeader().setDefaultSectionSize(22)   # fixed 22px rows: margin against the font
         tbl.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         tbl.verticalHeader().setVisible(False)
 
-
-        grouped_hdr = GroupedHeaderView(sections, self._COLS, tbl)
+        grouped_hdr = GroupedHeaderView(SECTIONS, self._COLS, tbl)
         grouped_hdr.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         grouped_hdr.setMinimumSectionSize(40)
         tbl.setHorizontalHeader(grouped_hdr)
@@ -525,9 +450,8 @@ class TradingHistoryTab(QWidget):
             "QTableWidget { gridline-color: #d0d0d0; " + FONT_FAMILY_CSS + " font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
         )
-
         tbl.cellDoubleClicked.connect(self._on_cell_double_clicked)
-        root.addWidget(tbl, 1)  # stretch=1: trading table fills remaining space
+        return tbl
 
     def _fit_columns(self):
         """Set column widths to fill the viewport without horizontal scrolling."""
@@ -961,17 +885,13 @@ class TradingHistoryTab(QWidget):
         set_item(2, 2, f"{agg['pos_pl_pct']:+.1f}%", _pos_color(agg["pos_pl_pct"]))
 
         # Update Total Asset / P/L inline labels
-        INPUT_STYLE_BASE = (
-            "QLineEdit { border:1px solid #ccc; "
-            "border-radius:4px; padding:3px 6px; font-size:12px; font-weight:bold; }"
-        )
         self._total_invest_edit.setText(f"{agg['total_invest']:,.0f}")
         self._total_asset_edit.setText(f"{total:,.0f}")
         self._total_pl_edit.setText(f"{total_pl:+,.0f}")
         self._total_pl_edit.setToolTip(f"Total Asset ({total:,.0f}) - Principal ({principal:,.0f})")
-        self._total_pl_edit.setStyleSheet(INPUT_STYLE_BASE + " QLineEdit { background:#fff; color:#111; }")
+        self._total_pl_edit.setStyleSheet(_INPUT_STYLE)
         self._total_pl_pct_edit.setText(f"{agg['total_pl_pct']:+.1f}%")
-        self._total_pl_pct_edit.setStyleSheet(INPUT_STYLE_BASE + " QLineEdit { background:#fff; color:#111; }")
+        self._total_pl_pct_edit.setStyleSheet(_INPUT_STYLE)
 
     def _on_search_stock_pl(self):
         query = self._search_stock_pl_edit.text().strip().lower()

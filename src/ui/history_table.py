@@ -1,8 +1,55 @@
 """ui/history_table.py — Cell factories and row rendering for the Trading History
 table (split out of TradingHistoryTab on 2026-09-17)."""
-from PyQt6.QtWidgets import QTableWidgetItem
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
+from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtGui import QColor, QPainter, QPen
+
+# Column groups of the history grid: (label, first column, span, separator colour).
+# Shared by GroupedHeaderView (two-row header) and SectionTable (vertical rules).
+SECTIONS = [
+    ("Trading",  0,  3, "#444444"),
+    ("Buy",       3,  4, "#1a6b3c"),
+    ("Sell",      7,  7, "#c0392b"),
+    ("Position", 14,  4, "#0078d4"),
+    ("Past",     18,  3, "#6d28d9"),
+]
+
+
+class SectionTable(QTableWidget):
+    """QTableWidget that paints a coloured vertical rule at the left edge of
+    every column group (and the right edge of the last one) after the cells."""
+
+    def __init__(self, sections=SECTIONS, parent=None):
+        super().__init__(parent)
+        self._secs = sections
+        self._last_col = max(start + span - 1 for _, start, span, _ in sections)
+
+    def viewportEvent(self, event):
+        result = super().viewportEvent(event)
+        if event.type() == QEvent.Type.Paint:
+            self._draw_section_lines()
+        return result
+
+    def _draw_section_lines(self):
+        vp = self.viewport()
+        painter = QPainter(vp)
+        if not painter.isActive():
+            return
+        painter.save()
+        h = vp.height()
+        pen = QPen()
+        pen.setWidth(1)
+        pen.setCosmetic(True)
+        for _, start, span, color in self._secs:
+            end_col = start + span - 1
+            pen.setColor(QColor(color))
+            painter.setPen(pen)
+            xl = self.columnViewportPosition(start)
+            painter.drawLine(xl, 0, xl, h - 1)
+            if end_col == self._last_col:
+                xr = self.columnViewportPosition(end_col) + self.columnWidth(end_col) - 1
+                painter.drawLine(xr, 0, xr, h - 1)
+        painter.restore()
 
 
 def si(text, align=Qt.AlignmentFlag.AlignCenter):
