@@ -206,11 +206,12 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
             layout.addWidget(cell_widget, 1)
 
         cell("total_asset", "Total Asset", "Valuation + cash")
+        cell("cumulative_asset", "Cumulative Asset", "Live NAV + withdrawals")
         cell("total_pl", "Total P/L", "Realized + unrealized")
         cell("total_pl_pct", "Total P/L (%)", "vs Principal")
         self._principal_edit = self._make_money_input("e.g. 50,000,000")
         cell("principal", "Principal", "Deposits − withdrawals", self._principal_edit)
-        cell("total_invest", "Total Invest", "Cost basis")
+        cell("cost_basis", "Cost Basis", "Open positions cost")
         self._deposit_edit = self._make_money_input("e.g. 10,000,000")
         cell("deposit", "Deposit", "", self._deposit_edit)
         self._withdrawal_edit = self._make_money_input("e.g. 5,000,000")
@@ -777,8 +778,11 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
             self._open_data, self._closed_data,
             deposit=deposit, withdrawal=withdrawal, principal=principal,
         )
-        total, total_pl = agg["total"], agg["total_pl"]
-        self.total_asset_updated.emit(total)
+        nav, cumulative_asset, total_pl = agg["nav"], agg["cumulative_asset"], agg["total_pl"]
+        # Live NAV, not the cumulative (withdrawals-included) figure: this
+        # feeds TradingRecordTab's "Current Total Asset" autofill, which
+        # represents what's actually in the account today.
+        self.total_asset_updated.emit(nav)
 
         def _pos_color(v): return LOSS if v < 0 else PROFIT
 
@@ -794,11 +798,12 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
             if key == "deposit":
                 sub_lbl.setText(f"{agg['deposit_pct']:.1f}% of invested")
 
-        set_kpi("total_asset", f"{total:,.0f}")
+        set_kpi("total_asset", f"{nav:,.0f}")
+        set_kpi("cumulative_asset", f"{cumulative_asset:,.0f}")
         set_kpi("total_pl", f"{total_pl:+,.0f}", _pos_color(total_pl),
-                 tooltip=f"Total Asset ({total:,.0f}) - Principal ({principal:,.0f})")
+                 tooltip=f"Cumulative Asset ({cumulative_asset:,.0f}) - Principal ({principal:,.0f})")
         set_kpi("total_pl_pct", f"{agg['total_pl_pct']:+.1f}%", _pos_color(agg["total_pl_pct"]))
-        set_kpi("total_invest", f"{agg['total_invest']:,.0f}")
+        set_kpi("cost_basis", f"{agg['cost_total']:,.0f}")
         set_kpi("deposit", None)  # value is the live QLineEdit; only the sub-label updates
 
     def _on_search_stock_pl(self):

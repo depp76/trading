@@ -75,8 +75,8 @@ class StockMaThread(QThread):
                 import FinanceDataReader as fdr
                 import polars as pl
                 from data_fetcher import _to_polars
-                start_date = df.get_column("Date")[0].strftime("%Y-%m-%d")
-                ew_pd = fdr.DataReader("252650", start_date)
+                first_date_str = df.get_column("Date")[0].strftime("%Y-%m-%d")
+                ew_pd = fdr.DataReader("252650", first_date_str)
                 if not ew_pd.empty:
                     ew_df = _to_polars(ew_pd)
                     if not ew_df.is_empty() and "Close" in ew_df.columns:

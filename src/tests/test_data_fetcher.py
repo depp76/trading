@@ -1,11 +1,14 @@
 """
 tests/test_data_fetcher.py — LRU cache and yf_quote_batch tests (mock-based)
 """
+import threading
+import time
 import unittest
 from unittest.mock import patch, MagicMock
 
 import data_fetcher
 import data.cache as dcache
+import data.history as history
 
 
 def _reset_hist_cache():
@@ -76,6 +79,54 @@ class TestHistCache(unittest.TestCase):
     def test_facade_shares_stats_dict(self):
         """The facade must expose the very same stats object, not a copy."""
         self.assertIs(data_fetcher._HIST_CACHE_STATS, dcache._HIST_CACHE_STATS)
+
+    def test_concurrent_misses_on_same_key_single_flight(self):
+        """20 threads racing to fetch the same (ticker, start) on a cold
+        cache must collapse into one underlying fetch (review_agy.md #4),
+        not 20 redundant network calls."""
+        df = self._make_polars_df()
+        call_count = {"n": 0}
+        call_lock = threading.Lock()
+
+        def slow_fetch(ticker, start):
+            with call_lock:
+                call_count["n"] += 1
+            time.sleep(0.05)
+            return df
+
+        with patch("data.history._fetch_historical_uncached", side_effect=slow_fetch), \
+             patch("data.history._hist_df_is_stale", return_value=False):
+            threads = [threading.Thread(target=data_fetcher.get_historical_data,
+                                         args=("005930", "2024-01-01")) for _ in range(20)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+
+        self.assertEqual(call_count["n"], 1)
+        self.assertEqual(len(history._HIST_KEY_LOCKS), 0)
+
+    def test_concurrent_misses_on_different_keys_not_serialized(self):
+        """The single-flight lock is per-key, so unrelated tickers must still
+        fetch in parallel rather than queue behind one another."""
+        df = self._make_polars_df()
+
+        def slow_fetch(ticker, start):
+            time.sleep(0.1)
+            return df
+
+        with patch("data.history._fetch_historical_uncached", side_effect=slow_fetch), \
+             patch("data.history._hist_df_is_stale", return_value=False):
+            threads = [threading.Thread(target=data_fetcher.get_historical_data,
+                                         args=(f"TICKER{i}", "2024-01-01")) for i in range(5)]
+            start_t = time.time()
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+            elapsed = time.time() - start_t
+
+        self.assertLess(elapsed, 0.3)  # would be ~0.5s if serialized
 
 
 class TestLogHistCacheStats(unittest.TestCase):

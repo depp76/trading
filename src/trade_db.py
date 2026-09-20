@@ -418,12 +418,17 @@ def backup_to(dest_path: str) -> None:
     """Write a consistent copy of portfolio.db to dest_path with SQLite's
     online backup API. Unlike a file copy after checkpoint_wal(), this
     includes every committed WAL frame and takes the locks itself, so it is
-    safe while the app is running (AutoBackupThread uses it at startup)."""
+    safe while the app is running (AutoBackupThread uses it at startup).
+
+    Copies in 100-page chunks with a short sleep between them (rather than
+    the whole DB in one shot) so a concurrent write from the main/UI thread
+    gets a chance to run between chunks instead of hitting "database is
+    locked" (review_agy.md #6)."""
     src = _connect()
     try:
         dst = sqlite3.connect(dest_path)
         try:
-            src.backup(dst)
+            src.backup(dst, pages=100, sleep=0.01)
         finally:
             dst.close()
     finally:

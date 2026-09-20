@@ -138,11 +138,12 @@ def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
                 changes["ma50_div"] = current_price / ma50 * 100
 
         # ── MA20 1-week rate of change (slope of the MA20 line itself, not price) ──
+        # n >= 25 implies n >= 20, so the "MA20 divergence" block above has
+        # already computed ma20 -- reuse it instead of taking the same mean twice.
         if mode == 'pct' and n >= 25:
-            ma20_today = float(np.mean(closes[-20:]))
             ma20_5d_ago = float(np.mean(closes[-25:-5]))
             if ma20_5d_ago > 0:
-                changes["ma20_roc_1w"] = (ma20_today / ma20_5d_ago - 1) * 100
+                changes["ma20_roc_1w"] = (ma20 / ma20_5d_ago - 1) * 100
 
     except Exception:
         logger.error("fetch_historical_changes failed for ticker=%s", ticker, exc_info=True)

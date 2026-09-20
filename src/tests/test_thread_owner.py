@@ -134,6 +134,35 @@ class TestSignalSlotArity(unittest.TestCase):
             upsert.assert_called_once()
         tab._settings_save_timer.stop()
 
+    def test_history_tab_kpi_strip_matches_its_own_labels(self):
+        """Total Asset/Cumulative Asset/Cost Basis used to be mislabeled --
+        Total Asset silently included withdrawals despite its "Valuation +
+        cash" subtext, and Total Invest showed NAV under a "Cost basis"
+        subtext (review_agy.md #1). Pin the corrected values and confirm
+        total_asset_updated emits live NAV, not the cumulative figure."""
+        from ui.history_tab import TradingHistoryTab
+        tab = TradingHistoryTab()
+        rec = {"company": "A", "market": "KOSPI", "buy_date": "2026-01-01", "orig_key": "k1",
+               "buy_price": 100.0, "qty": 10.0, "buy_amount": 1000.0, "curr_price": 120.0,
+               "sell_date": "", "sell_price": 0.0, "sell_qty": 0.0, "sell_amount": 0.0}
+        tab._open_data = [rec]
+        tab._closed_data = []
+        tab._principal_edit.setText("3,000")
+        tab._deposit_edit.setText("500")
+        tab._withdrawal_edit.setText("100")
+
+        emitted = []
+        tab.total_asset_updated.connect(emitted.append)
+        tab._refresh_summary()
+
+        # eval=1200, cost=1000, deposit=500, withdrawal=100, principal=3000
+        self.assertEqual(tab._kpi_labels["total_asset"][0].text(), "1,700")      # nav = eval + deposit
+        self.assertEqual(tab._kpi_labels["cumulative_asset"][0].text(), "1,800")  # nav + withdrawal
+        self.assertEqual(tab._kpi_labels["cost_basis"][0].text(), "1,000")        # cost_total, not NAV
+        self.assertEqual(tab._kpi_labels["total_pl"][0].text(), "-1,200")         # cumulative - principal
+        self.assertEqual(emitted, [1700.0])
+        tab._settings_save_timer.stop()
+
     def test_history_tab_deletes_selected_trades(self):
         from ui.history_tab import TradingHistoryTab
         tab = TradingHistoryTab()

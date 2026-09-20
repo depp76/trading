@@ -120,9 +120,10 @@ def summarize_positions(open_data: list, closed_data: list, *, deposit: float,
       * closed records get `position_w = curr_pct_pl = 0`.
 
     Returns a dict with the KR / US / total cost, evaluation, P/L and P/L %
-    figures, the total asset value and its P/L versus `principal`, and the
-    deposit ratio. Pure function (no Qt) so it is unit-testable; the tab only
-    renders the result.
+    figures, the live NAV (`nav`) and its cumulative counterpart including
+    past withdrawals (`cumulative_asset`), that cumulative figure's P/L
+    versus `principal`, and the deposit ratio. Pure function (no Qt) so it
+    is unit-testable; the tab only renders the result.
     """
     from data.cache import is_us_market
 
@@ -163,15 +164,20 @@ def summarize_positions(open_data: list, closed_data: list, *, deposit: float,
     def _pct(num, den):
         return (num / den * 100) if den else 0.0
 
-    total = eval_total + deposit + withdrawal
-    total_pl = total - principal
-    total_invest = total - withdrawal
+    # `nav` (live net asset value: current holdings + cash on hand) is what
+    # the "Total Asset" KPI card shows; `cumulative_asset` folds past
+    # withdrawals back in, so it's the all-time wealth figure `total_pl` is
+    # benchmarked against (review_agy.md #1 -- these two used to be
+    # conflated under one "total" that neither KPI card's label matched).
+    nav = eval_total + deposit
+    cumulative_asset = nav + withdrawal
+    total_pl = cumulative_asset - principal
 
     for r in open_data:
         qty = r.get("qty", 0.0)
         price = r.get("curr_price", 0.0)
         ev = (price * qty) if price > 0 and qty > 0 else r.get("buy_amount", 0.0)
-        r["position_w"] = _pct(ev, total_invest) if total_invest > 0 else 0.0
+        r["position_w"] = _pct(ev, nav) if nav > 0 else 0.0
         r["curr_pct_pl"] = r["curr_pl_pct"] * (r["position_w"] / 100.0) if r["position_w"] else 0.0
     for r in closed_data:
         r["position_w"] = 0.0
@@ -182,8 +188,8 @@ def summarize_positions(open_data: list, closed_data: list, *, deposit: float,
         "us_cost": us_cost, "us_pl": us_eval - us_cost, "us_pl_pct": _pct(us_eval - us_cost, us_cost),
         "cost_total": cost_total, "eval_total": eval_total,
         "pos_pl": eval_total - cost_total, "pos_pl_pct": _pct(eval_total - cost_total, cost_total),
-        "total": total, "total_pl": total_pl,
+        "nav": nav, "cumulative_asset": cumulative_asset,
+        "total_pl": total_pl,
         "total_pl_pct": _pct(total_pl, principal) if principal > 0 else 0.0,
-        "total_invest": total_invest,
-        "deposit_pct": _pct(deposit, total_invest) if total_invest > 0 else 0.0,
+        "deposit_pct": _pct(deposit, nav) if nav > 0 else 0.0,
     }

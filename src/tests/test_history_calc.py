@@ -111,11 +111,11 @@ class TestSummarizePositions(unittest.TestCase):
         self.assertAlmostEqual(agg["cost_total"], 3000.0)
         self.assertAlmostEqual(agg["eval_total"], 3000.0)
         self.assertAlmostEqual(agg["pos_pl"], 0.0)
-        # total = eval + deposit + withdrawal
-        self.assertAlmostEqual(agg["total"], 3600.0)
+        # nav = eval + deposit (live NAV); cumulative_asset = nav + withdrawal
+        self.assertAlmostEqual(agg["nav"], 3500.0)
+        self.assertAlmostEqual(agg["cumulative_asset"], 3600.0)
         self.assertAlmostEqual(agg["total_pl"], 600.0)
         self.assertAlmostEqual(agg["total_pl_pct"], 20.0)
-        self.assertAlmostEqual(agg["total_invest"], 3500.0)
         self.assertAlmostEqual(agg["deposit_pct"], 500.0 / 3500.0 * 100)
 
         # per-row fields
@@ -153,7 +153,8 @@ class TestSummarizePositions(unittest.TestCase):
 
     def test_zero_denominators_do_not_raise(self):
         agg = self._run([], [], deposit=0.0, withdrawal=0.0, principal=0.0)
-        self.assertEqual(agg["total"], 0.0)
+        self.assertEqual(agg["nav"], 0.0)
+        self.assertEqual(agg["cumulative_asset"], 0.0)
         self.assertEqual(agg["total_pl_pct"], 0.0)
         self.assertEqual(agg["deposit_pct"], 0.0)
         self.assertEqual(agg["pos_pl_pct"], 0.0)

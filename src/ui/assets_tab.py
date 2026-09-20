@@ -403,7 +403,7 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
                 self._asset_edit.setCursorPosition(max(0, pos + delta))
                 self._asset_edit.blockSignals(False)
 
-    # ---JSON load/save ---
+    # ---SQLite asset_records load/save ---
     def _load_records(self):
         try:
             self._records = trade_db.load_asset_records()

@@ -235,7 +235,11 @@ Market rail:  지수·금리·원자재 카드 (표에서 분리)
 
 읽기 전용 `QLineEdit` 9개(`_make_ro_edit`)를 텍스트 KPI 스트립으로 대체한다. 입력 가능한 항목(원금·입금·출금)만 실제 필드로 남긴다.
 
-`Total Asset · Total P/L · Total P/L(%) · Principal · Total Invest · Deposit · Withdrawal`
+`Total Asset · Cumulative Asset · Total P/L · Total P/L(%) · Principal · Cost Basis · Deposit · Withdrawal`
+(2026-09-20: "Total Invest"는 실제로 NAV를 보여주면서 서브텍스트만 "Cost basis"였던
+라벨/계산 불일치를 바로잡아 `Cost Basis`(실제 매수원가)로 개명하고, 그동안 Total
+Asset에 섞여 있던 누적출금 포함 금액은 별도 `Cumulative Asset` 카드로 분리했다 —
+`roadmap.md` 2026-09-20 8차 참고.)
 
 ### 3.7 배경색
 
