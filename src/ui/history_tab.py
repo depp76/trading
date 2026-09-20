@@ -9,12 +9,12 @@ import datetime as _dt
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QTableWidget, QTableWidgetItem, QLineEdit, QPushButton,
+    QTableWidget, QLineEdit, QPushButton,
     QLabel, QHeaderView, QComboBox, QMessageBox, QDialog, QFrame,
     QInputDialog, QMenu,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
-from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
+from PyQt6.QtGui import QKeySequence, QShortcut
 
 import trade_db
 from data_fetcher import is_kr_code
@@ -55,21 +55,6 @@ from ui.dialogs.holdings_summary import show_holdings_summary
 # QFrame#DashboardCard/QTableWidget rules instead -- nothing left to set here.
 _BTN_H = 28
 _FLD_W = 110   # field (label + widget) width per column
-
-
-def _create_card(title_text: str) -> tuple:
-    """White rounded dashboard card; returns (frame, its QVBoxLayout)."""
-    card = QFrame()
-    card.setObjectName("DashboardCard")  # styled by ui/theme.py's QFrame#DashboardCard rule
-    vbox = QVBoxLayout(card)
-    vbox.setContentsMargins(12, 10, 12, 10)
-    vbox.setSpacing(5)
-    vbox.setAlignment(Qt.AlignmentFlag.AlignTop)
-    if title_text:
-        lbl = QLabel(title_text)
-        lbl.setStyleSheet(f"font-size: 10pt; font-weight: bold; color: {ACCENT_TEXT};")
-        vbox.addWidget(lbl)
-    return card, vbox
 
 
 def _styled_button(text: str, role: str = None, on_click=None, *, width: int = _FLD_W,
@@ -175,16 +160,6 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         root.setContentsMargins(10, 8, 10, 8)
 
         root.addWidget(self._build_kpi_strip(), 0)
-
-        # Top panel: dashboard cards (position summary | actions)
-        top_panel = QHBoxLayout()
-        top_panel.setSpacing(5)
-        top_panel.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        top_panel.addWidget(self._build_position_card())
-        top_panel.addWidget(self._build_actions_card())
-        top_panel.addStretch()
-        root.addLayout(top_panel, 0)          # stretch=0: top panel does not grow
-
         root.addLayout(self._build_controls_row())
         root.addWidget(self._build_history_table(), 1)   # stretch=1: fills the rest
 
@@ -202,6 +177,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         layout.setSpacing(0)
 
         self._kpi_labels = {}  # key -> (value QLabel | None, sub QLabel)
+        cell_widgets = []  # equalized below so every gap between fields is identical
 
         def cell(key, label, sub_text="", editable_widget=None):
             box = QVBoxLayout()
@@ -224,7 +200,10 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
             sub_lbl.setStyleSheet(f"color:{TEXT_FAINT};")
             box.addWidget(sub_lbl)
             self._kpi_labels[key] = (value_lbl, sub_lbl)
-            layout.addLayout(box, 1)
+            cell_widget = QWidget()
+            cell_widget.setLayout(box)
+            cell_widgets.append(cell_widget)
+            layout.addWidget(cell_widget, 1)
 
         cell("total_asset", "Total Asset", "Valuation + cash")
         cell("total_pl", "Total P/L", "Realized + unrealized")
@@ -236,66 +215,15 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         cell("deposit", "Deposit", "", self._deposit_edit)
         self._withdrawal_edit = self._make_money_input("e.g. 5,000,000")
         cell("withdrawal", "Withdrawal", "Cumulative", self._withdrawal_edit)
-        return card
 
-    def _build_position_card(self) -> QFrame:
-        """Card 1: the 3x3 KR / US / Total position summary table."""
-        card, layout = _create_card("")
-        card.setFixedWidth(420)
-        card.setFixedHeight(125)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)  # no title label: centre vertically
-
-        tbl = self._pos_summary_table = QTableWidget(3, 3)
-        tbl.setHorizontalHeaderLabels(["Position", "P/L", "Total"])
-        tbl.setVerticalHeaderLabels(["KR", "US", "Total"])
-        tbl.setFont(create_font(9, QFont.Weight.Bold))
-        tbl.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        tbl.setAlternatingRowColors(True)
-        # Columns 0/1 stretch; column 2 stays interactive at a fixed width so it never clips
-        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        tbl.setColumnWidth(2, 90)
-        tbl.verticalHeader().setDefaultSectionSize(26)
-        tbl.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        tbl.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        tbl.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        tbl.setFixedWidth(400)
-        tbl.setFixedHeight(110)  # styled by ui/theme.py's QTableWidget rule
-        layout.addWidget(tbl)
-        return card
-
-    def _build_actions_card(self) -> QFrame:
-        """Card 2: KIS deposit fetch / reload / add-trade actions. The
-        account-metric fields that used to live here moved to the KPI strip
-        (docs/ui.md 3.6)."""
-        card, layout = _create_card("")
-        card.setFixedHeight(60)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(4)
-
-        # Add Trade is this card's one primary action (docs/ui.md 1.6);
-        # Fetch/Reload are secondary utilities and stay neutral.
-        self._fetch_dep_btn = _styled_button("🔄 Fetch", None, self._fetch_account_deposit)
-        reload_btn = _styled_button("🔄 Reload", None, self._reload_current)
-        add_btn = _styled_button("➕ Add Trade", "primary", self._show_add_trade_dialog)
-        self._deposit_status_lbl = QLabel("")
-        self._deposit_status_lbl.setStyleSheet(f"font-size:9pt; color:{_STATUS_SUCCESS_COLOR}; font-weight:bold;")
-        self._deposit_status_lbl.setFixedHeight(_BTN_H)
-
-        buttons = QHBoxLayout()
-        buttons.setSpacing(5)
-        buttons.setContentsMargins(0, 0, 0, 0)
-        for w in (self._fetch_dep_btn, reload_btn, add_btn, self._deposit_status_lbl):
-            buttons.addWidget(w)
-        buttons.addStretch()
-        layout.addLayout(buttons)
-
-        self._path_label = QLabel("")
-        self._path_label.setStyleSheet(f"color:{TEXT_FAINT}; font-size:{FONT_CAPTION}pt; border:none;")
-        self._path_label.setFixedHeight(12)
-        layout.addWidget(self._path_label)
+        # Content widths vary a lot (e.g. "Realized + unrealized" vs. "Cost
+        # basis"), which used to make the gap between fields look uneven even
+        # though every cell shared the same stretch factor. Giving every cell
+        # the same minimum width makes the columns -- and the gaps between
+        # them -- genuinely equal.
+        max_w = max(cw.sizeHint().width() for cw in cell_widgets)
+        for cw in cell_widgets:
+            cw.setMinimumWidth(max_w)
         return card
 
     def _make_money_input(self, placeholder: str) -> QLineEdit:
@@ -307,26 +235,27 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         return edit
 
     def _build_controls_row(self) -> QHBoxLayout:
-        """Status filter | Summary | Sort by Date | Current Holdings combo |
-        Search | Period filter | ... | 30-day-rule toggle"""
+        """Single toolbar row: Fetch/Reload/Add Trade | Summary | Sort by
+        Date | Current Holdings combo | Search | Period filter | ... |
+        30-day-rule toggle. Used to be split across two dashboard cards plus
+        a separate controls row (with a KR/US/Total position table and an
+        All/Open/Closed status filter alongside them); both were removed and
+        everything that is left was consolidated into this one row (user
+        direction, 2026-09-20)."""
         row = QHBoxLayout()
         row.setSpacing(10)
         row.setContentsMargins(0, 0, 0, 0)
 
-        # Status filter (docs/ui.md issue #4 fix; mockup "states": All/Open/
-        # Closed) -- narrows which rows show, never the column structure.
-        self._state_filter = "All"
-        self._state_buttons = {}
-        state_group = QHBoxLayout()
-        state_group.setSpacing(1)
-        for label in ("All", "Open", "Closed"):
-            btn = _styled_button(label, None, width=56)
-            btn.setCheckable(True)
-            btn.setChecked(label == "All")
-            btn.clicked.connect(lambda checked, s=label: self._on_state_filter_changed(s))
-            state_group.addWidget(btn)
-            self._state_buttons[label] = btn
-        row.addLayout(state_group)
+        # Add Trade is this row's one primary action (docs/ui.md 1.6);
+        # Fetch/Reload are secondary utilities and stay neutral.
+        self._fetch_dep_btn = _styled_button("🔄 Fetch", None, self._fetch_account_deposit)
+        reload_btn = _styled_button("🔄 Reload", None, self._reload_current)
+        add_btn = _styled_button("➕ Add Trade", "primary", self._show_add_trade_dialog)
+        self._deposit_status_lbl = QLabel("")
+        self._deposit_status_lbl.setStyleSheet(f"font-size:9pt; color:{_STATUS_SUCCESS_COLOR}; font-weight:bold;")
+        self._deposit_status_lbl.setFixedHeight(_BTN_H)
+        for w in (self._fetch_dep_btn, reload_btn, add_btn):
+            row.addWidget(w)
 
         row.addWidget(_styled_button("Summary", None, self._show_holdings_summary))
 
@@ -375,17 +304,17 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         self._stale_toggle_btn.toggled.connect(self._on_stale_toggle_changed)
         row.addWidget(self._stale_toggle_btn)
 
+        row.addWidget(self._deposit_status_lbl)
+
+        self._path_label = QLabel("")
+        self._path_label.setStyleSheet(f"color:{TEXT_FAINT}; font-size:{FONT_CAPTION}pt; border:none;")
+        row.addWidget(self._path_label)
+
         return row
 
     def _on_sort_date_toggled(self, checked: bool):
         self._sort_by_date = checked
         self._sort_date_btn.setText("🔄 Sort by Position" if checked else "📅 Sort by Date")
-        self._apply_filter()
-
-    def _on_state_filter_changed(self, state: str):
-        self._state_filter = state
-        for s, btn in self._state_buttons.items():
-            btn.setChecked(s == state)
         self._apply_filter()
 
     def _on_period_filter_changed(self, period: str):
@@ -834,7 +763,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
     # ---Summary ---
     def _refresh_summary(self):
         """Recompute the position aggregates (ui.history_calc.summarize_positions)
-        and render them into the dashboard cards."""
+        and render them into the KPI strip."""
         deposit    = self._get_deposit()
         withdrawal = self._get_withdrawal()
         principal  = self._get_principal()
@@ -846,26 +775,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         total, total_pl = agg["total"], agg["total_pl"]
         self.total_asset_updated.emit(total)
 
-        # ---Update Position Summary Table ---
-        tbl = self._pos_summary_table
-
         def _pos_color(v): return LOSS if v < 0 else PROFIT
-
-        def set_item(r, c, text, color=None):
-            it = QTableWidgetItem(text)
-            it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if color:
-                it.setForeground(QColor(color))
-            tbl.setItem(r, c, it)
-
-        for row, prefix in ((0, "kr"), (1, "us")):
-            cost, pl, pct = agg[f"{prefix}_cost"], agg[f"{prefix}_pl"], agg[f"{prefix}_pl_pct"]
-            set_item(row, 0, f"{cost:,.0f}")
-            set_item(row, 1, f"{pl:+,.0f}", _pos_color(pl))
-            set_item(row, 2, f"{pct:+.1f}%", _pos_color(pct))
-        set_item(2, 0, f"{agg['cost_total']:,.0f}")
-        set_item(2, 1, f"{agg['pos_pl']:+,.0f}", _pos_color(agg["pos_pl"]))
-        set_item(2, 2, f"{agg['pos_pl_pct']:+.1f}%", _pos_color(agg["pos_pl_pct"]))
 
         # ---Update the KPI strip (docs/ui.md 3.6) ---
         def set_kpi(key, text, color=None, tooltip=None):

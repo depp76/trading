@@ -96,6 +96,7 @@ class MainWindow(QMainWindow):
 
         # Tab System
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("MainTabs")
         main_layout.addWidget(self.tabs)
 
         # Schema + one-time JSON migrations before any tab reads the DB

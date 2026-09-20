@@ -101,6 +101,11 @@ def app_qss(font_css: str) -> str:
     QTabBar::tab:selected {{ background: {ACCENT_BG}; color: {ACCENT_TEXT}; border-color: #c9c2f3; }}
     QTabBar::tab:hover:!selected {{ background: {HDR_BG}; }}
 
+    /* Top-level tabs only (Trading Universe/Trading History/Total
+       Assets/Strategy), not StrategyTab's nested sub-tab bar: 120% of the
+       10pt app base size, bold (user direction, 2026-09-20). */
+    QTabWidget#MainTabs QTabBar::tab {{ font-size: 12pt; font-weight: 700; }}
+
     QLineEdit, QComboBox {{
         background: {SURFACE}; color: {TEXT};
         border: 1px solid {LINE_STRONG}; border-radius: 6px;
