@@ -73,13 +73,23 @@ def _all_tabs_patched():
     # StrategyTab.showEvent kicks off StrategySummaryThread (a real network
     # fetch per ticker); a thread outliving its tab aborts the test process
     # when it emits into a deleted widget, so it is stubbed out here.
+    # save_asset_records/upsert_trade(s)/delete_trade are stubbed too even
+    # though this smoke test doesn't currently call any of them -- a save
+    # slipping into the real trade_db.portfolio.db from a test is exactly
+    # how the live Total Assets snapshots got overwritten with test data
+    # once before (roadmap.md 2026-09-20); cheap insurance against a repeat
+    # if this fixture grows to cover an editing action later.
     with patch("ui.universe_tab.safe_load_json", side_effect=_no_disk), \
          patch("ui.assets_tab.trade_db.load_asset_records", return_value=[]), \
+         patch("ui.assets_tab.trade_db.save_asset_records"), \
          patch("ui.assets_tab.TradingRecordTab._start_metrics_preload"), \
          patch("ui.assets_tab.TradingRecordTab._schedule_daily_sync"), \
          patch("ui.strategy_tab.StrategyTab._refresh_summary"), \
          patch("trade_db.get_open_trades", return_value=[]), \
-         patch("trade_db.load_all_trades", return_value=[]):
+         patch("trade_db.load_all_trades", return_value=[]), \
+         patch("trade_db.upsert_trade"), \
+         patch("trade_db.upsert_trades"), \
+         patch("trade_db.delete_trade"):
         yield
 
 
