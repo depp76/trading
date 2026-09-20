@@ -75,17 +75,19 @@ from ui.common import create_font, ThreadOwnerMixin
 # (issue #6: ResizeToContents used to reflow the whole table on every
 # recompute).
 # ---------------------------------------------------------------------------
+_FACTOR_COL_W = 120  # PER..MA20Slope1W% share one width (user direction, 2026-09-20):
+                      # MA20Slope1W%'s 120px (its 13-char header was the widest) is the standard.
 _SIGNAL_COLUMNS = [
-    ("stock",  "Rank / Stock", 210),
+    ("stock",  "Rank / Stock", 420),   # 2x the original 210 (user direction, 2026-09-20)
     ("action", "Action",        64),
     ("score",  "Score",         92),
-    ("per",    "PER",           58),
-    ("ma20div","MA20Div",       64),
-    ("ma50div","MA50Div",       64),
-    ("hi52",   "52wHigh%",      68),
-    ("ret20",  "Ret20D%",       62),
-    ("ret60",  "Ret60D%",       62),
-    ("slope",  "MA20Slope1W%",  84),
+    ("per",    "PER",           _FACTOR_COL_W),
+    ("ma20div","MA20Div",       _FACTOR_COL_W),
+    ("ma50div","MA50Div",       _FACTOR_COL_W),
+    ("hi52",   "52wHigh%",      _FACTOR_COL_W),
+    ("ret20",  "Ret20D%",       _FACTOR_COL_W),
+    ("ret60",  "Ret60D%",       _FACTOR_COL_W),
+    ("slope",  "MA20Slope1W%",  _FACTOR_COL_W),
     ("held",   "Held",          46),
 ]
 COL_STOCK, COL_ACTION, COL_SCORE, COL_PER, COL_MA20DIV, COL_MA50DIV, \
@@ -144,7 +146,7 @@ class AutoTradingTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         root.setContentsMargins(10, 8, 10, 8)
         root.setSpacing(8)
 
-        title = QLabel("Auto Trading — Weekly Rebalance Signals")
+        title = QLabel("Weekly Rebalance Signals")
         title.setFont(create_font(16, QFont.Weight.Bold))
         root.addWidget(title)
 
@@ -222,7 +224,10 @@ class AutoTradingTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
             btn = QPushButton(name)
             btn.setFont(create_font(9, style_name="Semilight"))
             btn.setFixedHeight(26)
-            btn.setFixedWidth(56)
+            # Wide enough for the post-compute label ("Hold (123)"), not just
+            # the bare name -- _apply_filter() appends "(<count>)" once
+            # signals are computed, which used to clip against a 56px width.
+            btn.setFixedWidth(100)
             btn.setCheckable(True)
             btn.setChecked(name == "All")
             btn.clicked.connect(lambda checked, n=name: self._on_filter_changed(n))

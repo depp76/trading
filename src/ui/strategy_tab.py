@@ -85,7 +85,7 @@ class StrategyTab(ThreadOwnerMixin, QWidget):
         root.addWidget(self._sub_tabs, 1)
 
         self.auto_trading_tab = AutoTradingTab(self._universe_tab)
-        self._sub_tabs.addTab(self.auto_trading_tab, "Auto Trading")
+        self._sub_tabs.addTab(self.auto_trading_tab, "Weekly Rebalance")
 
         self.trend_following_tab = TrendFollowingTab(self._universe_tab)
         self._sub_tabs.addTab(self.trend_following_tab, "Trend Following")

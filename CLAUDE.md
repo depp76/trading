@@ -9,7 +9,7 @@ top-level tabs: "Trading Universe" (KOSPI/KOSDAQ watchlist with live prices and 
 the US market code paths still exist but are commented out in the UI), "Trading History"
 (manually-entered trade log backed by SQLite), "Total Assets" (weekly asset snapshots vs.
 KOSPI and USD), and "Strategy" (roadmap 7-1) — a `QTabWidget` of sub-tabs behind a shared
-"Today's Signals" summary bar: "Auto Trading" (weekly factor-scoring rebalance signals plus
+"Today's Signals" summary bar: "Weekly Rebalance" (weekly factor-scoring rebalance signals plus
 a walk-forward backtest), "Trend Following" (Donchian channel breakout backtest for one
 ticker or a multi-ticker portfolio), and "MA Cross" (fast/slow MA golden-cross backtest for one
 ticker). The strategy sub-tabs are signal generation and research only; nothing places orders.
