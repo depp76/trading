@@ -230,6 +230,68 @@ class TestSignalSlotArity(unittest.TestCase):
         upsert.assert_called_once()
         tab._settings_save_timer.stop()
 
+    def test_history_tab_sequential_partial_sells_keep_splitting_correctly(self):
+        """review_agy.md (4th pass) #6: a second partial sell on the
+        remainder created by the first one must split again correctly, not
+        just the first split in isolation. 100 -> sell 30 (remainder 70) ->
+        sell 20 of the 70 (remainder 50)."""
+        from ui.history_tab import TradingHistoryTab
+        tab = TradingHistoryTab()
+        rec = {"ticker": "005930", "company": "A", "buy_date": "2026-01-01", "orig_key": "k1",
+               "buy_price": 1000.0, "qty": 100.0, "buy_amount": 100000.0,
+               "sell_date": "", "sell_price": 0.0, "sell_qty": 0.0, "sell_amount": 0.0}
+        tab._open_data = [rec]
+        tab._closed_data = []
+
+        # --- First partial sell: 30 of 100 ---
+        tab._row_data = [("open", rec)]
+        dlg1 = MagicMock()
+        dlg1.exec.return_value = QDialog.DialogCode.Accepted
+        dlg1.result_data = {"sell_date": "2026-02-01", "sell_price": 1200.0,
+                             "sell_qty": 30.0, "sell_amount": 36000.0}
+        with patch("ui.history_tab.SellEditDialog", return_value=dlg1), \
+             patch("ui.history_tab.trade_db.upsert_trade", return_value="k1_2"), \
+             patch("ui.history_tab.trade_db.upsert_trades"), \
+             patch.object(tab, "_refresh_summary"), patch.object(tab, "_apply_filter"):
+            tab._on_cell_double_clicked(0, 10)
+
+        self.assertEqual(rec["qty"], 30.0)
+        self.assertEqual(len(tab._open_data), 1)
+        remainder1 = tab._open_data[0]
+        self.assertEqual(remainder1["qty"], 70.0)
+        self.assertEqual(remainder1["buy_amount"], 70000.0)
+        self.assertEqual(remainder1["orig_key"], "k1_2")
+
+        # --- Second partial sell: 20 of the remaining 70 ---
+        tab._row_data = [("open", remainder1)]
+        dlg2 = MagicMock()
+        dlg2.exec.return_value = QDialog.DialogCode.Accepted
+        dlg2.result_data = {"sell_date": "2026-03-01", "sell_price": 1300.0,
+                             "sell_qty": 20.0, "sell_amount": 26000.0}
+        with patch("ui.history_tab.SellEditDialog", return_value=dlg2), \
+             patch("ui.history_tab.trade_db.upsert_trade", return_value="k1_3"), \
+             patch("ui.history_tab.trade_db.upsert_trades"), \
+             patch.object(tab, "_refresh_summary"), patch.object(tab, "_apply_filter"):
+            tab._on_cell_double_clicked(0, 10)
+
+        # remainder1 (30 of the original 70) becomes the closed sub-lot.
+        self.assertEqual(remainder1["qty"], 20.0)
+        self.assertEqual(remainder1["buy_amount"], 20000.0)
+        self.assertIn(remainder1, tab._closed_data)
+        self.assertNotIn(remainder1, tab._open_data)
+
+        # The 50 still-untouched shares survive as a third open record.
+        self.assertEqual(len(tab._open_data), 1)
+        remainder2 = tab._open_data[0]
+        self.assertEqual(remainder2["qty"], 50.0)
+        self.assertEqual(remainder2["buy_amount"], 50000.0)
+        self.assertEqual(remainder2["orig_key"], "k1_3")
+
+        # First closed sub-lot (from the first sale) is untouched by the second.
+        self.assertEqual(rec["qty"], 30.0)
+        self.assertEqual(rec["buy_amount"], 30000.0)
+        tab._settings_save_timer.stop()
+
     def test_history_tab_delete_uses_orig_key_not_value_equality(self):
         """Two open positions with identical field values (same ticker/date/
         qty/price) used to make list.remove(rec) ambiguous -- deleting one

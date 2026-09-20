@@ -90,6 +90,10 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         ColSpec("cum_pct",    "%",                 70, 0.7, None, None),
         ColSpec("excess",     "vs KOSPI (%p)",     90, 0.9, None, None),
     ]
+    # Derived rather than hardcoded so a future reorder of _COLUMNS can't
+    # silently desync the "Total Assets" column checks below it
+    # (review_agy.md #5).
+    COL_TOTAL_ASSETS = next(i for i, c in enumerate(_COLUMNS) if c.key == "total")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -106,6 +110,7 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         self._asset_edit_manual = False  # user typed over the auto-filled value (docs/ui.md 4.5)
         self._build_ui()
         self._load_records()
+        self._extend_date_combo_for_history()
         self._schedule_daily_sync()
         self._start_metrics_preload()
 
@@ -151,11 +156,8 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         self._date_combo = QComboBox()
         self._date_combo.setFont(create_font(10, style_name="Semilight"))
         self._date_combo.setFixedWidth(150)
-        for label, _ in self._friday_dates():
-            self._date_combo.addItem(label)
-        # Default to the most recent (last) Friday
-        if self._date_combo.count() > 0:
-            self._date_combo.setCurrentIndex(self._date_combo.count() - 1)
+        self._date_combo_start_year = None
+        self._rebuild_date_combo()
         self._date_combo.currentIndexChanged.connect(self._on_date_combo_changed)
 
         self._asset_edit = QLineEdit()
@@ -305,7 +307,7 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
 
     def _current_sub_labels(self) -> list:
         labels = [c.label for c in self._COLUMNS]
-        labels[4] = self._currency  # "Total Assets" column: "KRW" or "USD"
+        labels[self.COL_TOTAL_ASSETS] = self._currency  # "KRW" or "USD"
         return labels
 
     def _on_currency_changed(self, text: str):
@@ -339,11 +341,12 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
 
     # ---Friday date helpers ---
     @staticmethod
-    def _friday_dates() -> list[tuple[str, str]]:
-        """Return list of (label, iso_date) for every Friday from W01 of the current year to today."""
+    def _friday_dates(start_year: int | None = None) -> list[tuple[str, str]]:
+        """Return list of (label, iso_date) for every Friday from W01 of
+        `start_year` (default: the current year) to today."""
         today = _dt.date.today()
-        year  = today.year
-        # First Friday on or after Jan 1 of this year
+        year  = start_year or today.year
+        # First Friday on or after Jan 1 of start_year
         jan1  = _dt.date(year, 1, 1)
         days_until_fri = (4 - jan1.weekday()) % 7   # weekday(): Mon=0 - Fri=4
         first_fri = jan1 + _dt.timedelta(days=days_until_fri)
@@ -357,21 +360,51 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
             cur += _dt.timedelta(weeks=1)
         return results
 
+    def _rebuild_date_combo(self, start_year: int | None = None):
+        """(Re)populate the Friday-date combo from `start_year` (default:
+        the current year), storing each item's ISO date as userData so
+        _selected_date() can read it back in O(1) instead of regenerating
+        and zipping the whole list on every call."""
+        self._date_combo_start_year = start_year or _dt.date.today().year
+        self._date_combo.blockSignals(True)
+        self._date_combo.clear()
+        for label, iso_date in self._friday_dates(self._date_combo_start_year):
+            self._date_combo.addItem(label, iso_date)
+        if self._date_combo.count() > 0:
+            self._date_combo.setCurrentIndex(self._date_combo.count() - 1)
+        self._date_combo.blockSignals(False)
+
+    def _extend_date_combo_for_history(self):
+        """The combo defaults to the current year (docs/ui.md 4.1); extend
+        it back to the earliest year actually present in the loaded records
+        so a user tracking assets since a prior year can still select those
+        historical weeks to edit (review_agy.md #3 -- previously such dates
+        weren't selectable at all)."""
+        years = []
+        for r in self._records:
+            try:
+                years.append(_dt.datetime.strptime(r["date"], "%Y-%m-%d").date().year)
+            except Exception:
+                continue
+        if not years:
+            return
+        earliest = min(years)
+        if earliest < self._date_combo_start_year:
+            self._rebuild_date_combo(earliest)
+
     def _selected_date(self) -> str:
         """Return the ISO date string for the currently selected combo item."""
-        friday_dates = self._friday_dates()
-        _, dates = zip(*friday_dates) if friday_dates else ([], [])
-        idx = self._date_combo.currentIndex()
-        return dates[idx] if 0 <= idx < len(dates) else ""
+        data = self._date_combo.currentData()
+        return str(data) if data else ""
 
     def _sync_friday_combo(self):
         """Append any newly available Friday dates to the combo (called daily at midnight)."""
-        all_dates = self._friday_dates()
+        all_dates = self._friday_dates(self._date_combo_start_year)
         existing_count = self._date_combo.count()
         if len(all_dates) > existing_count:
             was_at_latest = (self._date_combo.currentIndex() == existing_count - 1)
-            for label, _ in all_dates[existing_count:]:
-                self._date_combo.addItem(label)
+            for label, iso_date in all_dates[existing_count:]:
+                self._date_combo.addItem(label, iso_date)
             # Auto-advance only if the user was already on the last item
             if was_at_latest:
                 self._date_combo.setCurrentIndex(self._date_combo.count() - 1)
@@ -463,19 +496,27 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         self._asset_edit_manual = False
 
     def _delete_selected(self):
-        rows = sorted({idx.row() for idx in self._table.selectedIndexes()}, reverse=True)
+        # Same visual-row-vs-self._records mismatch as
+        # _on_cell_double_clicked (review_agy.md #1): collect the selected
+        # rows' bound dates instead of popping by position.
+        rows = {idx.row() for idx in self._table.selectedIndexes()}
         if not rows:
             return
+        dates_to_delete = set()
+        for row in rows:
+            item = self._table.item(row, 0)
+            if item is not None:
+                dates_to_delete.add(item.data(Qt.ItemDataRole.UserRole))
+        if not dates_to_delete:
+            return
         reply = QMessageBox.question(
-            self, "Delete", f"Are you sure you want to delete {len(rows)} record(s)?",
+            self, "Delete", f"Are you sure you want to delete {len(dates_to_delete)} record(s)?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        for row in rows:
-            if 0 <= row < len(self._records):
-                self._records.pop(row)
+        self._records[:] = [r for r in self._records if r.get("date") not in dates_to_delete]
         self._save_records()
         self._refresh_table()
 
@@ -643,20 +684,32 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
         QMessageBox.information(self, "Export", f"Exported {len(rows)} row(s) to {path}")
 
     def _on_cell_double_clicked(self, row, col):
-        # col 4 is "Total Assets" (docs/ui.md 4.2) in both the old 15-column
-        # and new 10-column layout; this previously checked col == 1
+        # COL_TOTAL_ASSETS is "Total Assets" (docs/ui.md 4.2) in both the old
+        # 15-column and new 10-column layout; this previously checked col == 1
         # (KOSPI's close-price column), a stale index from before this
         # table had separate KOSPI weekly/cumulative columns in between.
-        if col == 4:
-            current_val = self._records[row].get("total", 0)
+        if col == self.COL_TOTAL_ASSETS:
+            # Look up by the date bound to column 0's UserRole, not the
+            # visual row index -- the table is sorted (default: newest
+            # first) while self._records stays ascending, so `row` doesn't
+            # index the record the user actually double-clicked
+            # (review_agy.md #1).
+            date_item = self._table.item(row, 0)
+            if date_item is None:
+                return
+            target_date = date_item.data(Qt.ItemDataRole.UserRole)
+            rec = next((r for r in self._records if r.get("date") == target_date), None)
+            if rec is None:
+                return
+            current_val = rec.get("total", 0)
             text, ok = QInputDialog.getText(self, "Edit Total Assets", "Enter new Total Assets amount:", text=f"{current_val:,.0f}")
             if ok:
                 try:
                     val = float(text.replace(',', '').strip())
-                    self._records[row]["total"] = val
+                    rec["total"] = val
                     # A direct table edit is as "manual" as typing over the
                     # auto-filled input (docs/ui.md 4.5).
-                    self._records[row]["manual"] = True
+                    rec["manual"] = True
                     self._save_records()
                     self._refresh_table()
                 except ValueError:
@@ -854,6 +907,14 @@ class TradingRecordTab(ThreadOwnerMixin, QWidget):
             d_it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             if m["manual"]:
                 d_it.setToolTip("Manually entered/edited")
+            # Sorting is enabled on this table (default indicator: newest
+            # first), which reorders visual rows without touching
+            # self._records -- indexing self._records by the visual row
+            # (as _on_cell_double_clicked/_delete_selected used to) silently
+            # edits/deletes a different date's record (review_agy.md #1).
+            # UserRole carries the real date so those lookups go by date,
+            # not position.
+            d_it.setData(Qt.ItemDataRole.UserRole, m["date"])
             self._table.setItem(i, 0, d_it)
 
             k_it = NumericItem(f"{m['kospi_close']:,.0f}" if m['kospi_close'] > 0 else "-", m['kospi_close'])

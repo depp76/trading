@@ -125,6 +125,7 @@ class SellEditDialog(QDialog):
         self.setMinimumWidth(300)
         self.result_data = None
         self._buy_date_str = current_data.get("buy_date", "")
+        self._orig_qty = float(current_data.get("qty", 0.0))
 
         layout = QFormLayout(self)
 
@@ -225,6 +226,18 @@ class SellEditDialog(QDialog):
         s_price = to_f(self.sell_price_edit.text())
         s_qty = to_f(self.sell_qty_edit.text())
         s_amt = to_f(self.sell_amount_edit.text())
+
+        # A sell quantity beyond what was actually bought bypasses the
+        # partial-sell proration in history_calc.compute_pl_fields (its
+        # s_qty < b_qty branch), so pl gets computed as the full sell_amount
+        # minus the full buy_amount -- inflating realized P/L with proceeds
+        # from shares that were never owned (review_agy.md #2).
+        if self._orig_qty > 0 and s_qty > self._orig_qty:
+            QMessageBox.warning(
+                self, "Input Error",
+                f"Sell quantity ({s_qty:,.0f}) cannot exceed the holding quantity ({self._orig_qty:,.0f}).",
+            )
+            return
 
         self.result_data = {
             "sell_date": sell_date_str,

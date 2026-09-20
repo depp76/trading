@@ -983,6 +983,11 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         10: ("sell_qty",    "Sell Quantity",               "float"),
         11: ("sell_amount", "Sell Amount",               "float"),
     }
+    # Derived from _EDITABLE_COLS (the single source of truth for column ->
+    # field) instead of separately hardcoded {3,4,5,6}/{7,9,10,11} literals,
+    # so the two can't drift out of sync with it (review_agy.md #5).
+    _SELL_EDIT_COLS = {c for c, (key, _, _) in _EDITABLE_COLS.items() if key.startswith("sell_")}
+    _BUY_EDIT_COLS = set(_EDITABLE_COLS) - _SELL_EDIT_COLS
 
     def _on_cell_double_clicked(self, row: int, col: int):
         """Edit a Buy/Sell field of a position via double-click."""
@@ -1030,7 +1035,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
                 thread.start()
             return
 
-        if col in {3, 4, 5, 6}:
+        if col in self._BUY_EDIT_COLS:
             dlg = BuyEditDialog(rec, self)
             if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_data:
                 res = dlg.result_data
@@ -1045,7 +1050,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
                 self._save_overrides([rec])
             return
 
-        if col in {7, 9, 10, 11}:
+        if col in self._SELL_EDIT_COLS:
             dlg = SellEditDialog(rec, self)
             if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_data:
                 res = dlg.result_data

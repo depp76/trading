@@ -61,6 +61,24 @@ class TestSellEditDialog(unittest.TestCase):
         warn.assert_called_once()
         self.assertIsNone(dlg.result_data)
 
+    def test_over_selling_is_rejected(self):
+        """sell_qty beyond the original holding must be blocked -- it used
+        to bypass compute_pl_fields' proration and inflate realized P/L
+        with proceeds from shares never owned (review_agy.md #2)."""
+        dlg = SellEditDialog({"buy_date": "2026-01-05", "qty": 100.0,
+                               "sell_date": "2026-02-05", "sell_price": 1500.0, "sell_qty": 150.0})
+        with patch("ui.dialogs.trade_edit.QMessageBox.warning") as warn:
+            dlg.on_save()
+        warn.assert_called_once()
+        self.assertIsNone(dlg.result_data)
+
+    def test_selling_exactly_the_full_holding_is_allowed(self):
+        dlg = SellEditDialog({"buy_date": "2026-01-05", "qty": 100.0,
+                               "sell_date": "2026-02-05", "sell_price": 1500.0, "sell_qty": 100.0})
+        dlg.on_save()
+        self.assertIsNotNone(dlg.result_data)
+        self.assertEqual(dlg.result_data["sell_qty"], 100.0)
+
 
 class TestTradeEntryDialog(unittest.TestCase):
 
