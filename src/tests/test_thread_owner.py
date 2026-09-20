@@ -1,10 +1,10 @@
 """tests/test_thread_owner.py — ui.common.ThreadOwnerMixin bookkeeping and the
 bound-method slots that replaced the lambda connections on QThread.finished."""
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from PyQt6.QtCore import QThread, QObject
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog
 
 app = QApplication.instance() or QApplication([])
 
@@ -161,6 +161,66 @@ class TestSignalSlotArity(unittest.TestCase):
             tab._delete_selected_trades()
         delete.assert_not_called()
         self.assertEqual(tab._open_data, [keep_rec])
+        tab._settings_save_timer.stop()
+
+    def test_history_tab_partial_sell_splits_remainder_into_open_position(self):
+        from ui.history_tab import TradingHistoryTab
+        tab = TradingHistoryTab()
+        rec = {"ticker": "005930", "company": "A", "buy_date": "2026-01-01", "orig_key": "k1",
+               "buy_price": 1000.0, "qty": 100.0, "buy_amount": 100000.0,
+               "sell_date": "", "sell_price": 0.0, "sell_qty": 0.0, "sell_amount": 0.0}
+        tab._open_data = [rec]
+        tab._closed_data = []
+        tab._row_data = [("open", rec)]
+
+        dlg = MagicMock()
+        dlg.exec.return_value = QDialog.DialogCode.Accepted
+        dlg.result_data = {"sell_date": "2026-02-01", "sell_price": 1200.0,
+                            "sell_qty": 40.0, "sell_amount": 48000.0}
+
+        with patch("ui.history_tab.SellEditDialog", return_value=dlg), \
+             patch("ui.history_tab.trade_db.upsert_trade", return_value="k1_2") as upsert, \
+             patch("ui.history_tab.trade_db.upsert_trades"), \
+             patch.object(tab, "_refresh_summary"), patch.object(tab, "_apply_filter"):
+            tab._on_cell_double_clicked(0, 10)
+
+        # The original record becomes the closed sub-lot sized to what was sold.
+        self.assertEqual(rec["qty"], 40.0)
+        self.assertEqual(rec["buy_amount"], 40000.0)
+        self.assertIn(rec, tab._closed_data)
+        self.assertNotIn(rec, tab._open_data)
+
+        # The untouched 60 shares survive as their own open position instead
+        # of vanishing from holdings (review_agy.md #5).
+        self.assertEqual(len(tab._open_data), 1)
+        remainder = tab._open_data[0]
+        self.assertEqual(remainder["qty"], 60.0)
+        self.assertEqual(remainder["buy_amount"], 60000.0)
+        self.assertEqual(remainder["sell_date"], "")
+        self.assertEqual(remainder["orig_key"], "k1_2")
+        upsert.assert_called_once()
+        tab._settings_save_timer.stop()
+
+    def test_history_tab_delete_uses_orig_key_not_value_equality(self):
+        """Two open positions with identical field values (same ticker/date/
+        qty/price) used to make list.remove(rec) ambiguous -- deleting one
+        could remove the other instead (review_agy.md #2)."""
+        from ui.history_tab import TradingHistoryTab
+        tab = TradingHistoryTab()
+        rec_a = {"ticker": "005930", "company": "A", "buy_date": "2026-01-01", "orig_key": "k1",
+                 "buy_price": 1.0, "qty": 1.0, "buy_amount": 1.0}
+        rec_b = {"ticker": "005930", "company": "A", "buy_date": "2026-01-01", "orig_key": "k2",
+                 "buy_price": 1.0, "qty": 1.0, "buy_amount": 1.0}
+        tab._open_data = [rec_a, rec_b]
+        tab._closed_data = []
+        tab._row_data = [("open", rec_a), ("open", rec_b)]
+        with patch.object(tab, "_selected_trade_records", return_value=[("open", rec_a)]), \
+             patch("ui.history_tab.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes), \
+             patch("ui.history_tab.trade_db.delete_trade", return_value=True) as delete, \
+             patch.object(tab, "_refresh_summary"), patch.object(tab, "_apply_filter"):
+            tab._delete_selected_trades()
+        delete.assert_called_once_with("k1")
+        self.assertEqual(tab._open_data, [rec_b])
         tab._settings_save_timer.stop()
 
     def test_history_tab_renames_every_record_with_that_ticker(self):

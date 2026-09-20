@@ -389,18 +389,23 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+        deleted_keys = set()
         for kind, rec in targets:
             key = rec.get("orig_key")
             try:
                 if key:
                     trade_db.delete_trade(key)
+                    deleted_keys.add(key)
             except Exception as e:
                 logger.error("Failed to delete trade %s: %s", key, e, exc_info=True)
                 QMessageBox.warning(self, "Database Error", f"Failed to delete trade:\n{e}")
                 break
-            source = self._closed_data if kind == "closed" else self._open_data
-            if rec in source:
-                source.remove(rec)
+        # Filter by orig_key rather than list.remove(rec): dict equality would
+        # match a different row with identical field values (e.g. two same-day
+        # same-qty buys of the same stock), deleting the wrong one.
+        if deleted_keys:
+            self._closed_data[:] = [r for r in self._closed_data if r.get("orig_key") not in deleted_keys]
+            self._open_data[:] = [r for r in self._open_data if r.get("orig_key") not in deleted_keys]
         self._refresh_summary()
         self._apply_filter()
 
@@ -1039,26 +1044,63 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
             dlg = SellEditDialog(rec, self)
             if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_data:
                 res = dlg.result_data
+                orig_qty = rec.get("qty", 0.0)
+                orig_buy_amount = rec.get("buy_amount", 0.0)
+                sell_qty = res["sell_qty"]
+
                 rec["sell_date"]   = res["sell_date"]
                 rec["sell_price"]  = res["sell_price"]
-                rec["sell_qty"]    = res["sell_qty"]
+                rec["sell_qty"]    = sell_qty
                 rec["sell_amount"] = res["sell_amount"]  # dialog already fills price*qty when blank
                 rec["is_overridden"] = True
-                self._compute_pl_fields(rec)
 
                 is_now_closed = bool(rec.get("sell_date") or rec.get("sell_price"))
+                remainder = None
+                if kind == "open" and is_now_closed and 0 < sell_qty < orig_qty:
+                    # Partial sell: split the lot instead of moving the whole
+                    # record to closed, which used to make the untouched
+                    # remainder disappear from open holdings/valuation
+                    # entirely (review_agy.md #5). `rec` becomes the closed
+                    # sub-lot sized to what was actually sold; the remainder
+                    # keeps tracking as its own open position with its own
+                    # DB row (buy_amount split proportionally, no sell fields).
+                    remainder_qty = orig_qty - sell_qty
+                    rec["qty"] = sell_qty
+                    rec["buy_amount"] = orig_buy_amount * (sell_qty / orig_qty) if orig_qty else 0.0
+                    remainder = dict(rec)
+                    remainder["orig_key"] = None
+                    remainder["qty"] = remainder_qty
+                    remainder["buy_amount"] = orig_buy_amount - rec["buy_amount"]
+                    remainder["sell_date"] = ""
+                    remainder["sell_price"] = 0.0
+                    remainder["sell_qty"] = 0.0
+                    remainder["sell_amount"] = 0.0
+                    remainder["curr_price"] = 0.0
+                    remainder["curr_pl"] = 0.0
+                    remainder["curr_pl_pct"] = 0.0
+                    remainder["curr_pct_pl"] = 0.0
+                    remainder["position_w"] = 0.0
+
+                self._compute_pl_fields(rec)
+
+                # Filter by orig_key rather than list.remove(rec): dict
+                # equality would risk matching a different row (review_agy.md #2).
                 if kind == "open" and is_now_closed:
-                    if rec in self._open_data:
-                        self._open_data.remove(rec)
+                    self._open_data[:] = [r for r in self._open_data if r.get("orig_key") != rec.get("orig_key")]
                     self._closed_data.append(rec)
                 elif kind == "closed" and not is_now_closed:
-                    if rec in self._closed_data:
-                        self._closed_data.remove(rec)
+                    self._closed_data[:] = [r for r in self._closed_data if r.get("orig_key") != rec.get("orig_key")]
                     self._open_data.append(rec)
+
+                records_to_save = [rec]
+                if remainder is not None:
+                    self._compute_pl_fields(remainder)
+                    if self._save_custom_trade(remainder):
+                        self._open_data.append(remainder)
 
                 self._refresh_summary()
                 self._apply_filter()
-                self._save_overrides([rec])
+                self._save_overrides(records_to_save)
             return
 
     def _on_ticker_name_resolved(self, result, error: str, ticker: str):
