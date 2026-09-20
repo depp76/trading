@@ -128,9 +128,20 @@ Dev tooling is in `requirements-dev.txt`
   `run_backtest` / `run_backtest_for_ticker`, `portfolio.py` with the equal-sleeve
   `run_portfolio_backtest`, `validation.py` with `holdout_validation` /
   `walk_forward_validation`; spec and real-data results in `trend_following.md`; UI for
-  single-instrument, portfolio and validation runs in `ui/trend_following_tab.py`). Strategy code
-  imports from `data.*`; callers import strategy symbols from `strategy.<name>` directly,
-  never via `data_fetcher`.
+  single-instrument, portfolio and validation runs in `ui/trend_following_tab.py`). Shared
+  building blocks sit directly under `strategy/` (review_agy.md Section 4, 2026-09-20):
+  `base.py` (`Trade` / `BacktestResult` / `BaseStrategyConfig` data model — nothing adopts it
+  yet), `metrics.py` (`calculate_returns_metrics` for a return series,
+  `calculate_equity_metrics` for an equity curve, `calculate_trade_metrics`; drawdown always
+  a positive magnitude) and `costs.py` (`TransactionCostModel`, `KRX_STOCK_COST` matching
+  rebalance's live defaults, `US_STOCK_COST` an unvalidated placeholder). `trend_following`'s
+  `return_metrics()` and `rebalance`'s `_summarize_backtest()` / `_sharpe_and_vol()` are thin
+  wrappers over `metrics.py` that keep each strategy's own conventions (rebalance: negative
+  MDD sign, `initial_capital` as the return base, CAGR 0.0 on a wiped-out curve); `ma_cross`
+  computes no metrics and models no costs yet. When touching any of this, verify numbers are
+  unchanged with an old-vs-new random-input comparison, since both spec `.md`s record
+  real-data results. Strategy code imports from `data.*`; callers import strategy symbols
+  from `strategy.<name>` directly, never via `data_fetcher`.
 - **`src/data_fetcher.py`**: the single re-export facade over `data/` (data access only, no
   strategy symbols) so UI and thread code import from one place; `data/__init__.py` itself
   re-exports nothing. Nothing in `data/` imports the facade back; keep it that way. It

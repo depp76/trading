@@ -2,11 +2,10 @@
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
-import math
-import numpy as np
 import polars as pl
 
 from data.history import get_historical_data
+from strategy.metrics import calculate_equity_metrics
 from strategy.rebalance.config import RebalanceConfig
 from strategy.rebalance.classify import _DEFAULT_TOP_N_BY_MARKET
 from strategy.rebalance.walkforward import (
@@ -23,27 +22,24 @@ logger = logging.getLogger(__name__)
 _REBALANCE_PERIODS_PER_YEAR = 52
 
 
+def _curve_metrics(equity_curve: list, initial_capital: float | None) -> dict:
+    """strategy.metrics.calculate_equity_metrics on a [{date, value}] curve
+    (shared with the other strategies since Phase 2 of review_agy.md Section 4).
+    No risk-free-rate config exists for this strategy (RebalanceConfig has
+    none), so Sharpe is the simple 0% risk-free version."""
+    return calculate_equity_metrics(
+        [pt["value"] for pt in equity_curve],
+        dates=[datetime.strptime(pt["date"], "%Y-%m-%d") for pt in equity_curve],
+        initial_capital=initial_capital,
+        periods_per_year=_REBALANCE_PERIODS_PER_YEAR,
+    )
+
+
 def _sharpe_and_vol(equity_curve: list) -> tuple:
     """Annualized volatility and Sharpe ratio from the weekly equity curve's
-    period-over-period returns. No risk-free-rate config exists for this
-    strategy yet (RebalanceConfig has none), so this uses a 0% risk-free rate
-    -- a simple/naive Sharpe, same ballpark convention as
-    strategy.trend_following.backtest.return_metrics() but for weekly, not
-    daily, periods.
-    """
-    values = np.array([pt["value"] for pt in equity_curve], dtype=float)
-    if values.size < 2:
-        return 0.0, 0.0
-    period_returns = np.diff(values) / values[:-1]
-    if period_returns.size < 2:
-        return 0.0, 0.0
-    std_ret = float(np.std(period_returns, ddof=1))
-    vol_annual_pct = std_ret * math.sqrt(_REBALANCE_PERIODS_PER_YEAR) * 100
-    sharpe = (
-        float(np.mean(period_returns)) / std_ret * math.sqrt(_REBALANCE_PERIODS_PER_YEAR)
-        if std_ret > 0 else 0.0
-    )
-    return vol_annual_pct, sharpe
+    period-over-period returns (see _curve_metrics)."""
+    m = _curve_metrics(equity_curve, None)
+    return m["annual_vol_pct"], m["sharpe"]
 
 
 def _summarize_backtest(
@@ -65,28 +61,17 @@ def _summarize_backtest(
         }
 
     final_value = equity_curve[-1]["value"]
-    total_return_pct = (final_value / initial_capital - 1) * 100 if initial_capital else 0.0
+    m = _curve_metrics(equity_curve, initial_capital)
 
     benchmark_return_pct = 0.0
     if benchmark_curve:
         benchmark_return_pct = (benchmark_curve[-1]["value"] / initial_capital - 1) * 100
 
-    n_days = max(1, (
-        datetime.strptime(equity_curve[-1]["date"], "%Y-%m-%d")
-        - datetime.strptime(equity_curve[0]["date"], "%Y-%m-%d")
-    ).days)
-    years = n_days / 365.25
-    cagr_pct = (
-        ((final_value / initial_capital) ** (1 / years) - 1) * 100
-        if years > 0 and initial_capital > 0 and final_value > 0 else 0.0
-    )
-
-    peak = equity_curve[0]["value"]
-    max_dd = 0.0
-    for pt in equity_curve:
-        peak = max(peak, pt["value"])
-        if peak > 0:
-            max_dd = min(max_dd, (pt["value"] - peak) / peak * 100)
+    # This summary has always reported 0.0 (not -100%) for a curve that ends
+    # at or below zero, and its drawdown as a negative percentage -- which
+    # ui/dialogs/backtest_result.py displays as-is -- so both conventions are
+    # kept here rather than in the shared calculator.
+    cagr_pct = m["cagr_pct"] if final_value > 0 else 0.0
 
     win_rate_pct = (
         100.0 * sum(1 for r in closed_trade_returns if r > 0) / len(closed_trade_returns)
@@ -95,15 +80,13 @@ def _summarize_backtest(
 
     total_cost_drag_pct = (total_cost_paid / initial_capital * 100) if initial_capital else 0.0
 
-    annual_vol_pct, sharpe = _sharpe_and_vol(equity_curve)
-
     return {
-        "total_return_pct": total_return_pct,
+        "total_return_pct": m["total_return_pct"],
         "benchmark_return_pct": benchmark_return_pct,
         "cagr_pct": cagr_pct,
-        "max_drawdown_pct": max_dd,
-        "annual_vol_pct": annual_vol_pct,
-        "sharpe": sharpe,
+        "max_drawdown_pct": -m["max_drawdown_pct"],
+        "annual_vol_pct": m["annual_vol_pct"],
+        "sharpe": m["sharpe"],
         "n_rebalances": n_rebalances,
         "n_trades": n_trades,
         "win_rate_pct": win_rate_pct,

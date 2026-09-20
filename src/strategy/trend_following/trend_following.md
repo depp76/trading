@@ -152,6 +152,13 @@ tests/strategy/trend_following/
   `test_portfolio.py` 7개(슬리브 평균, 결측일 0 처리, 노출 상한, 분산 효과, 짧은 이력 스킵),
   `test_validation.py` 8개(구간 슬라이스, IS 최적 선택·OOS 보고, MDD 상한, 앵커드 폴드·이어붙이기,
   IS 부족 폴드 스킵).
+- **공용 지표 모듈로 위임 (2026-09-20, review_agy.md 섹션 4 Phase 2)** — `return_metrics()`는
+  이제 전 전략 공용 `strategy/metrics.py::calculate_returns_metrics()`(일별 수익률 시리즈 입력,
+  `trading_days_per_year`·`risk_free_rate`를 그대로 넘김)를 호출하고 이 전략 고유의 리스크 게이트
+  판정과 날짜 구간만 덧붙이는 래퍼다. 시그니처·반환 키·`__init__` export는 그대로라
+  `portfolio.py`/`validation.py`/UI는 무변경이며, 5장의 실데이터 결과는 마이그레이션 전후 동일하다
+  (랜덤 시리즈 400건 대조, 상대오차 1e-9 이내; `test_backtest.py`에 이전 공식 그대로의 대조
+  테스트 추가).
 - **v3 UI 연결 (2026-09-17)** — Trend Following 탭 네 번째 입력 행: 포트폴리오 티커 목록(쉼표 구분,
   "Use Universe"로 Trading Universe 시총 상위 N 자동 채움), "Run Portfolio"(위 파라미터로 균등
   슬리브 백테스트 → `TrendFollowingPortfolioDialog`: 에쿼티+총노출 차트, 종목별 표),

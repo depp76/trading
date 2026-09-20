@@ -146,6 +146,13 @@ Universe 탭 등에서 계속 사용 중. 리밸런싱 알고리즘의 워크포
   에쿼티 커브(주간 포인트)의 기간별 수익률로 계산(연 52기간, 무위험수익률 0% 가정 —
   `RebalanceConfig`에 무위험수익률 필드가 아직 없어 `trend_following`의 일별
   `return_metrics()`와 동일한 방식·다른 연환산 기준을 씀, review.md 4-2, 2026-09-18).
+- 2026-09-20(review_agy.md 섹션 4 Phase 2)부터 총수익률/CAGR/MDD/Sharpe/변동성의 실제
+  계산은 전 전략 공용 `strategy/metrics.py::calculate_equity_metrics()`가 맡고,
+  `_summarize_backtest()`/`_sharpe_and_vol()`은 그 결과를 이 전략의 기존 규약에 맞춰 돌려주는
+  얇은 래퍼다: 총수익률·CAGR은 커브 첫 점(첫 리밸런싱 수수료 차감 후 값)이 아니라
+  `initial_capital` 기준, MDD는 **음수 %**(`BacktestResultDialog`가 그대로 표시), 커브가 0으로
+  끝나면 CAGR은 -100%가 아니라 0.0. 이 세 규약을 래퍼가 지키므로 위 4-3의 지표 값과 5장
+  실데이터 결과는 마이그레이션 전후 동일하다(랜덤 커브 400건 대조, 상대오차 1e-9 이내).
 
 ### 4-4. UI 통합
 

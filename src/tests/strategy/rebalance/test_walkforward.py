@@ -127,6 +127,45 @@ class TestSharpeAndVol(unittest.TestCase):
         self.assertEqual(summary["sharpe"], 0.0)
         self.assertEqual(summary["annual_vol_pct"], 0.0)
 
+    def test_summarize_backtest_matches_pre_migration_formula(self):
+        """_summarize_backtest() delegates to strategy.metrics since Phase 2 of
+        review_agy.md Section 4. Pin total return / CAGR / max drawdown to the
+        formula it used before (a verbatim copy), including the conventions
+        that differ from the shared calculator's own: total return and CAGR
+        measured against initial_capital rather than the curve's first point
+        (which is already net of the first rebalance's fees), drawdown as a
+        NEGATIVE percentage (ui/dialogs/backtest_result.py shows it as-is),
+        and CAGR 0.0 rather than -100% for a curve that ends at zero."""
+        from datetime import date, datetime, timedelta
+        from strategy.rebalance.backtest import _summarize_backtest
+
+        initial = 100_000_000.0
+        # First point below initial_capital, like a real curve after fees.
+        values = [99_900_000.0, 104_000_000.0, 98_500_000.0, 110_200_000.0, 107_000_000.0, 121_000_000.0]
+        curve = [{"date": (date(2025, 1, 3) + timedelta(weeks=i)).strftime("%Y-%m-%d"), "value": v}
+                 for i, v in enumerate(values)]
+        s = _summarize_backtest(curve, [], initial, [1.0, -2.0, 3.0], 6, 12, total_cost_paid=50_000.0)
+
+        final = values[-1]
+        n_days = (datetime.strptime(curve[-1]["date"], "%Y-%m-%d")
+                  - datetime.strptime(curve[0]["date"], "%Y-%m-%d")).days
+        expected_cagr = ((final / initial) ** (1 / (n_days / 365.25)) - 1) * 100
+        peak, max_dd = values[0], 0.0
+        for v in values:
+            peak = max(peak, v)
+            max_dd = min(max_dd, (v - peak) / peak * 100)
+
+        self.assertAlmostEqual(s["total_return_pct"], (final / initial - 1) * 100, places=9)
+        self.assertAlmostEqual(s["cagr_pct"], expected_cagr, places=9)
+        self.assertAlmostEqual(s["max_drawdown_pct"], max_dd, places=9)
+        self.assertLess(s["max_drawdown_pct"], 0.0)   # negative-sign convention preserved
+        # The first point is below initial_capital but is the running peak's
+        # starting point, so it must not register as a drawdown from capital.
+        self.assertAlmostEqual(max_dd, (98_500_000.0 - 104_000_000.0) / 104_000_000.0 * 100, places=9)
+
+        wiped = curve[:-1] + [{"date": curve[-1]["date"], "value": 0.0}]
+        self.assertEqual(_summarize_backtest(wiped, [], initial, [], 6, 12)["cagr_pct"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

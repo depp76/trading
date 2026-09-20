@@ -10,12 +10,12 @@ traded weight that day.
 """
 from datetime import date as _date
 import logging
-import math
 
 import numpy as np
 import polars as pl
 
 from data.history import get_historical_data
+from strategy.metrics import calculate_returns_metrics
 from strategy.trend_following.config import TrendFollowingConfig
 from strategy.trend_following.signals import donchian_signal
 
@@ -121,43 +121,29 @@ def _extract_trades(dates, pos, weight, close, strategy_ret, reasons) -> list:
 def return_metrics(dates, strategy_ret, config: TrendFollowingConfig, initial_capital: float = 1.0) -> dict:
     """Return-stream metrics shared by the single-instrument backtest, the portfolio
     backtest and the IS/OOS validation: total return, CAGR, annual vol, Sharpe, max
-    drawdown and the risk-gate verdict, computed from a daily strategy-return series."""
-    strategy_ret = np.asarray(strategy_ret, dtype=float)
+    drawdown and the risk-gate verdict, computed from a daily strategy-return series.
+
+    The numbers come from strategy.metrics.calculate_returns_metrics (shared with
+    the other strategies since Phase 2 of review_agy.md Section 4); this wrapper
+    only adds the strategy's own risk-gate verdict and date span. `initial_capital`
+    scales the equity curve but cancels out of every ratio here, so it no longer
+    takes part in the calculation."""
     n = len(strategy_ret)
     if n == 0:
         return {"total_return_pct": 0.0, "cagr_pct": 0.0, "annual_vol_pct": 0.0, "sharpe": 0.0,
                 "max_drawdown_pct": 0.0, "passes_risk_gate": False, "start_date": None, "end_date": None, "n_days": 0}
-    equity = initial_capital * np.cumprod(1.0 + strategy_ret)
-    final = float(equity[-1])
-    total_return = final / initial_capital - 1.0
-
-    try:
-        days = (dates[-1] - dates[0]).days
-    except Exception:
-        days = n
-    years = max(days, 1) / 365.25
-    cagr = (final / initial_capital) ** (1.0 / years) - 1.0 if final > 0 and years > 0 else -1.0
-
-    tdpy = config.trading_days_per_year
-    vol = float(np.std(strategy_ret, ddof=1)) * math.sqrt(tdpy) if n > 1 else 0.0
-    excess = strategy_ret - config.risk_free_rate / tdpy
-    sd = float(np.std(excess, ddof=1)) if n > 1 else 0.0
-    sharpe = float(np.mean(excess)) / sd * math.sqrt(tdpy) if sd > 0 else 0.0
-
-    peak = np.maximum.accumulate(equity)
-    drawdown = equity / peak - 1.0
-    mdd_pct = -float(drawdown.min()) * 100.0 if n else 0.0
-    return {
-        "total_return_pct": total_return * 100.0,
-        "cagr_pct": cagr * 100.0,
-        "annual_vol_pct": vol * 100.0,
-        "sharpe": sharpe,
-        "max_drawdown_pct": mdd_pct,
+    m = calculate_returns_metrics(
+        strategy_ret, dates=dates,
+        periods_per_year=config.trading_days_per_year, risk_free_rate=config.risk_free_rate,
+    )
+    sharpe, mdd_pct = m["sharpe"], m["max_drawdown_pct"]
+    m.update({
         "passes_risk_gate": bool(sharpe >= config.sharpe_min and mdd_pct <= config.mdd_max_pct),
         "start_date": _iso(dates[0]),
         "end_date": _iso(dates[-1]),
         "n_days": n,
-    }
+    })
+    return m
 
 
 def _summarize(dates, strategy_ret, equity, pos, w_lag, trades, config, initial_capital) -> dict:

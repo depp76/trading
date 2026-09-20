@@ -89,6 +89,43 @@ class TestRunBacktest(unittest.TestCase):
         self.assertEqual(res["summary"]["n_days"], 0)
         self.assertEqual(res["trades"], [])
 
+    def test_return_metrics_matches_pre_migration_formula(self):
+        """return_metrics() delegates to strategy.metrics since Phase 2 of
+        review_agy.md Section 4; pin it to the formula it used before (a
+        verbatim copy), including the risk-free rate, so the recorded
+        real-data results in trend_following.md 5 stay reproducible."""
+        import datetime as _dt
+        from strategy.trend_following import return_metrics
+
+        rng = np.random.default_rng(7)
+        cfg = TrendFollowingConfig(trading_days_per_year=252, risk_free_rate=0.03,
+                                   sharpe_min=1.0, mdd_max_pct=20.0)
+        for n in (1, 2, 5, 60, 300):
+            ret = rng.normal(0.0005, 0.02, n)
+            dates = [_dt.date(2024, 1, 1) + _dt.timedelta(days=int(i * 1.4)) for i in range(n)]
+            got = return_metrics(dates, ret, cfg, initial_capital=100.0)
+
+            equity = 100.0 * np.cumprod(1.0 + ret)
+            final = float(equity[-1])
+            years = max((dates[-1] - dates[0]).days, 1) / 365.25
+            cagr = (final / 100.0) ** (1.0 / years) - 1.0 if final > 0 else -1.0
+            tdpy = cfg.trading_days_per_year
+            vol = float(np.std(ret, ddof=1)) * math.sqrt(tdpy) if n > 1 else 0.0
+            excess = ret - cfg.risk_free_rate / tdpy
+            sd = float(np.std(excess, ddof=1)) if n > 1 else 0.0
+            sharpe = float(np.mean(excess)) / sd * math.sqrt(tdpy) if sd > 0 else 0.0
+            peak = np.maximum.accumulate(equity)
+            mdd = -float((equity / peak - 1.0).min()) * 100.0
+
+            self.assertAlmostEqual(got["total_return_pct"], (final / 100.0 - 1.0) * 100.0, places=9)
+            self.assertAlmostEqual(got["cagr_pct"], cagr * 100.0, places=9)
+            self.assertAlmostEqual(got["annual_vol_pct"], vol * 100.0, places=9)
+            self.assertAlmostEqual(got["sharpe"], sharpe, places=9)
+            self.assertAlmostEqual(got["max_drawdown_pct"], mdd, places=9)
+            self.assertEqual(got["passes_risk_gate"], bool(sharpe >= 1.0 and mdd <= 20.0))
+            self.assertEqual((got["start_date"], got["end_date"], got["n_days"]),
+                             (dates[0].strftime("%Y-%m-%d"), dates[-1].strftime("%Y-%m-%d"), n))
+
     @patch("strategy.trend_following.backtest.get_historical_data")
     def test_run_backtest_for_ticker(self, mock_hist):
         mock_hist.return_value = _frame([10, 10, 10, 20, 22, 22])
