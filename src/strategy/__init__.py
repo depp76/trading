@@ -14,4 +14,10 @@ Strategy packages import from `data.*`; nothing in `data/` imports `strategy`.
 Callers (UI, threads, tests) import strategy symbols from their own package,
 e.g. `from strategy.rebalance import compute_weekly_rebalance_signals`, not
 through the `data_fetcher` facade.
+
+`base.py`/`metrics.py`/`costs.py` (review_agy.md Section 4, Phase 1) are
+shared building blocks -- a common result/config data model, a Sharpe/CAGR/
+MDD calculator, and standard per-market transaction cost models -- meant for
+strategies to eventually converge on instead of each computing its own.
+Purely additive for now: no existing strategy sub-package imports them yet.
 """
