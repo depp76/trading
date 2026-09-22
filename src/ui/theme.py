@@ -13,7 +13,7 @@ place that chrome comes from; nothing else should call
 file already has a rule for -- add an objectName selector here instead (see
 `QPushButton#primary` / `#danger` below).
 """
-from ui.colors import PROFIT  # noqa: F401 -- re-exported; #danger buttons reuse this hue
+from ui.colors import DANGER  # noqa: F401 -- re-exported; #danger buttons use this hue
 
 BG          = "#fbfbfd"   # app background
 SURFACE     = "#ffffff"   # cards, table body
@@ -70,7 +70,7 @@ def app_qss(font_css: str) -> str:
         background: {SURFACE}; color: {ACCENT_TEXT}; border: 1px solid {ACCENT};
     }}
     QPushButton#primary:hover {{ background: {ACCENT_BG}; }}
-    QPushButton#danger  {{ color: {PROFIT}; border-color: #f0c4c1; }}
+    QPushButton#danger  {{ color: {DANGER}; border-color: #f0c4c1; }}
     QPushButton#danger:hover {{ background: #fdf0ef; }}
 
     QTableWidget, QTableView {{

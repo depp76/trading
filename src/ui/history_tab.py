@@ -40,7 +40,7 @@ from ui.common import (
     create_font, _fmt_num_edit, FONT_FAMILY_CSS, ThreadOwnerMixin,
     _STATUS_SUCCESS_COLOR, FONT_KPI, FONT_CAPTION,
 )
-from ui.colors import PROFIT, LOSS
+from ui.colors import PROFIT, LOSS, DANGER
 from ui.theme import ACCENT_TEXT, TEXT_FAINT
 from ui.history_calc import compute_pl_fields, build_monthly_rows, summarize_positions
 from ui.history_table import fill_table_rows, SectionTable, SECTIONS, COLUMNS
@@ -752,7 +752,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
     def _on_account_deposit_fetched(self, val: float, err: str):
         self._fetch_dep_btn.setEnabled(True)
         if err:
-            self._deposit_status_lbl.setStyleSheet(f"font-size:10pt; color:{PROFIT}; font-weight:bold;")
+            self._deposit_status_lbl.setStyleSheet(f"font-size:10pt; color:{DANGER}; font-weight:bold;")
             self._deposit_status_lbl.setText("❌ Failed to fetch")
             QTimer.singleShot(5000, lambda: self._deposit_status_lbl.setText(""))
             QMessageBox.critical(self, "Error", f"Failed to fetch data:\n{err}")

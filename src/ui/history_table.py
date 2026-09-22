@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QLabel
 from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QColor, QPainter, QPen
 
-from ui.colors import PROFIT, LOSS, FLAT, QC_PROFIT, QC_LOSS
+from ui.colors import PROFIT, LOSS, FLAT, DANGER, QC_PROFIT, QC_LOSS
 from ui.common import create_font, FONT_SMALL
 from ui.theme import ACCENT, ACCENT_TEXT, SURFACE, ZEBRA, GRP_BG, TEXT, TEXT_MUTED, TEXT_FAINT, TEXT_EMPTY
 from ui.widgets import ColSpec, NumericItem
@@ -36,7 +36,7 @@ _DASH_COLOR = TEXT_EMPTY
 _SECTION_COLOR = {
     "Trading":  ("#75798c", "#595d6c"),
     "Buy":      ("#2e7d5b", "#2e7d5b"),
-    "Sell":     (PROFIT, "#a32f26"),
+    "Sell":     (DANGER, "#a32f26"),
     "Position": (ACCENT, ACCENT_TEXT),
     "Past":     ("#cfd3e5", "#75798c"),
 }

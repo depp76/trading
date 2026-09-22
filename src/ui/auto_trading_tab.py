@@ -55,7 +55,7 @@ from threads.fetch_threads import RebalanceBacktestThread
 from ui.dialogs import BacktestResultDialog
 from ui.delegates import RankStockDelegate, ActionBadgeDelegate, ScoreBarDelegate
 from ui.ma_chart import StockMaLauncherMixin
-from ui.colors import ACTION_BUY, ACTION_SELL, PROFIT
+from ui.colors import ACTION_BUY, ACTION_SELL, DANGER
 from ui.theme import ACCENT, TEXT_FAINT, LINE
 
 logger = logging.getLogger(__name__)
@@ -286,7 +286,7 @@ class AutoTradingTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         tag = QLabel("NOTICE")
         tag.setFont(create_font(8, QFont.Weight.Bold))
         tag.setStyleSheet(
-            f"color:{PROFIT}; background:#fff; border:1px solid #f0c4c1; border-radius:4px; padding:1px 6px;"
+            f"color:{DANGER}; background:#fff; border:1px solid #f0c4c1; border-radius:4px; padding:1px 6px;"
         )
         row.addWidget(tag)
 

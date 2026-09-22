@@ -1,8 +1,9 @@
 """ui/colors.py — Single source of truth for profit/loss color semantics and
 heatmap intensity (docs/ui.md 1.1, 1.2).
 
-The whole app follows one rule: PROFIT (red) = gain/up, LOSS (blue) =
-loss/down (Korean market convention). Before this module, widgets.py used
+The whole app follows one rule: PROFIT (blue) = gain/up, LOSS (red) =
+loss/down (user direction, 2026-09-22, overriding the earlier Korean market
+convention of red=up/blue=down). Before this module, widgets.py used
 blue for large positive change rates and history_table.py used red for
 positive P/L, so the same color flipped meaning within a single Universe row
 and across tabs. Any cell that previously picked a background from a
@@ -10,9 +11,15 @@ hardcoded threshold ladder should compute it via heatmap_bg() instead.
 """
 from PyQt6.QtGui import QColor
 
-PROFIT = "#d1453b"   # gain, up
-LOSS = "#3b6fc4"      # loss, down
+PROFIT = "#3b6fc4"   # gain, up
+LOSS = "#d1453b"      # loss, down
 FLAT = "#75798c"      # zero / not applicable
+
+# Danger button hue (delete/destructive actions) -- kept separate from
+# PROFIT/LOSS so it doesn't flip meaning when the price-direction convention
+# changes (2026-09-22: PROFIT/LOSS swapped to blue=up/red=down, but "danger"
+# must stay red regardless of which one currently means "up").
+DANGER = "#d1453b"
 
 # Strategy tab (Auto Trading) "recommended action" badges -- a different axis
 # from PROFIT/LOSS (price direction). The Strategy Redesign mockup picked
