@@ -34,8 +34,9 @@ from ui.theme import ACCENT, TEXT, TEXT_FAINT, TEXT_EMPTY, TEXT_SUB
 # into one identity cell (with an inline status badge, replacing the Pf
 # button column), a single 52W range bar (replacing 4 columns), Div(20) and
 # Div(50) merged into one "MA20 Div" (Div(50) dropped -- the mockup doesn't
-# carry it), momentum as 3D/10D/20D/60D/120D (5D dropped; 10D re-added on
-# 2026-09-19 by user direction), a new
+# carry it; MA50 Div re-added as its own column on 2026-09-22 by user
+# direction, so the table is 15 columns again), momentum as 3D/10D/20D/60D/120D
+# (5D dropped; 10D re-added on 2026-09-19 by user direction), a new
 # "Chg" day-over-day column (data/cache.py's _TD_PERIODS now has a "1d"
 # entry for this), and a "Trend" mini chart. The MA-chart and Delete action
 # buttons are gone too -- see StockTable's docstring for what replaced them.
@@ -66,6 +67,7 @@ COLUMNS = [
     ColSpec("tper",      "tPER",           54, 0.55, "value",    None),
     ColSpec("fper",      "fPER",           54, 0.55, "value",    None),
     ColSpec("ma20div",   "MA20 Div",       _NARROW_W, _NARROW_WEIGHT, "momentum", 20),
+    ColSpec("ma50div",   "MA50 Div",       _NARROW_W, _NARROW_WEIGHT, "momentum", 20),
     ColSpec("d3",        "3D",             _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
     ColSpec("d10",       "10D",            _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
     ColSpec("d20",       "20D",            _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
@@ -79,10 +81,10 @@ COLUMNS = [
 # is meant makes future reordering a silent bug. Kept in sync with COLUMNS
 # by the assertion below (fails loudly at import time if they drift).
 COL_IDENTITY, COL_PRICE, COL_CHG, COL_CAP, COL_RANGE52W, COL_TPER, COL_FPER, \
-    COL_MA20DIV, COL_D3, COL_D10, COL_D20, COL_D60, COL_D120, COL_TREND = range(len(COLUMNS))
+    COL_MA20DIV, COL_MA50DIV, COL_D3, COL_D10, COL_D20, COL_D60, COL_D120, COL_TREND = range(len(COLUMNS))
 assert [c.key for c in COLUMNS] == [
     "identity", "price", "chg", "cap", "range52w", "tper", "fper",
-    "ma20div", "d3", "d10", "d20", "d60", "d120", "trend",
+    "ma20div", "ma50div", "d3", "d10", "d20", "d60", "d120", "trend",
 ]
 
 # Momentum columns paired with the changes{} dict key each one reads.
@@ -751,7 +753,7 @@ class StockTable(QTableWidget):
             self.setUpdatesEnabled(True)
 
     def _populate_row(self, row, item, highlights):
-        """Renders every cell of one row from the redesigned 13-column spec
+        """Renders every cell of one row from the redesigned 15-column spec
         (docs/ui.md 2.2). Index/yield/commodity rows share the table with
         equities; change_mode picks the price/change formatting and the
         cap/PER cells show "-" where the concept does not apply."""
@@ -862,7 +864,7 @@ class StockTable(QTableWidget):
                 cell.setForeground(QColor(TEXT_EMPTY))
             self.setItem(row, col, cell)
 
-        # col 7: MA20 Div (Div(50) dropped -- the redesign doesn't carry it)
+        # col 7: MA20 Div
         ma20_div = float(changes.get("ma20_div", 0.0) or 0.0)
         if ma20_div != 0.0:
             diff = ma20_div - 100.0
@@ -878,6 +880,24 @@ class StockTable(QTableWidget):
             ma_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             ma_item.setForeground(QColor(TEXT_EMPTY))
         self.setItem(row, COL_MA20DIV, ma_item)
+
+        # col 8: MA50 Div (re-added 2026-09-22 by user direction; same
+        # price/MA50*100 divergence ratio, mirrors the MA20 Div cell above)
+        ma50_div = float(changes.get("ma50_div", 0.0) or 0.0)
+        if ma50_div != 0.0:
+            diff50 = ma50_div - 100.0
+            ma50_item = NumericItem(f"{ma50_div:.1f}%", ma50_div)
+            ma50_item.setTextAlignment(right)
+            ma50_item.setFont(numeric_font)
+            ma50_item.setForeground(fg_for(diff50))
+            bg = heatmap_bg(diff50, COLUMNS[COL_MA50DIV].scale)
+            if bg is not None:
+                ma50_item.setBackground(bg)
+        else:
+            ma50_item = NumericItem("-", float('-inf'))
+            ma50_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            ma50_item.setForeground(QColor(TEXT_EMPTY))
+        self.setItem(row, COL_MA50DIV, ma50_item)
 
         # momentum: 3D / 10D / 20D / 60D / 120D (5D dropped)
         trend_points = []
