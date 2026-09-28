@@ -10,8 +10,9 @@ the US market code paths still exist but are commented out in the UI), "Trading 
 (manually-entered trade log backed by SQLite), "Total Assets" (weekly asset snapshots vs.
 KOSPI and USD), and "Strategy" (roadmap 7-1) — a `QTabWidget` of sub-tabs behind a shared
 "Today's Signals" summary bar: "Weekly Rebalance" (weekly factor-scoring rebalance signals plus
-a walk-forward backtest), "Trend Following" (Donchian channel breakout backtest for one
-ticker or a multi-ticker portfolio), and "MA Cross" (fast/slow MA golden-cross backtest for one
+a walk-forward backtest), "Trend Following" (Donchian channel breakout backtest of an
+equal-sleeve multi-ticker portfolio, plus IS/OOS validation; the single-ticker mode was
+removed from the UI on 2026-09-28), and "MA Cross" (fast/slow MA golden-cross backtest for one
 ticker). The strategy sub-tabs are signal generation and research only; nothing places orders.
 
 The repo is a git repository (branch `master`). Commit or branch as usual; the old
@@ -129,9 +130,12 @@ Dev tooling is in `requirements-dev.txt`
   `config.py`, `signals.py` with the no-lookahead `donchian_signal`, `backtest.py` with
   `run_backtest` / `run_backtest_for_ticker`, `portfolio.py` with the equal-sleeve
   `run_portfolio_backtest`, `validation.py` with `holdout_validation` /
-  `walk_forward_validation`; UI for single-instrument, portfolio and validation runs in
-  `ui/trend_following_tab.py` — all of that is the *previous* design, kept until the 6장
-  decision in the spec). The spec `trend_following.md` was rewritten on 2026-09-28 around a
+  `walk_forward_validation`; UI for the portfolio and validation runs in
+  `ui/trend_following_tab.py` (Start is a `QDateEdit` calendar picker; Run Backtest runs the
+  portfolio on the ticker list, auto-filled from the Trading Universe top-N when empty;
+  `run_backtest_for_ticker`, `TrendFollowingBacktestThread` and `TrendFollowingChartDialog`
+  have no UI caller since 2026-09-28 — the summary bar still uses the first) — all of that
+  is the *previous* design, kept until the 6장 decision in the spec). The spec `trend_following.md` was rewritten on 2026-09-28 around a
   KR portfolio strategy (Donchian 20/10, weekly entries / daily exits, KOSPI 200-day filter,
   10 positions sized by ATR risk, 10M KRW reset every year with the excess harvested); its
   implementation is the v1 module set that reuses only `donchian_signal`: `config_v1.py`

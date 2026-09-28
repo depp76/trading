@@ -1,34 +1,41 @@
 """ui/trend_following_tab.py — TrendFollowingTab: run the Donchian channel breakout
-backtest (strategy/trend_following, spec trend_following.md) on one ticker from the UI.
+portfolio backtest (strategy/trend_following, spec trend_following.md) from the UI.
 
 Signal generation / research only — nothing here places orders. Reads
-UniverseTab.all_data on demand to offer the watchlist tickers in a combo (same
-direct-reference pattern as ui/auto_trading_tab.py); the backtest itself runs in
-threads.fetch_threads.TrendFollowingBacktestThread so the window never blocks on
-the history fetch.
+UniverseTab.all_data on demand to fill the ticker list with the top-N watchlist
+stocks (same direct-reference pattern as ui/auto_trading_tab.py); the backtest
+itself runs in threads.fetch_threads.TrendFollowingPortfolioThread so the window
+never blocks on the history fetches.
+
+Layout (user direction, 2026-09-28): one parameter row ending in the Start date
+picker and the Run Backtest button, then two collapsed rows (the v2 overlays and the
+ticker list / IS-OOS validation), then the portfolio summary and the per-instrument
+table. The single-ticker mode (Ticker box, From Universe combo, Chart button) was
+removed the same day; Run Backtest now runs the equal-sleeve portfolio backtest on
+the ticker list, filling it from the Trading Universe when it is empty.
 """
 import logging
 from datetime import date, timedelta
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
-    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+    QDateEdit, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QFont, QColor
 
 from strategy.trend_following import TrendFollowingConfig
-from ui.colors import PROFIT, LOSS, FLAT, WARN
-from threads.fetch_threads import TrendFollowingBacktestThread, TrendFollowingPortfolioThread
+from ui.colors import PROFIT, LOSS, FLAT
+from threads.fetch_threads import TrendFollowingPortfolioThread
 from ui.common import (
-    create_font, _validate_date_str, _normalize_date_str, _set_field_error, ThreadOwnerMixin,
+    create_font, _set_field_error, ThreadOwnerMixin,
     _STATUS_SUCCESS_COLOR, _STATUS_FAIL_COLOR,
 )
-from ui.dialogs.trend_following_chart import TrendFollowingChartDialog
 from ui.dialogs.trend_following_portfolio import TrendFollowingPortfolioDialog, TrendFollowingValidationDialog
 
 logger = logging.getLogger(__name__)
 
+# Portfolio-level summary columns (keys of run_portfolio_backtest()["summary"]).
 _METRICS = [
     ("total_return_pct", "Total return", "{:+.1f}%"),
     ("cagr_pct", "CAGR", "{:+.1f}%"),
@@ -36,10 +43,21 @@ _METRICS = [
     ("sharpe", "Sharpe", "{:.2f}"),
     ("max_drawdown_pct", "Max drawdown", "{:.1f}%"),
     ("n_trades", "Trades", "{}"),
-    ("win_rate_pct", "Win rate", "{:.0f}%"),
-    ("avg_trade_return_pct", "Avg trade", "{:+.2f}%"),
+    ("avg_gross_exposure_pct", "Exposure", "{:.0f}%"),
+    ("avg_n_positions", "Avg positions", "{:.1f}"),
+    ("n_instruments", "Instruments", "{}"),
+]
+
+# Per-instrument rows (entries of summary["instruments"]).
+_INSTRUMENT_COLS = [
+    ("ticker", "Ticker", "{}"),
+    ("cagr_pct", "CAGR", "{:+.1f}%"),
+    ("sharpe", "Sharpe", "{:.2f}"),
+    ("max_drawdown_pct", "Max drawdown", "{:.1f}%"),
+    ("n_trades", "Trades", "{}"),
     ("exposure_pct", "Exposure", "{:.0f}%"),
 ]
+_SIGNED_KEYS = {"total_return_pct", "cagr_pct"}
 
 
 class TrendFollowingTab(ThreadOwnerMixin, QWidget):
@@ -47,10 +65,8 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
     def __init__(self, universe_tab=None, parent=None):
         super().__init__(parent)
         self._universe_tab = universe_tab
-        self._backtest_thread = None
         self._portfolio_thread = None
         self._last_result = None
-        self._last_ticker = ""
         self._build_ui()
 
     # ── UI ───────────────────────────────────────────────────────────────────
@@ -63,98 +79,67 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         title.setFont(create_font(16, QFont.Weight.Bold))
         root.addWidget(title)
 
-        subtitle = QLabel(
-            "Buy when the close breaks above the prior entry_n-day high, sell when it breaks below the "
-            "prior exit_n-day low; long only, single position, applied from the next day (trend_following.md 3)."
-        )
-        subtitle.setFont(create_font(9, style_name="Semilight"))
-        subtitle.setObjectName("muted")
-        subtitle.setWordWrap(True)
-        root.addWidget(subtitle)
-
-        # Row 1: ticker / universe picker / start date
+        # Row 1: parameters + start date + run
         row1 = QHBoxLayout()
-        row1.addWidget(self._lbl("Ticker:"))
-        self._ticker_edit = QLineEdit()
-        self._ticker_edit.setFont(create_font(10, style_name="Semilight"))
-        self._ticker_edit.setPlaceholderText("e.g. 005930, AAPL, ^GSPC")
-        self._ticker_edit.setFixedWidth(150)
-        self._ticker_edit.returnPressed.connect(self._on_run_clicked)
-        row1.addWidget(self._ticker_edit)
-
-        row1.addWidget(self._lbl("From Universe:"))
-        self._universe_combo = QComboBox()
-        self._universe_combo.setFont(create_font(10, style_name="Semilight"))
-        self._universe_combo.setMinimumWidth(260)
-        self._universe_combo.currentIndexChanged.connect(self._on_universe_pick)
-        row1.addWidget(self._universe_combo)
-
-        row1.addWidget(self._lbl("Start:"))
-        self._start_edit = QLineEdit((date.today() - timedelta(days=5 * 365)).strftime("%Y-%m-%d"))
-        self._start_edit.setFont(create_font(10, style_name="Semilight"))
-        self._start_edit.setFixedWidth(110)
-        row1.addWidget(self._start_edit)
-        row1.addStretch()
-        root.addLayout(row1)
-
-        # Row 2: parameters + run
-        row2 = QHBoxLayout()
-        row2.addWidget(self._lbl("entry_n:"))
+        row1.addWidget(self._lbl("entry_n:"))
         self._entry_spin = QSpinBox()
         self._entry_spin.setRange(1, 500)
         self._entry_spin.setValue(TrendFollowingConfig().entry_n)
-        row2.addWidget(self._entry_spin)
+        row1.addWidget(self._entry_spin)
 
-        row2.addWidget(self._lbl("exit_n:"))
+        row1.addWidget(self._lbl("exit_n:"))
         self._exit_spin = QSpinBox()
         self._exit_spin.setRange(1, 500)
         self._exit_spin.setValue(TrendFollowingConfig().exit_n)
-        row2.addWidget(self._exit_spin)
+        row1.addWidget(self._exit_spin)
 
-        row2.addWidget(self._lbl("Fee/side:"))
+        row1.addWidget(self._lbl("Fee/side:"))
         self._fee_spin = self._pct_spin()
-        row2.addWidget(self._fee_spin)
+        row1.addWidget(self._fee_spin)
 
-        row2.addWidget(self._lbl("Slippage/side:"))
+        row1.addWidget(self._lbl("Slippage/side:"))
         self._slip_spin = self._pct_spin()
-        row2.addWidget(self._slip_spin)
+        row1.addWidget(self._slip_spin)
+
+        row1.addWidget(self._lbl("Start:"))
+        self._start_edit = QDateEdit()
+        self._start_edit.setFont(create_font(10, style_name="Semilight"))
+        self._start_edit.setCalendarPopup(True)          # click opens a calendar (user direction)
+        self._start_edit.setDisplayFormat("yyyy-MM-dd")
+        self._start_edit.setMaximumDate(QDate.currentDate())
+        self._start_edit.setDate(QDate(date.today() - timedelta(days=5 * 365)))
+        self._start_edit.setFixedWidth(130)
+        row1.addWidget(self._start_edit)
 
         self._run_btn = QPushButton("▶ Run Backtest")
         self._run_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._run_btn.setFixedHeight(32)
         # docs/ui.md 1.6: the tab's one accented action; every other button
-        # here (Chart, Use Universe, Run Portfolio, Validate) is the neutral
-        # outline from ui/theme.py -- they used to carry four different
-        # solid fills from the pre-theme action_button_style() helper.
+        # here (Use Universe, Validate) is the neutral outline from ui/theme.py.
         self._run_btn.setObjectName("primary")
+        self._run_btn.setToolTip("Equal-sleeve portfolio backtest on the ticker list below "
+                                 "(filled from the Trading Universe when empty)")
         self._run_btn.clicked.connect(self._on_run_clicked)
-        row2.addWidget(self._run_btn)
-
-        self._chart_btn = QPushButton("\U0001f4c8 Chart")
-        self._chart_btn.setFont(create_font(10, QFont.Weight.Bold))
-        self._chart_btn.setFixedHeight(32)
-        self._chart_btn.setEnabled(False)
-        self._chart_btn.clicked.connect(self._on_chart_clicked)
-        row2.addWidget(self._chart_btn)
+        row1.addWidget(self._run_btn)
 
         self._status_lbl = QLabel("")
         self._status_lbl.setFont(create_font(9, style_name="Semilight"))
         self._status_lbl.setObjectName("muted")
-        row2.addWidget(self._status_lbl)
-        row2.addStretch()
-        root.addLayout(row2)
+        row1.addWidget(self._status_lbl)
+        row1.addStretch()
+        root.addLayout(row1)
 
-        # Row 3: v2 overlays (trend_following.md 3 "v2"); 0 = off, so defaults reproduce v1
-        row3 = QHBoxLayout()
-        row3.addWidget(self._lbl("v2 \u2014 Regime MA:"))
+        # Row 2: v2 overlays (trend_following.md 3 "v2"); 0 = off, so defaults reproduce v1
+        row2 = QHBoxLayout()
+        row2.addWidget(self._lbl("Regime MA:"))
         self._regime_spin = QSpinBox()
         self._regime_spin.setRange(0, 500)
         self._regime_spin.setSpecialValueText("off")
         self._regime_spin.setValue(0)
         self._regime_spin.setToolTip("Enter only while Close is above this simple moving average (0 = off)")
-        row3.addWidget(self._regime_spin)
+        row2.addWidget(self._regime_spin)
 
-        row3.addWidget(self._lbl("Stop ATR\u00d7:"))
+        row2.addWidget(self._lbl("Stop ATR×:"))
         self._stop_spin = QDoubleSpinBox()
         self._stop_spin.setRange(0.0, 10.0)
         self._stop_spin.setDecimals(1)
@@ -162,14 +147,14 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._stop_spin.setSpecialValueText("off")
         self._stop_spin.setValue(0.0)
         self._stop_spin.setToolTip("Exit when Close falls this many ATRs below the anchor (0 = off)")
-        row3.addWidget(self._stop_spin)
+        row2.addWidget(self._stop_spin)
 
         self._stop_mode_combo = QComboBox()
         self._stop_mode_combo.addItems(["trailing", "fixed"])
         self._stop_mode_combo.setToolTip("trailing: anchor = highest close since entry; fixed: anchor = entry close")
-        row3.addWidget(self._stop_mode_combo)
+        row2.addWidget(self._stop_mode_combo)
 
-        row3.addWidget(self._lbl("Vol target:"))
+        row2.addWidget(self._lbl("Vol target:"))
         self._vol_spin = QDoubleSpinBox()
         self._vol_spin.setRange(0.0, 100.0)
         self._vol_spin.setDecimals(1)
@@ -178,64 +163,58 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._vol_spin.setSpecialValueText("off")
         self._vol_spin.setValue(0.0)
         self._vol_spin.setToolTip("Size each trade to this annualised volatility (0 = off, full weight)")
-        row3.addWidget(self._vol_spin)
+        row2.addWidget(self._vol_spin)
 
-        row3.addWidget(self._lbl("Max weight:"))
+        row2.addWidget(self._lbl("Max weight:"))
         self._maxw_spin = QDoubleSpinBox()
         self._maxw_spin.setRange(0.1, 3.0)
         self._maxw_spin.setDecimals(1)
         self._maxw_spin.setSingleStep(0.1)
         self._maxw_spin.setValue(1.0)
         self._maxw_spin.setToolTip("Cap on the position weight (1.0 = no leverage)")
-        row3.addWidget(self._maxw_spin)
-        row3.addStretch()
-        root.addLayout(self._make_collapsible("v2 — Regime MA / ATR stop / Vol target (optional overlays, off by default)", row3))
+        row2.addWidget(self._maxw_spin)
+        row2.addStretch()
+        root.addLayout(self._make_collapsible("Regime MA / ATR stop / Vol target (optional overlays, off by default)", row2))
 
-        # Row 4: v3 portfolio + IS/OOS validation (trend_following.md 3 "v3", 5)
-        row4 = QHBoxLayout()
-        row4.addWidget(self._lbl("v3 \u2014 Portfolio tickers:"))
+        # Row 3: ticker list + IS/OOS validation (trend_following.md 3 "v3", 5)
+        row3 = QHBoxLayout()
+        row3.addWidget(self._lbl("Portfolio tickers:"))
         self._portfolio_edit = QLineEdit()
         self._portfolio_edit.setFont(create_font(10, style_name="Semilight"))
-        self._portfolio_edit.setPlaceholderText("comma-separated, e.g. 005930, 000660, AAPL")
+        self._portfolio_edit.setPlaceholderText("comma-separated, e.g. 005930, 000660, AAPL (empty = top-N Trading Universe)")
         self._portfolio_edit.setMinimumWidth(320)
-        row4.addWidget(self._portfolio_edit, 1)
+        row3.addWidget(self._portfolio_edit, 1)
 
-        row4.addWidget(self._lbl("Top N:"))
+        row3.addWidget(self._lbl("Top N:"))
         self._topn_spin = QSpinBox()
         self._topn_spin.setRange(2, 300)
         self._topn_spin.setValue(20)
-        self._topn_spin.setToolTip("How many Trading Universe stocks (by market cap) to load with the button")
-        row4.addWidget(self._topn_spin)
+        self._topn_spin.setToolTip("How many Trading Universe stocks (by market cap) to load with the button "
+                                   "or when the list is empty")
+        row3.addWidget(self._topn_spin)
 
         self._use_universe_btn = QPushButton("Use Universe")
         self._use_universe_btn.setToolTip("Fill the ticker list with the top-N Trading Universe stocks by market cap")
         self._use_universe_btn.clicked.connect(self._on_use_universe)
-        row4.addWidget(self._use_universe_btn)
+        row3.addWidget(self._use_universe_btn)
 
-        self._portfolio_btn = QPushButton("\u25b6 Run Portfolio")
-        self._portfolio_btn.setFont(create_font(10, QFont.Weight.Bold))
-        self._portfolio_btn.setFixedHeight(32)
-        self._portfolio_btn.setToolTip("Equal-sleeve portfolio backtest with the parameters above")
-        self._portfolio_btn.clicked.connect(lambda: self._on_portfolio_clicked("portfolio"))
-        row4.addWidget(self._portfolio_btn)
-
-        row4.addWidget(self._lbl("OOS years:"))
+        row3.addWidget(self._lbl("OOS years:"))
         self._oos_years_spin = QSpinBox()
         self._oos_years_spin.setRange(1, 15)
         self._oos_years_spin.setValue(5)
         self._oos_years_spin.setToolTip("Number of most recent calendar years used as yearly out-of-sample folds; "
                                         "the first of them is also the holdout split")
-        row4.addWidget(self._oos_years_spin)
+        row3.addWidget(self._oos_years_spin)
 
-        self._validate_btn = QPushButton("\u2696 Validate (IS/OOS)")
+        self._validate_btn = QPushButton("⚖ Validate (IS/OOS)")
         self._validate_btn.setFont(create_font(10, QFont.Weight.Bold))
         self._validate_btn.setFixedHeight(32)
         self._validate_btn.setToolTip("Holdout + anchored yearly walk-forward over the 12-config default grid "
                                       "(entry/exit x vol target x ATR stop); the parameters above are the base config. "
                                       "Use a Start date well before the OOS years.")
-        self._validate_btn.clicked.connect(lambda: self._on_portfolio_clicked("validate"))
-        row4.addWidget(self._validate_btn)
-        root.addLayout(self._make_collapsible("v3 — Portfolio backtest / IS-OOS validation (multi-ticker)", row4))
+        self._validate_btn.clicked.connect(self._on_validate_clicked)
+        row3.addWidget(self._validate_btn)
+        root.addLayout(self._make_collapsible("Portfolio tickers / IS-OOS validation", row3))
 
         # Summary metrics (one row, one column per metric)
         self._summary_tbl = QTableWidget(1, len(_METRICS) + 1)
@@ -248,19 +227,18 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._summary_tbl.setFixedHeight(64)
         root.addWidget(self._summary_tbl)
 
-        # Trades
-        trades_lbl = QLabel("Trades")
-        trades_lbl.setFont(create_font(11, QFont.Weight.Bold))
-        root.addWidget(trades_lbl)
-        self._trades_tbl = QTableWidget(0, 8)
-        self._trades_tbl.setHorizontalHeaderLabels(
-            ["#", "Entry", "Exit", "Reason", "Days", "Weight", "Price %", "Return %"])
-        self._trades_tbl.setFont(create_font(9, style_name="Semilight"))
-        self._trades_tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._trades_tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._trades_tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._trades_tbl.verticalHeader().setVisible(False)
-        root.addWidget(self._trades_tbl, 1)
+        # Per-instrument breakdown
+        inst_lbl = QLabel("Instruments")
+        inst_lbl.setFont(create_font(11, QFont.Weight.Bold))
+        root.addWidget(inst_lbl)
+        self._instruments_tbl = QTableWidget(0, len(_INSTRUMENT_COLS))
+        self._instruments_tbl.setHorizontalHeaderLabels([label for _, label, _ in _INSTRUMENT_COLS])
+        self._instruments_tbl.setFont(create_font(9, style_name="Semilight"))
+        self._instruments_tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._instruments_tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._instruments_tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._instruments_tbl.verticalHeader().setVisible(False)
+        root.addWidget(self._instruments_tbl, 1)
 
         disclaimer = QLabel(
             "⚠️ Research/backtesting tool, not investment advice. Single-period in-sample result; "
@@ -280,8 +258,9 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
     @staticmethod
     def _make_collapsible(header_text: str, body_layout) -> QVBoxLayout:
         """Wrap an existing row layout behind a toggle button, collapsed by default
-        (roadmap 7-3) — keeps the tab's default exposure to rows 1-2 while the v2/v3
-        controls stay one click away instead of always taking up screen space."""
+        (roadmap 7-3) — keeps the tab's default exposure to the parameter row while the
+        overlay / ticker-list controls stay one click away instead of always taking up
+        screen space."""
         container = QVBoxLayout()
         container.setContentsMargins(0, 0, 0, 0)
         container.setSpacing(2)
@@ -320,33 +299,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         sp.setValue(0.0)
         return sp
 
-    # ── universe picker ──────────────────────────────────────────────────────
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._refresh_universe_combo()
-
-    def _refresh_universe_combo(self):
-        data = getattr(self._universe_tab, "all_data", None) or []
-        items = [(it.get("ticker", ""), it.get("name", "")) for it in data if it.get("ticker")]
-        current = self._universe_combo.currentData()
-        self._universe_combo.blockSignals(True)
-        try:
-            self._universe_combo.clear()
-            self._universe_combo.addItem("(pick from Trading Universe)", userData="")
-            for ticker, name in items:
-                self._universe_combo.addItem(f"{ticker}  {name}", userData=ticker)
-            if current:
-                idx = self._universe_combo.findData(current)
-                if idx >= 0:
-                    self._universe_combo.setCurrentIndex(idx)
-        finally:
-            self._universe_combo.blockSignals(False)
-
-    def _on_universe_pick(self, _index):
-        ticker = self._universe_combo.currentData()
-        if ticker:
-            self._ticker_edit.setText(str(ticker))
-
+    # ── ticker list ──────────────────────────────────────────────────────────
     def _universe_top_tickers(self, n: int) -> list:
         data = getattr(self._universe_tab, "all_data", None) or []
         stocks = [it for it in data if it.get("ticker") and not it.get("is_index")]
@@ -356,7 +309,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
     def _on_use_universe(self):
         tickers = self._universe_top_tickers(int(self._topn_spin.value()))
         if not tickers:
-            QMessageBox.information(self, "No Data", "Trading Universe has no stocks yet \u2014 refresh it first.")
+            QMessageBox.information(self, "No Data", "Trading Universe has no stocks yet — refresh it first.")
             return
         self._portfolio_edit.setText(", ".join(tickers))
 
@@ -383,76 +336,42 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
             max_weight=float(self._maxw_spin.value()),
         )
 
+    def _start_iso(self) -> str:
+        """The Start picker's date as YYYY-MM-DD (QDateEdit cannot hold an invalid date,
+        so there is nothing to validate)."""
+        return self._start_edit.date().toString("yyyy-MM-dd")
+
     def _read_inputs(self):
-        """Returns (ticker, start, config) or None after flagging the bad field."""
-        ticker = self._ticker_edit.text().strip().upper()
-        _set_field_error(self._ticker_edit, "" if ticker else "Ticker is required")
-        start_ok = _validate_date_str(self._start_edit.text())
-        _set_field_error(self._start_edit, "" if start_ok else "Start date must be YYYY-MM-DD")
-        if not ticker or not start_ok:
+        """Returns (tickers, start, config) or None after flagging the ticker list.
+        An empty list is filled with the top-N Trading Universe stocks first."""
+        tickers = self._portfolio_tickers()
+        if not tickers:
+            tickers = self._universe_top_tickers(int(self._topn_spin.value()))
+            if tickers:
+                self._portfolio_edit.setText(", ".join(tickers))
+        _set_field_error(self._portfolio_edit, "" if len(tickers) >= 2 else "Enter at least two tickers")
+        if len(tickers) < 2:
+            self._status_lbl.setText("Enter at least two tickers (or refresh the Trading Universe)")
             return None
-        return ticker, _normalize_date_str(self._start_edit.text()), self._config_from_inputs()
+        return tickers, self._start_iso(), self._config_from_inputs()
 
     # ── run ──────────────────────────────────────────────────────────────────
     def _on_run_clicked(self):
-        if self._backtest_thread is not None and self._backtest_thread.isRunning():
+        self._start_portfolio_run("portfolio")
+
+    def _on_validate_clicked(self):
+        self._start_portfolio_run("validate")
+
+    def _start_portfolio_run(self, mode: str):
+        if self._portfolio_thread is not None and self._portfolio_thread.isRunning():
             return
         inputs = self._read_inputs()
         if inputs is None:
             return
-        ticker, start, config = inputs
-        self._last_ticker = ticker
-        self._run_btn.setEnabled(False)
-        self._chart_btn.setEnabled(False)
-        self._status_lbl.setText(f"Fetching {ticker} history from {start}...")
-        self._track_thread(TrendFollowingBacktestThread(ticker, start, config), '_backtest_thread')
-        self._backtest_thread.finished.connect(self._on_backtest_finished)
-        self._backtest_thread.start()
-
-    def _on_backtest_finished(self, result, error: str):
-        self._run_btn.setEnabled(True)
-        if error or result is None:
-            self._status_lbl.setText("Backtest failed — see app.log")
-            QMessageBox.warning(self, "Backtest Error", f"Backtest failed:\n{error or 'unknown error'}")
-            return
-        if result.get("error"):
-            self._status_lbl.setText(f"{self._last_ticker}: {result['error']}")
-            QMessageBox.information(self, "No Data", f"No history for '{self._last_ticker}'.")
-            return
-        self._last_result = result
-        self._render(result)
-        self._chart_btn.setEnabled(True)
-        s = result["summary"]
-        v2 = s.get("v2") or {}
-        overlays = []
-        if v2.get("regime_ma_n"):
-            overlays.append(f"regime MA{v2['regime_ma_n']}")
-        if v2.get("stop_atr_mult"):
-            overlays.append(f"{v2['stop_mode']} stop {v2['stop_atr_mult']:g}×ATR{v2['atr_n']}")
-        if v2.get("vol_target_pct"):
-            overlays.append(f"vol target {v2['vol_target_pct']:g}% (max {v2['max_weight']:g})")
-        exits = (f" | exits: {s.get('n_channel_exits', 0)} channel / {s.get('n_stop_exits', 0)} stop"
-                 if v2.get("stop_atr_mult") else "")
-        self._status_lbl.setText(
-            f"{self._last_ticker}: {s['start_date']} → {s['end_date']} ({s['n_days']} days), "
-            f"Donchian {s['entry_n']}/{s['exit_n']}" + (" + " + ", ".join(overlays) if overlays else " (v1)") + exits
-        )
-
-    # ── v3 portfolio / validation ────────────────────────────────────────────
-    def _on_portfolio_clicked(self, mode: str):
-        if self._portfolio_thread is not None and self._portfolio_thread.isRunning():
-            return
-        tickers = self._portfolio_tickers()
-        _set_field_error(self._portfolio_edit, "" if len(tickers) >= 2 else "Enter at least two tickers")
-        start_ok = _validate_date_str(self._start_edit.text())
-        _set_field_error(self._start_edit, "" if start_ok else "Start date must be YYYY-MM-DD")
-        if len(tickers) < 2 or not start_ok:
-            return
-        start = _normalize_date_str(self._start_edit.text())
-        config = self._config_from_inputs()
+        tickers, start, config = inputs
         oos_last = date.today().year
         oos_first = oos_last - int(self._oos_years_spin.value()) + 1
-        self._portfolio_btn.setEnabled(False)
+        self._run_btn.setEnabled(False)
         self._validate_btn.setEnabled(False)
         self._status_lbl.setText(f"{'Validating' if mode == 'validate' else 'Portfolio backtest'}: {len(tickers)} tickers from {start}...")
         self._track_thread(TrendFollowingPortfolioThread(tickers, start, config, mode=mode,
@@ -463,23 +382,23 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self._portfolio_thread.start()
 
     def _on_portfolio_finished(self, result, error: str):
-        self._portfolio_btn.setEnabled(True)
+        self._run_btn.setEnabled(True)
         self._validate_btn.setEnabled(True)
         if error or result is None:
-            self._status_lbl.setText("Portfolio run failed \u2014 see app.log")
+            self._status_lbl.setText("Portfolio run failed — see app.log")
             QMessageBox.warning(self, "Portfolio Error", f"Run failed:\n{error or 'unknown error'}")
             return
         if "walkforward" in result:
             wf = result["walkforward"]
             if not wf.get("n_folds"):
-                self._status_lbl.setText("Validation produced no folds \u2014 use an earlier Start date")
+                self._status_lbl.setText("Validation produced no folds — use an earlier Start date")
                 QMessageBox.information(self, "Validation", "No out-of-sample fold had enough in-sample history. "
                                                             "Set an earlier Start date or fewer OOS years.")
                 return
             o = wf["oos"]
             self._status_lbl.setText(
                 f"Walk-forward OOS ({wf['n_folds']} folds): Sharpe {o['sharpe']:.2f}, MDD {o['max_drawdown_pct']:.1f}%, "
-                f"CAGR {o['cagr_pct']:+.1f}% \u2014 gate {'PASS' if o['passes_risk_gate'] else 'FAIL'}"
+                f"CAGR {o['cagr_pct']:+.1f}% — gate {'PASS' if o['passes_risk_gate'] else 'FAIL'}"
             )
             TrendFollowingValidationDialog(result, parent=self).exec()
             return
@@ -488,17 +407,15 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
             self._status_lbl.setText("Portfolio: no usable history")
             QMessageBox.information(self, "No Data", "None of the tickers returned enough history.")
             return
+        self._last_result = result
+        self._render(result)
+        skipped = s.get("skipped") or []
         self._status_lbl.setText(
             f"Portfolio ({s['n_instruments']} instruments): Sharpe {s['sharpe']:.2f}, MDD {s['max_drawdown_pct']:.1f}%, "
-            f"CAGR {s['cagr_pct']:+.1f}%, exposure {s['avg_gross_exposure_pct']:.0f}% \u2014 gate {'PASS' if s['passes_risk_gate'] else 'FAIL'}"
+            f"CAGR {s['cagr_pct']:+.1f}%, exposure {s['avg_gross_exposure_pct']:.0f}% — gate {'PASS' if s['passes_risk_gate'] else 'FAIL'}"
+            + (f" | skipped {len(skipped)}: {', '.join(skipped[:5])}{'…' if len(skipped) > 5 else ''}" if skipped else "")
         )
         TrendFollowingPortfolioDialog(result, parent=self).exec()
-
-    def _on_chart_clicked(self):
-        if not self._last_result:
-            return
-        dlg = TrendFollowingChartDialog(self._last_result, self._last_ticker, parent=self)
-        dlg.exec()
 
     # ── render ───────────────────────────────────────────────────────────────
     def _render(self, result: dict):
@@ -510,7 +427,7 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
                 val = s.get(key, 0)
                 it = QTableWidgetItem(fmt.format(val))
                 it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                if key in ("total_return_pct", "cagr_pct", "avg_trade_return_pct"):
+                if key in _SIGNED_KEYS:
                     it.setForeground(QColor(PROFIT if val > 0 else LOSS if val < 0 else FLAT))
                 tbl.setItem(0, c, it)
             gate = bool(s.get("passes_risk_gate"))
@@ -521,34 +438,19 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         finally:
             tbl.setUpdatesEnabled(True)
 
-        trades = result.get("trades") or []
-        tt = self._trades_tbl
+        instruments = s.get("instruments") or []
+        tt = self._instruments_tbl
         tt.setUpdatesEnabled(False)
         try:
-            tt.setRowCount(len(trades))
+            tt.setRowCount(len(instruments))
             right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            for r, t in enumerate(trades):
-                ret = t.get("return_pct", 0.0)
-                px = t.get("price_return_pct", 0.0)
-                reason = t.get("exit_reason") or ("open" if not t.get("exit_date") else "")
-                cells = [
-                    (str(r + 1), Qt.AlignmentFlag.AlignCenter),
-                    (t.get("entry_date", ""), Qt.AlignmentFlag.AlignCenter),
-                    (t.get("exit_date") or "open", Qt.AlignmentFlag.AlignCenter),
-                    (reason, Qt.AlignmentFlag.AlignCenter),
-                    (str(t.get("days_held", 0)), right),
-                    (f"{t.get('weight', 1.0):.2f}", right),
-                    (f"{px:+.2f}%", right),
-                    (f"{ret:+.2f}%", right),
-                ]
-                for c, (text, align) in enumerate(cells):
-                    it = QTableWidgetItem(text)
-                    it.setTextAlignment(align)
-                    if c in (6, 7):
-                        v = px if c == 6 else ret
-                        it.setForeground(QColor(PROFIT if v > 0 else LOSS if v < 0 else FLAT))
-                    if c == 3 and reason == "stop":
-                        it.setForeground(QColor(WARN))
+            for r, inst in enumerate(instruments):
+                for c, (key, _label, fmt) in enumerate(_INSTRUMENT_COLS):
+                    val = inst.get(key, 0)
+                    it = QTableWidgetItem(fmt.format(val))
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignCenter if key == "ticker" else right)
+                    if key in _SIGNED_KEYS:
+                        it.setForeground(QColor(PROFIT if val > 0 else LOSS if val < 0 else FLAT))
                     tt.setItem(r, c, it)
         finally:
             tt.setUpdatesEnabled(True)

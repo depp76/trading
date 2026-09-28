@@ -106,12 +106,12 @@ def app_qss(font_css: str) -> str:
        10pt app base size, bold (user direction, 2026-09-20). */
     QTabWidget#MainTabs QTabBar::tab {{ font-size: 12pt; font-weight: 700; }}
 
-    QLineEdit, QComboBox {{
+    QLineEdit, QComboBox, QDateEdit {{
         background: {SURFACE}; color: {TEXT};
         border: 1px solid {LINE_STRONG}; border-radius: 6px;
         padding: 4px 9px; {font_css}
     }}
-    QLineEdit:focus, QComboBox:focus {{ border-color: {ACCENT}; }}
+    QLineEdit:focus, QComboBox:focus, QDateEdit:focus {{ border-color: {ACCENT}; }}
     QLineEdit[readOnly="true"] {{ background: transparent; border: none; color: {TEXT}; }}
 
     QFrame#DashboardCard {{
