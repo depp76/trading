@@ -127,8 +127,18 @@ Dev tooling is in `requirements-dev.txt`
   `config.py`, `signals.py` with the no-lookahead `donchian_signal`, `backtest.py` with
   `run_backtest` / `run_backtest_for_ticker`, `portfolio.py` with the equal-sleeve
   `run_portfolio_backtest`, `validation.py` with `holdout_validation` /
-  `walk_forward_validation`; spec and real-data results in `trend_following.md`; UI for
-  single-instrument, portfolio and validation runs in `ui/trend_following_tab.py`). Shared
+  `walk_forward_validation`; UI for single-instrument, portfolio and validation runs in
+  `ui/trend_following_tab.py` — all of that is the *previous* design, kept until the 6장
+  decision in the spec). The spec `trend_following.md` was rewritten on 2026-09-28 around a
+  KR portfolio strategy (Donchian 20/10, weekly entries / daily exits, KOSPI 200-day filter,
+  10 positions sized by ATR risk, 10M KRW reset every year with the excess harvested); its
+  implementation is the v1 module set that reuses only `donchian_signal`: `config_v1.py`
+  (`KrTrendConfig`), `universe.py` (yearly top-100 by trading value), `engine.py`
+  (`run_kr_trend`, the event-driven daily loop with whole-share fills at the next open),
+  `annual.py` (year-end harvest / top-up maths) and `validation_v1.py` (the 4장 comparison,
+  sensitivity and walk-forward runners). `tools/kr_trend_backtest.py` runs it on real data
+  with a parquet cache under `cache/kr_trend/` (gitignored) and writes `reports/kr_trend_*.md`.
+  No UI reaches the v1 modules yet). Shared
   building blocks sit directly under `strategy/` (review_agy.md Section 4, 2026-09-20):
   `base.py` (`Trade` / `BacktestResult` / `BaseStrategyConfig` data model — nothing adopts it
   yet), `metrics.py` (`calculate_returns_metrics` for a return series,
