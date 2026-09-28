@@ -4,16 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio, with four
+A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio, with three
 top-level tabs: "Trading Universe" (KOSPI/KOSDAQ watchlist with live prices and indicators;
 the US market code paths still exist but are commented out in the UI), "Trading History"
-(manually-entered trade log backed by SQLite), "Total Assets" (weekly asset snapshots vs.
-KOSPI and USD), and "Strategy" (roadmap 7-1) — a `QTabWidget` of sub-tabs behind a shared
-"Today's Signals" summary bar: "Weekly Rebalance" (weekly factor-scoring rebalance signals plus
-a walk-forward backtest), "Trend Following" (Donchian channel breakout backtest of an
-equal-sleeve multi-ticker portfolio, plus IS/OOS validation; the single-ticker mode was
-removed from the UI on 2026-09-28), and "MA Cross" (fast/slow MA golden-cross backtest for one
-ticker). The strategy sub-tabs are signal generation and research only; nothing places orders.
+(manually-entered trade log backed by SQLite) and "Total Assets" (weekly asset snapshots vs.
+KOSPI and USD). Nothing places orders.
+
+**Strategy layer: removed on 2026-09-28 (user direction: "strategy 관련된 내용 초기화 & 전략은
+추후 개발하여 검증할 예정").** The former `src/strategy/` package (rebalance, ma_cross,
+trend_following plus the shared base/metrics/costs modules and their `<name>.md` specs), the
+"Strategy" top-level tab with its sub-tabs, the backtest/chart dialogs, the five strategy
+`QThread`s, `tests/strategy/`, and `tools/kr_trend_backtest.py` were all deleted. They remain
+in git history (commit `070f639` and earlier) for reference. Trading strategies will be
+developed and validated again later; when that happens, follow the rule kept below under
+"Conventions" (one `src/strategy/<name>/` package per strategy with its spec `<name>.md` in
+the same folder, `data/` never importing it).
 
 The repo is a git repository (branch `master`). Commit or branch as usual; the old
 `archive/backup_<timestamp>/` copy-before-editing convention is no longer needed.
@@ -35,19 +40,18 @@ working directory:
 ### Verification
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest src\tests -q      # ~390 tests, no network, ~10 s
+.\.venv\Scripts\python.exe -m pytest src\tests -q      # ~220 tests, no network, ~10 s
 .\.venv\Scripts\ruff.exe check src                      # pyflakes rules only (ruff.toml)
 ```
 
 Run pytest from the repo root or from `src/` (`tests/conftest.py` puts `src/` on `sys.path`;
-the `tests/` folders are packages so test files in different strategy folders may share
-a basename).
+the `tests/` folder is a package).
 Tests patch the implementation modules (`data.cache`, `data.history`, `data.fx`, `data.collectors.yahoo`),
 never names on the `data_fetcher` facade. Widgets can be built and driven headlessly with
 `QT_QPA_PLATFORM=offscreen` (the tests construct tabs and dialogs that way), but nothing can be
 looked at, so for UI refactors write a throwaway characterisation script that dumps widget /
 matplotlib-axes state before and after and diff the two (done for `StockMaDialog` and
-`TradingHistoryTab._build_ui` on 2026-09-19); for non-trivial changes to fetch/backtest logic
+`TradingHistoryTab._build_ui` on 2026-09-19); for non-trivial changes to fetch logic
 write a throwaway script comparing old vs. new behaviour on random inputs
 (`docs/history/changelog_optimization_2026-08-11.md` shows the pattern;
 `docs/history/test_plan_2026-08-29.md` is an old manual-check list kept for reference).
@@ -56,26 +60,23 @@ Dev tooling is in `requirements-dev.txt`
 
 ## Architecture
 
-- **`src/main.py`** (~300 lines): `MainWindow` builds the five tabs, wires cross-tab
+- **`src/main.py`** (~250 lines): `MainWindow` builds the three tabs, wires cross-tab
   signals, owns the 60-second `global_auto_timer` (the only auto-refresh timer; the "Auto
   Update" checkbox starts and stops it and everything downstream), the app stylesheet, and
   logging setup (root INFO; `app.log` gets INFO and above, the console WARNING and above).
 - **`src/ui/`**: `universe_tab.py` (`UniverseTab`), `history_tab.py` (`TradingHistoryTab`),
-  `assets_tab.py` (`TradingRecordTab`), `strategy_tab.py` (`StrategyTab`, roadmap 7-1 — the
-  "Strategy" top-level tab: a `QTabWidget` hosting `auto_trading_tab.py` (`AutoTradingTab`),
-  `trend_following_tab.py` (`TrendFollowingTab`) and `ma_cross_tab.py` (`MaCrossTab`), behind a
-  "Today's Signals" summary bar driven by `threads.fetch_threads.StrategySummaryThread`),
+  `assets_tab.py` (`TradingRecordTab`),
   `widgets.py` (`StockTable`, `NumericItem`, `FilterPopup`, `GroupedHeaderView`), `delegates.py`
-  (every custom-painted table cell: `CellDelegate` base + the Universe/History/Strategy
-  delegates), `ma_chart.py` (`StockMaLauncherMixin`, the shared MA-chart dialog launcher),
+  (every custom-painted table cell: `CellDelegate` base + the Universe/History delegates),
+  `ma_chart.py` (`StockMaLauncherMixin`, the MA-chart dialog launcher; `UniverseTab` is its
+  only user now),
   `colors.py` / `theme.py` (PROFIT/LOSS color rule, design tokens and the global QSS —
   buttons get their look from the `#primary`/`#danger` objectName roles, secondary labels
-  from `#muted`/`#faint`; never a hardcoded hex for something `theme.py` has a rule for),
+  from `#muted`/`#faint`; never a hardcoded hex for something `theme.py` has a rule for; the
+  `QCalendarWidget` rules have no current caller and are kept for the next `QDateEdit`),
   `dialogs/` (one module per
   dialog group: `index_ma`, `stock_ma`, `trade_edit`, `trade_history`, `assets_graph`,
-  `backtest_result`, `trend_following_chart`, `trend_following_portfolio`, `holdings_summary`,
-  `stock_report`; import from
-  `ui.dialogs`),
+  `holdings_summary`, `stock_report`; import from `ui.dialogs`),
   `history_table.py` (cell factories, `fill_table_rows`, `SectionTable` + the column
   `SECTIONS` for the history grid), `history_calc.py` (pure P/L maths, no Qt:
   `compute_pl_fields`, `build_monthly_rows`, `summarize_positions`), `common.py`
@@ -85,18 +86,14 @@ Dev tooling is in `requirements-dev.txt`
   `safe_load_json`, `retire_thread`, `ThreadOwnerMixin`). Tabs never
   reference each other
   directly; `MainWindow` connects their signals (`status_message`, `refresh_started`,
-  `auto_lightweight_tick`, `total_asset_updated`). The one exception is `AutoTradingTab`
-  and `TrendFollowingTab` (now reached through `StrategyTab` rather than directly from
-  `MainWindow`), which read `UniverseTab.all_data` on demand (`TrendFollowingTab` only to
-  list watchlist tickers).
+  `auto_lightweight_tick`, `total_asset_updated`).
 - **`src/threads/`**: every network call the UI triggers runs in a `QThread` subclass here
   (`AllDataFetchThread`, `UniverseLightweightFetchThread`, `PositionPriceFetchThread`,
-  `RealtimePriceThread`, `StockMaThread`, `AccountDepositThread`, `RebalanceBacktestThread`,
-  `TrendFollowingBacktestThread`, `MaCrossBacktestThread`, `TrendFollowingPortfolioThread`,
-  `StrategySummaryThread`,
-  the Gemini threads, `AutoBackupThread`). Never call `data_fetcher` functions from a slot on
-  the UI thread; add a thread class instead. Connect `finished` signals to bound methods,
-  not closures, so Qt queues them onto the UI thread; when a slot needs per-request
+  `RealtimePriceThread`, `StockMaThread`, `IndexMaThread`, `SingleStockFetchThread`,
+  `TickerValidateThread`, `AssetMetricsPreloadThread`, `AccountDepositThread`,
+  `GeminiStockReportThread`, `AutoBackupThread`). Never call `data_fetcher` functions from a
+  slot on the UI thread; add a thread class instead. Connect `finished` signals to bound
+  methods, not closures, so Qt queues them onto the UI thread; when a slot needs per-request
   context (which ticker, which market, which change mode), have the thread echo it back
   in the signal (`SingleStockFetchThread.finished(result, error, ticker)`,
   `StockMaThread.finished(..., market, change_mode)`) instead of capturing it in a lambda.
@@ -114,50 +111,8 @@ Dev tooling is in `requirements-dev.txt`
   universe) -> `market.py` (per-market universe builds, single-stock lookup, index/MA
   series; re-exports the lower names for older callers). Keep new code in the lowest
   layer that has what it needs, never add a `from data.market import` below market.py, and
-  never import `strategy`. Uses polars internally and converts to pandas only at library
-  boundaries; reuse the module-level caches rather than adding parallel ones.
-- **`src/strategy/`**: all trading-strategy logic (`strategy/rebalance/rebalance.md` 11-5).
-  **Rule (user direction, 2026-09-17): every strategy is its own sub-package
-  `src/strategy/<name>/` and its design/spec document is saved as `<name>.md` inside that
-  same folder.** A sub-package has a `config.py` (parameters), `signals.py`, `backtest.py`
-  and an `__init__.py` facade; tests go in `tests/strategy/<name>/`; docstrings and commit
-  messages cite the md section numbers, and the md is updated in the same commit as the
-  code. Current members: `rebalance/` (weekly factor scoring, classification, walk-forward
-  backtest; `rebalance.md`), `ma_cross/` (single-stock fast/slow MA golden-cross backtest:
-  `config.py` with `MaCrossConfig`, `signals.py`, `backtest.py`; UI in `ui/ma_cross_tab.py`;
-  `ma_cross.md`), and `trend_following/` (Donchian channel breakout with optional v2
-  overlays — regime MA filter, ATR stop, volatility-target sizing, all off by default:
-  `config.py`, `signals.py` with the no-lookahead `donchian_signal`, `backtest.py` with
-  `run_backtest` / `run_backtest_for_ticker`, `portfolio.py` with the equal-sleeve
-  `run_portfolio_backtest`, `validation.py` with `holdout_validation` /
-  `walk_forward_validation`; UI for the portfolio and validation runs in
-  `ui/trend_following_tab.py` (Start is a `QDateEdit` calendar picker; Run Backtest runs the
-  portfolio on the ticker list, auto-filled from the Trading Universe top-N when empty;
-  `run_backtest_for_ticker`, `TrendFollowingBacktestThread` and `TrendFollowingChartDialog`
-  have no UI caller since 2026-09-28 — the summary bar still uses the first) — all of that
-  is the *previous* design, kept until the 6장 decision in the spec). The spec `trend_following.md` was rewritten on 2026-09-28 around a
-  KR portfolio strategy (Donchian 20/10, weekly entries / daily exits, KOSPI 200-day filter,
-  10 positions sized by ATR risk, 10M KRW reset every year with the excess harvested); its
-  implementation is the v1 module set that reuses only `donchian_signal`: `config_v1.py`
-  (`KrTrendConfig`), `universe.py` (yearly top-100 by trading value), `engine.py`
-  (`run_kr_trend`, the event-driven daily loop with whole-share fills at the next open),
-  `annual.py` (year-end harvest / top-up maths) and `validation_v1.py` (the 4장 comparison,
-  sensitivity and walk-forward runners). `tools/kr_trend_backtest.py` runs it on real data
-  with a parquet cache under `cache/kr_trend/` (gitignored) and writes `reports/kr_trend_*.md`.
-  No UI reaches the v1 modules yet). Shared
-  building blocks sit directly under `strategy/` (review_agy.md Section 4, 2026-09-20):
-  `base.py` (`Trade` / `BacktestResult` / `BaseStrategyConfig` data model — nothing adopts it
-  yet), `metrics.py` (`calculate_returns_metrics` for a return series,
-  `calculate_equity_metrics` for an equity curve, `calculate_trade_metrics`; drawdown always
-  a positive magnitude) and `costs.py` (`TransactionCostModel`, `KRX_STOCK_COST` matching
-  rebalance's live defaults, `US_STOCK_COST` an unvalidated placeholder). `trend_following`'s
-  `return_metrics()` and `rebalance`'s `_summarize_backtest()` / `_sharpe_and_vol()` are thin
-  wrappers over `metrics.py` that keep each strategy's own conventions (rebalance: negative
-  MDD sign, `initial_capital` as the return base, CAGR 0.0 on a wiped-out curve); `ma_cross`
-  computes no metrics and models no costs yet. When touching any of this, verify numbers are
-  unchanged with an old-vs-new random-input comparison, since both spec `.md`s record
-  real-data results. Strategy code imports from `data.*`; callers import strategy symbols
-  from `strategy.<name>` directly, never via `data_fetcher`.
+  never import a strategy package from here. Uses polars internally and converts to pandas
+  only at library boundaries; reuse the module-level caches rather than adding parallel ones.
 - **`src/data_fetcher.py`**: the single re-export facade over `data/` (data access only, no
   strategy symbols) so UI and thread code import from one place; `data/__init__.py` itself
   re-exports nothing. Nothing in `data/` imports the facade back; keep it that way. It
@@ -232,10 +187,15 @@ not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
   thread and the Trading History summary).
 - KR-vs-US ticker routing uses `is_kr_code()`; the daily-history lookback start is
   `start_date()` (a function, not an import-time constant).
-- Strategy specs live next to their code as `src/strategy/<name>/<name>.md` (see the
-  `src/strategy/` rule above). `rebalance.md` also holds the multi-agent development
-  methodology (ch. 12) and the manual-trading baseline (ch. 10); it was the root
-  `trading.md` until 2026-09-17. The other specs are `strategy/ma_cross/ma_cross.md` and
-  `strategy/trend_following/trend_following.md`; there are no strategy docs at the repo root.
+- **Strategy rule (user direction, 2026-09-17; kept for the future re-introduction):** every
+  strategy is its own sub-package `src/strategy/<name>/` and its design/spec document is
+  saved as `<name>.md` inside that same folder. A sub-package has a `config.py`
+  (parameters), `signals.py`, `backtest.py` and an `__init__.py` facade; tests go in
+  `tests/strategy/<name>/`; docstrings and commit messages cite the md section numbers, and
+  the md is updated in the same commit as the code. Strategy code imports from `data.*`;
+  callers import strategy symbols from `strategy.<name>` directly, never via
+  `data_fetcher`, and `data/` never imports `strategy`. Every strategy UI runs its work in
+  a `QThread` under `src/threads/` and is signal generation / research only. There are no
+  strategy docs at the repo root.
 - `roadmap.md` is the running log of what was done and why (sections per phase, a priority
   matrix, and a dated change history). Add a row there for non-trivial changes.

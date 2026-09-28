@@ -8,19 +8,17 @@ visual-noise problem. Every delegate here reads its content from
 Qt.ItemDataRole.UserRole (a plain dict) rather than the item's display
 text, since none of these cells are single-line text.
 
-They used to live next to their tables (ui/widgets.py, ui/history_table.py,
-ui/auto_trading_tab.py), each with its own copy of the selection/zebra
-background fill and badge-drawing code. CellDelegate is that shared part.
+They used to live next to their tables (ui/widgets.py, ui/history_table.py),
+each with its own copy of the selection/zebra background fill and
+badge-drawing code. CellDelegate is that shared part.
 
   Trading Universe:  IdentityDelegate, RangeBarDelegate, TrendDelegate
   Trading History:   TradeStateDelegate
-  Strategy:          RankStockDelegate, ActionBadgeDelegate, ScoreBarDelegate
 """
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyle
 from PyQt6.QtCore import Qt, QRect, QSize
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPen
 
-from ui.colors import ACTION_BUY, ACTION_SELL
 from ui.theme import ACCENT, ACCENT_TEXT, ACCENT_BG, TEXT, TEXT_FAINT, LINE, LINE_SOFT
 
 
@@ -286,100 +284,4 @@ class TradeStateDelegate(CellDelegate):
         self.draw_name_and_meta(painter, option, text_x, text_w, index.data(Qt.ItemDataRole.DisplayRole) or "", "")
 
         self.draw_badge(painter, QRect(bx, rect.y() + (rect.height() - bh) // 2, bw, bh), label, fg, border, bg, font)
-        painter.restore()
-
-
-# ---------------------------------------------------------------------------
-# Strategy / Auto Trading (ui/auto_trading_tab.py)
-# ---------------------------------------------------------------------------
-# Badge colors for the rebalance "recommended action" -- ACTION_BUY/
-# ACTION_SELL are deliberately a different axis from PROFIT/LOSS (see
-# ui/colors.py); Hold reuses the accent used for held/watch states elsewhere.
-ACTION_STYLE = {
-    "Buy":  (ACTION_BUY, "#eef8f2", "#b8dfcb"),
-    "Sell": (ACTION_SELL, "#fdf3e6", "#f0dcb8"),
-    "Hold": (ACCENT_TEXT, ACCENT_BG, ACCENT),
-}
-
-
-class RankStockDelegate(CellDelegate):
-    """Column 0: rank number + an action-colored left marker + name +
-    "ticker · market" meta, so a candidate's rank and identity read as one
-    row instead of two separate table lookups (docs/ui.md Strategy
-    Redesign issue #4)."""
-
-    RANK_W = 22
-
-    def paint(self, painter, option, index):
-        painter.save()
-        rect = option.rect
-        self.paint_background(painter, option, index)
-
-        data = index.data(Qt.ItemDataRole.UserRole) or {}
-        rank_font = QFont(option.font)
-        rank_font.setPointSize(max(6, option.font.pointSize() - 1))
-        painter.setFont(rank_font)
-        painter.setPen(QColor(TEXT_FAINT))
-        painter.drawText(QRect(rect.x() + 4, rect.y(), self.RANK_W, rect.height()),
-                         Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(data.get("rank", "-")))
-
-        marker_x = rect.x() + 4 + self.RANK_W + 6
-        self.draw_marker(painter, rect, marker_x, data.get("color", LINE))
-
-        text_x = marker_x + self.MARKER_W + 8
-        text_w = max(10, rect.right() - text_x - 4)
-        self.draw_name_and_meta(painter, option, text_x, text_w, data.get("name", ""), data.get("meta", ""))
-        painter.restore()
-
-
-class ActionBadgeDelegate(CellDelegate):
-    """Column 1: a centered Buy/Sell/Hold text badge (docs/ui.md Strategy
-    Redesign issue #5 -- replaces the old emoji section headers). Nothing
-    is drawn for rows with no action."""
-
-    def paint(self, painter, option, index):
-        painter.save()
-        rect = option.rect
-        self.paint_background(painter, option, index)
-
-        action = (index.data(Qt.ItemDataRole.UserRole) or {}).get("action", "-")
-        style = ACTION_STYLE.get(action)
-        if style:
-            fg, bg, border = style
-            font = self.badge_font(option.font, delta=-1)
-            bw, bh = self.badge_width(font, action), 17
-            self.draw_badge(painter, QRect(rect.x() + (rect.width() - bw) // 2, rect.y() + (rect.height() - bh) // 2, bw, bh),
-                            action, fg, border, bg, font)
-        painter.restore()
-
-
-class ScoreBarDelegate(CellDelegate):
-    """Column 2: a small filled bar (normalized within the current ranking's
-    min/max) plus the raw score, so relative standing reads at a glance
-    instead of needing to compare raw z-score numbers row to row."""
-
-    def paint(self, painter, option, index):
-        painter.save()
-        rect = option.rect
-        self.paint_background(painter, option, index)
-
-        data = index.data(Qt.ItemDataRole.UserRole)
-        if data:
-            pad = 6
-            track_y = rect.y() + rect.height() // 2 - 3
-            track_h = 6
-            track_x = rect.x() + pad
-            track_w = max(1, rect.width() - 2 * pad - 34)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(LINE_SOFT))
-            painter.drawRoundedRect(track_x, track_y, track_w, track_h, 3, 3)
-
-            pct = max(0.0, min(1.0, data["pct"]))
-            painter.setBrush(QColor(ACCENT if pct >= 0.4 else LINE))
-            painter.drawRoundedRect(track_x, track_y, max(2, int(track_w * pct)), track_h, 3, 3)
-
-            painter.setFont(QFont(option.font))
-            painter.setPen(QColor(TEXT))
-            painter.drawText(QRect(track_x + track_w + 4, rect.y(), 30, rect.height()),
-                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, data["text"])
         painter.restore()

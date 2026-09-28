@@ -2,7 +2,8 @@
 
 > 기준일: 2026-09-17 (최초 작성 2026-08-21, 실제 코드 상태 재조사 후 갱신)  
 > 현재 상태: PyQt6 단일 사용자 데스크톱 앱 (한국/미국 주식 포트폴리오 추적) — git 관리(46 커밋), pytest 119/119 통과, ruff(F) 0건  
-> 핵심 파일: `src/main.py` (313줄), `src/data_fetcher.py` (파사드) → `src/data/` 패키지 (cache·indicators·market·collectors, 순수 데이터 계층), `src/strategy/` (rebalance·ma_cross·trend_following, 전략 계층 — 2026-09-17 분리), `src/ui/` (약 6,300줄), `src/threads/`, `src/trade_db.py`, `src/gemini_helper.py`
+> 핵심 파일: `src/main.py`, `src/data_fetcher.py` (파사드) → `src/data/` 패키지 (cache·indicators·market·collectors, 순수 데이터 계층), `src/ui/`, `src/threads/`, `src/trade_db.py`, `src/gemini_helper.py`  
+> **2026-09-28: 전략 계층(`src/strategy/`, Strategy 탭, 관련 스레드·다이얼로그·테스트·도구) 전부 제거 — 전략은 추후 새로 개발·검증 예정.** 아래 본문의 전략 관련 항목(7-1, 변경 이력의 rebalance/ma_cross/trend_following 기록 등)은 당시 기록으로 남겨 둔다.
 
 ---
 
@@ -27,7 +28,7 @@
 | **Trading Universe** | KOSPI / KOSDAQ / NASDAQ 100 / S&P 500 종목 워치리스트, 실시간 시세, MA 지표, 필터 팝업 |
 | **Trading History** | 거래 기록 수동 입력, SQLite 영속화 (`portfolio.db`), 오버라이드 지원 |
 | **Total Assets** | 날짜별 자산 합계 테이블 + matplotlib 그래프, 환율·KOSPI 연동 |
-| **Auto Trading** | 주간 팩터 스코어링 리밸런싱 신호(매수/매도/보유 후보) + 워크포워드 백테스트 (거래비용 반영) |
+| ~~Strategy~~ | 2026-09-28 제거. 리밸런싱·MA Cross·추세추종 전략과 백테스트 UI는 추후 새로 개발하여 검증할 예정 |
 
 ### 기술 스택
 
@@ -37,7 +38,7 @@
 - **DB**: SQLite (WAL 모드), `trade_db.py`
 - **AI**: `google-genai` (`gemini_helper.py`로 포트폴리오 진단·종목 리포트에 실사용 중; 자연어 필터는 2026-09-19 삭제), `google-cloud-aiplatform` (requirements에 포함, 미사용)
 
-### 소스 코드 구조 (2026-09-19 갱신)
+### 소스 코드 구조 (2026-09-28 갱신)
 
 > **구조가 바뀔 때마다(폴더/파일 신설·이동·삭제) 이 섹션을 최신 상태로 갱신할 것.** 3-1의
 > "현재 파일 구조"는 Phase 0~5 리팩토링 당시의 역사적 기록이라 갱신 대상이 아니고, 지금
@@ -47,9 +48,9 @@
 src/
 ├── main.py                # PyQt6 진입점 + MainWindow, 공용 헬퍼
 ├── paths.py                # BASE_DIR 등 경로 상수 (6-1d, cwd 무관)
-├── data_fetcher.py          # data/·strategy/ 재노출 파사드 (하위 호환용)
+├── data_fetcher.py          # data/ 재노출 파사드 (데이터 접근 전용)
 ├── trade_db.py               # SQLite 거래 이력 (portfolio.db, WAL)
-├── gemini_helper.py            # Gemini 기반 포트폴리오 진단 / 종목 리포트
+├── gemini_helper.py            # Gemini 기반 종목 리포트
 ├── data/                        # 순수 데이터 접근 계층
 │   ├── cache.py                   # 전역 캐시/세션 상수
 │   ├── indicators.py               # RSI/MA 등 지표
@@ -59,24 +60,26 @@ src/
 │   ├── frames.py                       # 데이터프레임 변환 유틸
 │   ├── fx.py                            # 환율
 │   └── collectors/                       # kis.py / krx.py / naver.py / yahoo.py
-├── strategy/                    # 매매 전략 로직 계층 (2026-09-17 data/에서 분리)
-│   ├── rebalance/                 # 팩터 스코어링 + 워크포워드 백테스트 (+ rebalance.md 스펙)
-│   ├── ma_cross/                    # 개별종목 MA20/60 골든크로스 전략 (+ ma_cross.md)
-│   └── trend_following/               # Donchian 채널 돌파 추세추종 (+ trend_following.md 스펙)
 ├── ui/
-│   ├── common.py / widgets.py           # 공용 폰트·위젯 헬퍼
 │   ├── common.py                        # 폰트·검증·JSON I/O·retire_thread·ThreadOwnerMixin
-│   ├── universe_tab.py / history_tab.py / assets_tab.py / strategy_tab.py (7-1: Auto
-│   │     Trading·Trend Following 서브탭 + 요약 바) / auto_trading_tab.py / trend_following_tab.py
+│   ├── widgets.py / delegates.py        # StockTable·헤더·필터 팝업 / 커스텀 페인팅 셀
+│   ├── colors.py / theme.py             # PROFIT/LOSS 색 규칙 / 디자인 토큰 + 전역 QSS
+│   ├── universe_tab.py / history_tab.py / assets_tab.py   # 상위 탭 3개
+│   ├── ma_chart.py                      # StockMaLauncherMixin (MA 차트 다이얼로그 실행)
 │   ├── history_table.py / history_calc.py # History 탭 셀 팩토리·SectionTable / 순수 계산(summarize_positions 등)
-│   └── dialogs/                           # 다이얼로그 11개 (stock_ma.py는 메서드 단위로 재구성)
+│   └── dialogs/                           # 다이얼로그 8개 (index_ma·stock_ma·trade_edit·trade_history·
+│                                          #   assets_graph·holdings_summary·stock_report)
 ├── threads/                       # fetch_threads.py, realtime.py
-└── tests/                          # test_<모듈>.py 단위 테스트 + strategy/{ma_cross,rebalance,trend_following}/
-                                    #   (trend_following/frames.py = 공용 OHLCV 프레임 헬퍼)
+└── tests/                          # test_<모듈>.py 단위 테스트
 ```
 
-전략별 상세 스펙·의사결정 이력은 `strategy/<전략명>/<전략명>.md`에 각각 둔다(코드와 같은
-폴더) — `rebalance.md`, `ma_cross.md`, `trend_following.md`. 예전에 저장소 루트에 있던
+`src/strategy/`(rebalance·ma_cross·trend_following 패키지와 각 `<전략명>.md` 스펙),
+`ui/strategy_tab.py`·`auto_trading_tab.py`·`trend_following_tab.py`·`ma_cross_tab.py`,
+`ui/dialogs/backtest_result.py`·`trend_following_chart.py`·`trend_following_portfolio.py`,
+`threads/fetch_threads.py`의 전략 스레드 5종, `tests/strategy/`, `tools/kr_trend_backtest.py`는
+**2026-09-28에 모두 삭제**했다(git 이력 `070f639` 이전 커밋에서 열람 가능). 전략은 추후 새로
+개발하여 검증할 예정이며, 다시 도입할 때는 "전략별 `src/strategy/<이름>/` 패키지 + 같은 폴더의
+`<이름>.md` 스펙" 규칙을 그대로 적용한다. 예전에 저장소 루트에 있던
 `changelog_optimization.md`/`test_plan.md`는 `docs/history/`로 이관되었다.
 
 ### 기존 최적화 내역
@@ -554,7 +557,7 @@ tests/
 > **상태**: 7-1~7-4 전부 구현 완료(2026-09-19 7차·10차, 변경 이력 참고). computer-use 화면 캡처를
 > 곁들인 2차 리뷰는 필요 시 별도 진행.
 
-### 7-1. Strategy 상위 탭 도입 — ✅ 완료
+### 7-1. Strategy 상위 탭 도입 — ✅ 완료 → **2026-09-28 제거** (전략 계층 전체 초기화; 아래는 당시 기록)
 
 **구현 (2026-09-19 7차)**: `ui/strategy_tab.py::StrategyTab` 신설 — 내부 `QTabWidget`에
 `AutoTradingTab`/`TrendFollowingTab`을 그대로 재사용해 붙이고, 아직 UI가 없는 `MA Cross`는
@@ -750,3 +753,4 @@ pytest 219/219, ruff 0건.
 | 2026-09-28 (3차) | `review_agy.md` 5.1 stale 주석 3건 정정(코드 변경 없음): `main.py` 자동 백업 주석에서 이미 DB(`asset_records`)로 옮겨진 `trading_record.json` 제거, `ui/widgets.py` Trend 셀 주석 "col 12 / four" → `COL_TREND`(현재 14) / `_MOMENTUM_COLS` 5개, `ui/history_tab.py` `load_from_db` 위 "Load from JSON only" → SQLite 기준(레거시 JSON은 `trade_db._migrate_legacy_json`이 1회 읽음). 검증: pytest 389 passed + 2 skipped, ruff 0건. |
 | 2026-09-28 (4차) | 사용자 요청: Trend Following 탭 정리 — "Buy when…" 부제 삭제, Ticker 입력·From Universe 콤보 삭제, Start를 클릭 시 달력이 뜨는 `QDateEdit`(calendarPopup, `yyyy-MM-dd`, 최대 오늘, 기본 5년 전)로 바꿔 Run Backtest 버튼 바로 왼쪽에 배치, 접힘 행 제목·라벨의 "v2 —"/"v3 —" 접두어 삭제. Ticker가 없어지면 Run Backtest의 대상이 사라지므로 사용자에게 확인 → **"포트폴리오 종목 목록"으로 결정**: Run Backtest가 접힌 행의 Portfolio tickers 목록으로 등가 슬리브 포트폴리오 백테스트를 실행(목록이 비어 있으면 Trading Universe 시가총액 상위 Top N을 자동 채움), 중복이 된 "Run Portfolio" 버튼과 단일 종목용 "Chart" 버튼·`showEvent`/`_refresh_universe_combo`/`_on_universe_pick`/`_on_backtest_finished`/`_on_chart_clicked` 제거. 결과 표시: 요약 행을 포트폴리오 지표(Total return·CAGR·Annual vol·Sharpe·MDD·Trades·Exposure·Avg positions·Instruments·Risk gate)로, 아래 "Trades" 표를 종목별 "Instruments" 표(Ticker·CAGR·Sharpe·MDD·Trades·Exposure)로 교체하고, 기존처럼 완료 시 `TrendFollowingPortfolioDialog`(에쿼티 차트)도 연다. `ui/theme.py`의 `QLineEdit, QComboBox` 규칙에 `QDateEdit` 추가(같은 테두리/포커스 색). `TrendFollowingBacktestThread`·`TrendFollowingChartDialog`·`run_backtest_for_ticker`는 UI 호출자가 없어졌지만 모듈은 유지(요약 바 `StrategySummaryThread`가 세 번째를 계속 사용). 오프스크린 위젯 트리 덤프로 행 순서(…Slippage → Start → ▶ Run Backtest → status) 확인. `tests/test_trend_following_tab.py` 재작성(17개: 제거된 컨트롤 부재, 달력 피커 속성·위치, v2/v3/Buy 문구 부재, 빈 목록 자동 채움, 2종목 미만 거부, 렌더·완료 핸들러·오류 경로). CLAUDE.md 탭 설명 갱신. 검증: pytest 393 passed + 2 skipped, ruff 0건. |
 | 2026-09-28 (5차) | 사용자 보고: Trend Following의 Start 달력 팝업이 제대로 보이지 않음. 오프스크린으로 `calendarWidget()`을 스타일시트 유무로 각각 `grab()`해 비교 → 원인은 `ui/theme.py`의 전역 표 규칙(`QTableView::item { padding: 2px 8px }`, `QTableView { border 1px + border-radius 8px }`)이 `QCalendarWidget`의 고정 크기 일자 그리드(`QTableView`)에도 적용돼 셀이 뷰 밖으로 밀려 대부분의 날짜가 잘려 나간 것. `QCalendarWidget QTableView`/`::item`에 padding 0·border none·radius 0을 다시 지정하고, 선택 일자는 ACCENT, 내비게이션 바(`#qt_calendar_navigationbar`)는 HDR_BG + 투명 QToolButton으로 앱 헤더 톤에 맞춤. 수정 후 그랩에서 7열×6행 전체·주말 빨강·선택 강조가 정상 표시됨을 확인. 검증: pytest 393 passed + 2 skipped, ruff 0건. |
+| 2026-09-28 (6차) | 사용자 지시("strategy 관련된 내용 초기화 & 전략은 추후 개발하여 검증할 예정")로 **전략 계층 전체 삭제**: `src/strategy/`(rebalance·ma_cross·trend_following + 공용 base/metrics/costs, 스펙 md 3개), Strategy 탭 UI 4개 파일(`strategy_tab.py`·`auto_trading_tab.py`·`trend_following_tab.py`·`ma_cross_tab.py`), 다이얼로그 3개(`backtest_result`·`trend_following_chart`·`trend_following_portfolio`), `fetch_threads.py`의 전략 스레드 5종(`RebalanceBacktestThread`·`TrendFollowingBacktestThread`·`MaCrossBacktestThread`·`TrendFollowingPortfolioThread`·`StrategySummaryThread`), `tests/strategy/` + 탭 테스트 3개, `tools/kr_trend_backtest.py`(+ `cache/kr_trend/` parquet 캐시, `reports/kr_trend_*.md` 산출물). 공용 파일은 참조만 정리: `main.py` 상위 탭 4→3개·`closeEvent` 체인, `ui/delegates.py`의 Strategy 델리게이트 3종(`RankStock`·`ActionBadge`·`ScoreBar`)과 `ACTION_STYLE`, `ui/colors.py`의 `ACTION_BUY`/`ACTION_SELL`/`WARN`, `ui/dialogs/__init__.py` 재노출, `data/indicators.py`의 `_to_polars` 재노출 주석, `test_ui_smoke.py`/`test_thread_owner.py`의 전략 케이스, `.gitignore`의 `cache/`. `ui/theme.py`의 `QCalendarWidget` 규칙은 다음 날짜 선택기를 위해 유지. CLAUDE.md·docs/ui.md 5장·`.agents/rules/optimize-code.md` 갱신. 검증: pytest **221/221**(390→221), ruff 0건, 오프스크린 import 스모크 통과. |

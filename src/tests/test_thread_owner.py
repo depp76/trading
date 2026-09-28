@@ -88,30 +88,6 @@ class TestSignalSlotArity(unittest.TestCase):
         self.assertEqual((ticker, name, df, err, inv, market, cm),
                          ("AAPL", "Apple", None, "boom", [], "NASDAQ 100", "pct"))
 
-    def test_strategy_summary_counts_trend_following_outcomes_in_parallel(self):
-        import polars as pl
-        from threads.fetch_threads import StrategySummaryThread
-
-        def fake_tf(ticker, _start):
-            if ticker == "ERR":
-                return {"error": "no data"}
-            pos = [0, 1] if ticker == "IN" else [1, 0]
-            return {"error": None, "signals": pl.DataFrame({"position": pos})}
-
-        fake_rebalance = {"buy_candidates": [1, 2], "sell_candidates": [3]}
-        got = []
-        t = StrategySummaryThread([], set(), {"KOSPI": 10}, 1.5, ["IN", "FLAT", "ERR"], "2025-01-01")
-        t.finished.connect(lambda r, e: got.append((r, e)))
-        with patch("strategy.trend_following.run_backtest_for_ticker", side_effect=fake_tf), \
-             patch("strategy.rebalance.compute_weekly_rebalance_signals", return_value=fake_rebalance):
-            t.run()
-        (result, err), = got
-        self.assertEqual(err, "")
-        self.assertEqual(
-            {k: result[k] for k in ("buy_count", "sell_count", "tf_in_position", "tf_flat", "tf_errors", "tf_total")},
-            {"buy_count": 2, "sell_count": 1, "tf_in_position": 1, "tf_flat": 1, "tf_errors": 1, "tf_total": 3},
-        )
-
     def test_auto_backup_covers_every_hand_entered_state_file(self):
         # Everything typed in by hand lives in portfolio.db (trades + asset
         # snapshots) and custom_settings.json; both must be in the list.

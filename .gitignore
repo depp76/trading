@@ -44,6 +44,3 @@ scratch/
 # Obsidian rewrites on every click). The old vault folder is untracked leftover on disk.
 obsidian/.obsidian/workspace.json
 Portfolio Management/
-
-# KR trend backtest parquet cache (tools/kr_trend_backtest.py)
-cache/

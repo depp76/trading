@@ -7,7 +7,7 @@ import numpy as np
 import logging
 
 from data.cache import start_date, _CHANGE_KEYS, _TD_PERIODS
-from data.frames import _to_polars  # noqa: F401 - re-exported (strategy.ma_cross imports it from here)
+from data.frames import _to_polars
 from data.history import get_historical_data
 
 logger = logging.getLogger(__name__)

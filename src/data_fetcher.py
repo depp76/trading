@@ -2,8 +2,7 @@
 
 Re-exports the names UI and thread code actually import, so they keep one
 import location while `data/` stays free to move things between its layers.
-Strategy code is *not* re-exported here: import it from the `strategy`
-package directly (rebalance.md 11-5).
+Data access only: no strategy symbols belong here.
 
 This module is the single re-export list (data/__init__.py holds none), and
 tests patch the real implementation modules (`data.cache`, `data.history`,

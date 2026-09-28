@@ -56,7 +56,7 @@ def create_font(
 
 def apply_matplotlib_font() -> None:
     """Point matplotlib at the same family as the Qt widgets. Without this
-    every chart (MA dialogs, backtest results, the Total Assets trend) drew
+    every chart (MA dialogs, the Total Assets trend) drew
     in matplotlib's bundled DejaVu Sans, which has no Hangul -- a stock name
     in a chart title rendered as boxes. Called once at startup."""
     from matplotlib import rcParams

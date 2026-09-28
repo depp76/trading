@@ -54,10 +54,6 @@ from ui.assets_tab import TradingRecordTab
 # --- Phase 5: split out to ui/universe_tab.py ---
 from ui.universe_tab import UniverseTab
 
-# --- roadmap 7-1: Auto Trading + Trend Following (+ future MA Cross) sub-tabs
-# behind a shared "Today's Signals" summary bar ---
-from ui.strategy_tab import StrategyTab
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -107,20 +103,16 @@ class MainWindow(QMainWindow):
         self.universe_tab = UniverseTab()
         self.tabs.addTab(self.universe_tab, "Trading Universe")
 
-        # 3. Trading History Tab
+        # 2. Trading History Tab
         self.trading_history_tab = TradingHistoryTab()
         self.tabs.addTab(self.trading_history_tab, "Trading History")
 
-        # 4. Total Assets Tab (Trading Record)
+        # 3. Total Assets Tab (Trading Record)
         self.trading_record_tab = TradingRecordTab()
         self.tabs.addTab(self.trading_record_tab, "Total Assets")
 
-        # 5. Strategy Tab (roadmap 7-1) — Auto Trading (rebalance.md 3-1) and Trend
-        # Following (trend_following.md 4) sub-tabs behind a shared summary bar; same
-        # on-demand read of self.universe_tab.all_data the two sub-tabs used directly
-        # before this split (see ui/strategy_tab.py docstring).
-        self.strategy_tab = StrategyTab(self.universe_tab)
-        self.tabs.addTab(self.strategy_tab, "Strategy")
+        # The "Strategy" tab (roadmap 7-1) and the whole strategy layer were removed on
+        # 2026-09-28; strategies will be developed and validated again later.
 
         self.trading_history_tab.total_asset_updated.connect(self.trading_record_tab.update_live_asset)
         self.trading_history_tab.status_message.connect(self._on_thread_status_message)
@@ -223,9 +215,6 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'trading_record_tab'):
             threads_to_stop.extend(self.trading_record_tab.collect_threads_to_stop())
-
-        if hasattr(self, 'strategy_tab'):
-            threads_to_stop.extend(self.strategy_tab.collect_threads_to_stop())
 
         for t in threads_to_stop:
             try:

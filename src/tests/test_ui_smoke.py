@@ -13,9 +13,9 @@ tabs' disk loads and background warm-up threads are patched out.
 """
 import contextlib
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from PyQt6.QtCore import qInstallMessageHandler, Qt
+from PyQt6.QtCore import qInstallMessageHandler
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QApplication
 
@@ -70,10 +70,7 @@ def _capture_qt_messages():
 
 @contextlib.contextmanager
 def _all_tabs_patched():
-    # StrategyTab.showEvent kicks off StrategySummaryThread (a real network
-    # fetch per ticker); a thread outliving its tab aborts the test process
-    # when it emits into a deleted widget, so it is stubbed out here.
-    # save_asset_records/upsert_trade(s)/delete_trade are stubbed too even
+    # save_asset_records/upsert_trade(s)/delete_trade are stubbed even
     # though this smoke test doesn't currently call any of them -- a save
     # slipping into the real trade_db.portfolio.db from a test is exactly
     # how the live Total Assets snapshots got overwritten with test data
@@ -84,7 +81,6 @@ def _all_tabs_patched():
          patch("ui.assets_tab.trade_db.save_asset_records"), \
          patch("ui.assets_tab.TradingRecordTab._start_metrics_preload"), \
          patch("ui.assets_tab.TradingRecordTab._schedule_daily_sync"), \
-         patch("ui.strategy_tab.StrategyTab._refresh_summary"), \
          patch("trade_db.get_open_trades", return_value=[]), \
          patch("trade_db.load_all_trades", return_value=[]), \
          patch("trade_db.upsert_trade"), \
@@ -105,20 +101,18 @@ class TestEveryTabBuildsUnderTheAppStylesheet(unittest.TestCase):
         from ui.universe_tab import UniverseTab
         from ui.history_tab import TradingHistoryTab
         from ui.assets_tab import TradingRecordTab
-        from ui.strategy_tab import StrategyTab
         u = UniverseTab()
         h = TradingHistoryTab()
         a = TradingRecordTab()
-        s = StrategyTab(u)
-        return u, h, a, s
+        return u, h, a
 
     def test_no_stylesheet_parse_warnings_and_everything_renders(self):
         with _capture_qt_messages() as messages, _all_tabs_patched():
-            u, h, a, s = self._build_all()
+            u, h, a = self._build_all()
             u.all_data = _universe()
             u._reload_table()            # exercises every StockTable cell type, index rows included
             u.filter_table()
-            for tab in (u, h, a, s):
+            for tab in (u, h, a):
                 tab.resize(1400, 800)
                 tab.show()
                 app.processEvents()
@@ -128,44 +122,6 @@ class TestEveryTabBuildsUnderTheAppStylesheet(unittest.TestCase):
 
         qss_warnings = [m for m in messages if "stylesheet" in m.lower()]
         self.assertEqual(qss_warnings, [])
-
-
-class TestStrategyTabSmoke(unittest.TestCase):
-
-    def test_compute_filter_and_double_click(self):
-        from ui.strategy_tab import StrategyTab
-
-        class FakeUniverse:
-            all_data = _universe()
-
-        with patch("trade_db.get_open_trades", return_value=[{"ticker": "100002"}, {"ticker": "100005"}]), \
-             patch("ui.strategy_tab.StrategyTab._refresh_summary") as refresh:
-            tab = StrategyTab(FakeUniverse())
-            at = tab.auto_trading_tab
-            at._on_compute_clicked()
-
-            self.assertEqual(len(at._signal_rows), 40)
-            actions = {r["action"] for r in at._signal_rows}
-            self.assertTrue({"Buy", "Hold"} <= actions or {"Buy", "Sell"} <= actions)
-            self.assertEqual(len([r for r in at._signal_rows if r["held"]]), 2)
-
-            at._on_filter_changed("Buy")
-            self.assertEqual(at._signal_table.rowCount(), sum(1 for r in at._signal_rows if r["action"] == "Buy"))
-            at._on_filter_changed("All")
-            self.assertEqual(at._signal_table.rowCount(), 40)
-
-            with patch("ui.ma_chart.StockMaThread") as thread_cls:
-                thread_cls.return_value = MagicMock()
-                at._on_row_double_clicked(0, 0)
-                self.assertTrue(thread_cls.return_value.start.called)
-
-            # The rank/action/score cells carry their payload in UserRole for the delegates.
-            stock = at._signal_table.item(0, 0).data(Qt.ItemDataRole.UserRole)
-            self.assertEqual(stock["rank"], 1)
-
-            tab._tf_top_n_combo.setCurrentIndex(1)
-            self.assertEqual(tab._tf_top_n, 60)
-            refresh.assert_called_once()  # the coverage combo re-runs the summary
 
 
 if __name__ == "__main__":

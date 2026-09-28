@@ -1,13 +1,13 @@
 # Portfolio Management — UI 명세
 
-PyQt6 데스크톱 앱(`src/ui/`)의 4개 탭 재설계 명세. 각 항목은 현재 소스의 진단에서 도출되었고, 대응하는 mockup 파일이 있습니다.
+PyQt6 데스크톱 앱(`src/ui/`)의 탭 재설계 명세(현재 상위 탭 3개; Strategy 탭은 2026-09-28 제거). 각 항목은 현재 소스의 진단에서 도출되었고, 대응하는 mockup 파일이 있습니다.
 
 | 탭 | mockup | 진단 |
 | --- | --- | --- |
 | Trading Universe | `Trading Universe Redesign.dc.html` | 12건 |
 | Trading History | `Trading History Redesign.dc.html` | 10건 |
 | Total Assets | `Total Assets Redesign.dc.html` | 9건 |
-| Strategy | `Strategy Redesign.dc.html` | 9건 |
+| ~~Strategy~~ | `Strategy Redesign.dc.html` | 9건 — 탭 자체를 2026-09-28 제거, 5장은 재도입 시 참고용 기록 |
 
 ---
 
@@ -302,7 +302,7 @@ KRW 7열 + USD 6열 = 15열을 **토글 하나 + 10열**로 줄인다. 환산율
 
 ---
 
-## 5. Strategy
+## 5. Strategy (2026-09-28 제거 — 전략은 추후 새로 개발·검증 예정. 아래는 재도입 시 참고할 당시 명세)
 
 ### 5.1 구조
 
@@ -550,7 +550,7 @@ app.setStyleSheet(app_qss(FONT_FAMILY_CSS))
 | 2 | 정렬·갱신 정합성 (ticker 매핑 또는 Model/Proxy 전환) | `widgets.py` `load_data` `update_changed_rows` | 3–5일 |
 | 3 | 컬럼 폭 체계 (최소폭+비율) · 고정 열 · 컬럼 그룹 · 밀도 | `widgets.py` `_stretch_columns` · `assets_tab.py` `widths` | 3–4일 |
 | 4 | 서브 헤더 라벨 · 통화 토글 · 인라인 차트 | `assets_tab.py` `_COLS_SUB` `_show_graph` | 3–4일 |
-| 5 | 시그널 카드 · 커버리지 배너 · 단일 랭킹 표 | `strategy_tab.py` · `auto_trading_tab.py` | 5–7일 |
+| ~~5~~ | 시그널 카드 · 커버리지 배너 · 단일 랭킹 표 | (Strategy 탭 2026-09-28 제거, 재도입 시 재검토) | — |
 | 6 | 지수/원자재 분리 · 저장된 뷰 · 행 선택·복사 · 월 요약 그룹 헤더 | `universe_tab.py` · `history_calc.py` · `history_table.py` | 1주+ |
 
 **Phase 0을 먼저 하지 않으면 이후 작업의 결과가 화면에 나타나지 않습니다** — `main.py`의 전역 QSS가 버튼·헤더·탭·표 색을 전부 덮어쓰기 때문입니다. Phase 1–2는 코드 변경량 대비 체감이 가장 크고, Phase 2는 실제 데이터 오염 가능성을 막는 수정이므로 우선순위가 높습니다.

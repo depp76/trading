@@ -1,10 +1,10 @@
 """ui/ma_chart.py — StockMaLauncherMixin: open a StockMaDialog for a ticker
 from a background StockMaThread, keeping the dialogs alive until closed.
 
-Trading Universe and Strategy/Auto Trading each carried their own copy of
-this (thread start, finished slot, WA_DeleteOnClose dialog, a list of open
-dialogs pruned of already-deleted ones). Requires ui.common.ThreadOwnerMixin
-on the same class for _track_thread().
+Trading Universe and the former Strategy/Auto Trading tab each carried their
+own copy of this (thread start, finished slot, WA_DeleteOnClose dialog, a list
+of open dialogs pruned of already-deleted ones); UniverseTab is the only user
+now. Requires ui.common.ThreadOwnerMixin on the same class for _track_thread().
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMessageBox

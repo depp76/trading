@@ -13,12 +13,13 @@ short version for agents that read `.agents/rules/`.
    tooltips, dialogs and log messages are written in English. Existing Korean strings stay
    unless explicitly asked.
 
-2. **Layout**: all code is under `src/`. `src/data/` is the pure data-access layer and never
-   imports `strategy`; every trading strategy is its own sub-package `src/strategy/<name>/`
+2. **Layout**: all code is under `src/`. `src/data/` is the pure data-access layer. The
+   trading-strategy layer was removed on 2026-09-28 (strategies will be developed and
+   validated later); when one comes back it is its own sub-package `src/strategy/<name>/`
    with its spec saved as `<name>.md` in the same folder and tests in
-   `src/tests/strategy/<name>/`. UI/thread code imports data functions from `data_fetcher`
-   (the single re-export facade) and strategy symbols from `strategy.<name>` directly.
-   Runtime file paths come from `src/paths.py`.
+   `src/tests/strategy/<name>/`, and `data/` never imports it. UI/thread code imports data
+   functions from `data_fetcher` (the single re-export facade). Runtime file paths come from
+   `src/paths.py`.
 
 3. **Threads**: network calls run in a `QThread` subclass under `src/threads/`, never in a
    slot on the UI thread. Connect `finished` signals to bound methods, not closures. Replace a
@@ -34,5 +35,5 @@ short version for agents that read `.agents/rules/`.
    - import smoke test where relevant. GUI cannot be exercised headlessly.
 
 6. **Version control**: the repo is git-managed; no `archive/backup_*` copies before edits.
-   Record non-trivial changes in `roadmap.md` (change history) and update the strategy `.md`
-   in the same commit as the code it describes.
+   Record non-trivial changes in `roadmap.md` (change history); a spec `.md` is updated in
+   the same commit as the code it describes.

@@ -101,9 +101,9 @@ def app_qss(font_css: str) -> str:
     QTabBar::tab:selected {{ background: {ACCENT_BG}; color: {ACCENT_TEXT}; border-color: #c9c2f3; }}
     QTabBar::tab:hover:!selected {{ background: {HDR_BG}; }}
 
-    /* Top-level tabs only (Trading Universe/Trading History/Total
-       Assets/Strategy), not StrategyTab's nested sub-tab bar: 120% of the
-       10pt app base size, bold (user direction, 2026-09-20). */
+    /* Top-level tabs only (Trading Universe/Trading History/Total Assets),
+       not a nested sub-tab bar: 120% of the 10pt app base size, bold (user
+       direction, 2026-09-20). */
     QTabWidget#MainTabs QTabBar::tab {{ font-size: 12pt; font-weight: 700; }}
 
     QLineEdit, QComboBox, QDateEdit {{
@@ -114,7 +114,8 @@ def app_qss(font_css: str) -> str:
     QLineEdit:focus, QComboBox:focus, QDateEdit:focus {{ border-color: {ACCENT}; }}
     QLineEdit[readOnly="true"] {{ background: transparent; border: none; color: {TEXT}; }}
 
-    /* QDateEdit's calendar popup (Trend Following "Start", 2026-09-28). Its day
+    /* QDateEdit's calendar popup (2026-09-28; no current caller since the
+       Strategy tab was removed, kept for the next date picker). Its day
        grid is a fixed-size QTableView, so the generic table rules above (8px
        item padding, 1px border + 8px radius) inflated the cells past the view
        and clipped most days. Scope them back out and give the navigation bar

@@ -21,20 +21,6 @@ FLAT = "#75798c"      # zero / not applicable
 # must stay red regardless of which one currently means "up").
 DANGER = "#d1453b"
 
-# Strategy tab (Auto Trading) "recommended action" badges -- a different axis
-# from PROFIT/LOSS (price direction). The Strategy Redesign mockup picked
-# green/red for these, but red already means "price up" app-wide (see
-# heatmap_bg below); reusing it for a Sell badge would flip meaning within
-# the same row, exactly what PROFIT/LOSS was introduced to stop. Sell uses
-# an amber instead of PROFIT's red so it never collides with a price cell's
-# color in the same row.
-ACTION_BUY = "#2e7d5b"   # rebalance buy candidate
-ACTION_SELL = "#b7791f"  # rebalance sell candidate
-
-# Caution text/marks that are neither a price direction nor a trade action:
-# skipped tickers in a backtest, an ATR-stop exit, a drawdown over the gate.
-WARN = "#c77c1f"
-
 # MA divergence (price / MA x 100): within +-MA_DIV_NEUTRAL_PCT of 100 is
 # "neutral". The MA chart's three background bands (StockMaDialog) and the
 # Universe table's MA20 Div cell both read this one number so the chart's
