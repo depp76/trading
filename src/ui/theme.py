@@ -114,6 +114,24 @@ def app_qss(font_css: str) -> str:
     QLineEdit:focus, QComboBox:focus, QDateEdit:focus {{ border-color: {ACCENT}; }}
     QLineEdit[readOnly="true"] {{ background: transparent; border: none; color: {TEXT}; }}
 
+    /* QDateEdit's calendar popup (Trend Following "Start", 2026-09-28). Its day
+       grid is a fixed-size QTableView, so the generic table rules above (8px
+       item padding, 1px border + 8px radius) inflated the cells past the view
+       and clipped most days. Scope them back out and give the navigation bar
+       the app's header look instead of the style's default highlight fill. */
+    QCalendarWidget QTableView {{
+        border: none; border-radius: 0;
+        selection-background-color: {ACCENT}; selection-color: {SURFACE};
+    }}
+    QCalendarWidget QTableView::item {{ padding: 0; }}
+    QCalendarWidget QWidget#qt_calendar_navigationbar {{ background: {HDR_BG}; }}
+    QCalendarWidget QToolButton {{
+        background: transparent; color: {TEXT}; border: none; border-radius: 4px;
+        padding: 3px 8px; font-weight: 600; {font_css}
+    }}
+    QCalendarWidget QToolButton:hover {{ background: {ACCENT_BG}; }}
+    QCalendarWidget QToolButton::menu-indicator {{ image: none; }}
+
     QFrame#DashboardCard {{
         background-color: {SURFACE}; border: 1px solid {LINE}; border-radius: 8px;
     }}
