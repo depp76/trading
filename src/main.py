@@ -166,7 +166,7 @@ class MainWindow(QMainWindow):
         sc_prev.setContext(Qt.ShortcutContext.WindowShortcut)
         sc_prev.activated.connect(self._tab_prev)
 
-        # Automatic backup of portfolio.db + custom_settings.json + trading_record.json (roadmap 2-4).
+        # Automatic backup of portfolio.db (trades + asset snapshots) + custom_settings.json (roadmap 2-4).
         # Runs in the background so it never blocks startup.
         self._auto_backup_thread = AutoBackupThread()
         self._auto_backup_thread.backup_done.connect(self._on_thread_status_message)

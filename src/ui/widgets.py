@@ -914,7 +914,7 @@ class StockTable(QTableWidget):
                     cell.setBackground(bg)
             self.setItem(row, col, cell)
 
-        # col 12: Trend -- a small chart of the four momentum readings above
+        # COL_TREND: Trend -- a small chart of the five momentum readings above (_MOMENTUM_COLS)
         # (docs/ui.md's "1Y" sparkline, honestly relabeled: see TrendDelegate)
         trend_item = NumericItem("", trend_points[-1] if trend_points else 0.0)
         trend_item.setData(Qt.ItemDataRole.UserRole, {

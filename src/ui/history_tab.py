@@ -440,7 +440,7 @@ class TradingHistoryTab(ThreadOwnerMixin, QWidget):
         super().showEvent(event)
         QTimer.singleShot(0, self._fit_columns)
 
-    # ---Load from JSON only (no Excel file required) ---
+    # --- Load from SQLite (portfolio.db); the legacy JSON files are read once by _migrate_legacy_json ---
     def load_from_db(self):
         """Load all trade data from SQLite DB (portfolio.db)."
         This is the primary data source, replacing the old JSON files."""
