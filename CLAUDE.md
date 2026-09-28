@@ -4,21 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio, with three
+A single-user PyQt6 desktop app for tracking a Korean/US equity portfolio, with four
 top-level tabs: "Trading Universe" (KOSPI/KOSDAQ watchlist with live prices and indicators;
 the US market code paths still exist but are commented out in the UI), "Trading History"
-(manually-entered trade log backed by SQLite) and "Total Assets" (weekly asset snapshots vs.
-KOSPI and USD). Nothing places orders.
+(manually-entered trade log backed by SQLite), "Total Assets" (weekly asset snapshots vs.
+KOSPI and USD) and "Strategy" (research backtests; one sub-tab per strategy package, currently
+only Trend Following). Nothing places orders.
 
-**Strategy layer: removed on 2026-09-28 (user direction: "strategy 관련된 내용 초기화 & 전략은
-추후 개발하여 검증할 예정").** The former `src/strategy/` package (rebalance, ma_cross,
-trend_following plus the shared base/metrics/costs modules and their `<name>.md` specs), the
-"Strategy" top-level tab with its sub-tabs, the backtest/chart dialogs, the five strategy
-`QThread`s, `tests/strategy/`, and `tools/kr_trend_backtest.py` were all deleted. They remain
-in git history (commit `070f639` and earlier) for reference. Trading strategies will be
-developed and validated again later; when that happens, follow the rule kept below under
-"Conventions" (one `src/strategy/<name>/` package per strategy with its spec `<name>.md` in
-the same folder, `data/` never importing it).
+**Strategy layer: reset on 2026-09-28 and rebuilt the same day from
+`src/strategy/trend_following/trend_following.md` (spec v03).** The old packages (rebalance,
+ma_cross, the first trend_following, shared base/metrics/costs, dialogs, five `QThread`s,
+`tools/kr_trend_backtest.py`) were deleted (git `070f639` and earlier) and nothing of them was
+reused. The new `strategy.trend_following` package implements spec sections 2-4 and 6 (cost
+model 4-1, signals L1-L4 + exits, t+1-open portfolio engine with annual reset, BM1-BM4 on the
+same engine, 6-4 metrics, 6-1 event study, the A0-A5/B matrix runner and its markdown report);
+its section 9 lists the module <-> spec mapping and every implementation decision that
+deviates from the text (current-constituent universe, year-end trim at the close, no weekly
+re-weighting, no sector cap, KODEX 200TR as BM1 data, CD91 from ECOS/CSV/constant). Real-data
+results have not been recorded in the spec yet: run the tab, save the report, then paste the
+table under section 9 with the version number.
 
 The repo is a git repository (branch `master`). Commit or branch as usual; the old
 `archive/backup_<timestamp>/` copy-before-editing convention is no longer needed.
@@ -60,12 +64,29 @@ Dev tooling is in `requirements-dev.txt`
 
 ## Architecture
 
-- **`src/main.py`** (~250 lines): `MainWindow` builds the three tabs, wires cross-tab
+- **`src/strategy/trend_following/`** (spec `trend_following.md` v03 in the same folder,
+  facade `strategy.trend_following`): `config.py` (`StrategyParams`, `VARIANTS` A0-A5/B,
+  `COST_MULTIPLIERS`, `PERIODS`, benchmark ETF codes), `costs.py` (`CostModel`/`TradeCost`,
+  year-keyed tax table, 2023-01-25 tick-ladder reform, `scaled()`/`for_etf()`), `signals.py`
+  (date x ticker arrays for L1-L4 and the exits; `regime_state` is the weekly-held L1 state),
+  `dataset.py` (`PriceBook`/`Dataset`; `build_dataset` is pure and what tests feed,
+  `load_dataset` fetches through `data.*`), `backtest.py` (`Engine` + `Policy`, t+1-open fills
+  with sells first, cash interest, annual reset at the year's last close, per-year cost
+  ledger; `TrendFollowingPolicy`), `benchmarks.py` (BM1-BM4 as policies on the same engine),
+  `metrics.py` (6-4 scorecard incl. the BM1/BM3-relative block), `event_study.py` (6-1),
+  `research.py` (`ResearchRequest` -> `run_research` -> `ResearchResult.to_markdown()`).
+  Strategy code imports `data.*` directly (never `data_fetcher`); `data/` never imports it.
+  Tests live in `src/tests/strategy/trend_following/` on synthetic price paths
+  (`helpers.synthetic_dataset`).
+- **`src/main.py`** (~250 lines): `MainWindow` builds the four tabs, wires cross-tab
   signals, owns the 60-second `global_auto_timer` (the only auto-refresh timer; the "Auto
   Update" checkbox starts and stops it and everything downstream), the app stylesheet, and
   logging setup (root INFO; `app.log` gets INFO and above, the console WARNING and above).
 - **`src/ui/`**: `universe_tab.py` (`UniverseTab`), `history_tab.py` (`TradingHistoryTab`),
-  `assets_tab.py` (`TradingRecordTab`),
+  `assets_tab.py` (`TradingRecordTab`), `strategy_tab.py` (`StrategyTab`, the sub-tab host
+  that merges its children's `collect_threads_to_stop()`), `trend_following_tab.py`
+  (`TrendFollowingTab`: request form -> `TrendFollowingResearchThread` -> scorecard table,
+  rebased NAV chart, event-study table, "Save Report" to `reports/`),
   `widgets.py` (`StockTable`, `NumericItem`, `FilterPopup`, `GroupedHeaderView`), `delegates.py`
   (every custom-painted table cell: `CellDelegate` base + the Universe/History delegates),
   `ma_chart.py` (`StockMaLauncherMixin`, the MA-chart dialog launcher; `UniverseTab` is its
@@ -91,7 +112,9 @@ Dev tooling is in `requirements-dev.txt`
   (`AllDataFetchThread`, `UniverseLightweightFetchThread`, `PositionPriceFetchThread`,
   `RealtimePriceThread`, `StockMaThread`, `IndexMaThread`, `SingleStockFetchThread`,
   `TickerValidateThread`, `AssetMetricsPreloadThread`, `AccountDepositThread`,
-  `GeminiStockReportThread`, `AutoBackupThread`). Never call `data_fetcher` functions from a
+  `GeminiStockReportThread`, `AutoBackupThread`; `strategy_threads.py` holds
+  `TrendFollowingResearchThread`, which loads the dataset and runs the research matrix).
+  Never call `data_fetcher` functions from a
   slot on the UI thread; add a thread class instead. Connect `finished` signals to bound
   methods, not closures, so Qt queues them onto the UI thread; when a slot needs per-request
   context (which ticker, which market, which change mode), have the thread echo it back
@@ -103,7 +126,10 @@ Dev tooling is in `requirements-dev.txt`
   `_hist_df_is_stale(df, fetched_at)` checks against `_HIST_CACHE_STALE_TTL` (30 min) so a
   frame without today's bar is not re-fetched on every weekday lookup, `_YF_BULK_CACHE`,
   `start_date()`, `is_kr_code()`, `is_us_market()`, `safe_float`) ->
-  `frames.py` (`_to_polars`) -> `collectors/naver.py`, `kis.py`, `krx.py` -> `listing.py`
+  `frames.py` (`_to_polars`) -> `collectors/naver.py`, `kis.py`, `krx.py` -> `flows.py`
+  (`get_investor_flows`: per-stock daily foreigner/institution/retail net shares from the
+  Naver frgn page, cached per ticker under `cache/investor_flows/`), `rates.py`
+  (`get_cd91_series`: ECOS with `ECOS_API_KEY`, else `cd91.csv`, else empty) -> `listing.py`
   (`get_stock_listing`, day-scoped single-flight cache), `history.py` (`get_historical_data`
   routing KR codes to Naver, bonds to cached series, else yfinance/yahooquery/FDR), `fx.py`
   (`get_usd_krw_rate`) -> `indicators.py` (`_compute_indicators`, `fetch_historical_changes`)
@@ -139,7 +165,9 @@ Dev tooling is in `requirements-dev.txt`
 ### External dependencies / credentials
 
 - `.env` (repo root, loaded via `paths.ENV_FILE`): `KRX_AUTH_KEY`, `GOOGLE_API_KEY`, and
-  optionally `GEMINI_MODEL`.
+  optionally `GEMINI_MODEL` and `ECOS_API_KEY` (Bank of Korea ECOS, for the CD 91-day rate
+  the Trend Following backtest uses as BM4; without it a `cd91.csv` at the root or a 3%
+  constant is used).
 - KIS (한국투자증권) Open API keys are **not** in this repo: `data/collectors/kis.py` reads
   `kis_appkey.txt`, `kis_secretkey.txt` and `kis_account.txt` (10 digits: 8-digit CANO plus
   2-digit product code) from `KIS_KEY_PATH` (default `D:\Source Code\Trading MCP`). KIS calls
@@ -154,8 +182,9 @@ Dev tooling is in `requirements-dev.txt`
 `universe_cache.json`, `vkospi_cache.json`, `kis_token_cache.json`, `app.log`, `archive/`,
 plus the legacy `custom_history.json` / `trade_overrides.json` pair (read once by
 `_migrate_legacy_json`) and the legacy `trading_record.json` (read once by
-`_migrate_asset_records_json` while `asset_records` is empty; left on disk afterwards). All of
-these paths come from `src/paths.py`. They are runtime data,
+`_migrate_asset_records_json` while `asset_records` is empty; left on disk afterwards), and
+the rebuildable research caches under `cache/` (`investor_flows/<ticker>.json`, `cd91.json`).
+All of these paths come from `src/paths.py`. They are runtime data,
 not fixtures. Trading History principal/deposit/withdrawal live in `QSettings`
 (scope "PortfolioManagement"/"PortfolioManagement"; migrated once from the old
 "MyCompany"/"PortfolioManager" scope).

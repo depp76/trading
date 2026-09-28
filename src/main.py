@@ -54,6 +54,9 @@ from ui.assets_tab import TradingRecordTab
 # --- Phase 5: split out to ui/universe_tab.py ---
 from ui.universe_tab import UniverseTab
 
+# Strategy research tab (re-introduced 2026-09-28 with strategy.trend_following v03)
+from ui.strategy_tab import StrategyTab
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -111,8 +114,10 @@ class MainWindow(QMainWindow):
         self.trading_record_tab = TradingRecordTab()
         self.tabs.addTab(self.trading_record_tab, "Total Assets")
 
-        # The "Strategy" tab (roadmap 7-1) and the whole strategy layer were removed on
-        # 2026-09-28; strategies will be developed and validated again later.
+        # 4. Strategy Tab (research backtests; strategy.trend_following, spec v03).
+        # Rebuilt from scratch on 2026-09-28 after the old strategy layer was reset.
+        self.strategy_tab = StrategyTab()
+        self.tabs.addTab(self.strategy_tab, "Strategy")
 
         self.trading_history_tab.total_asset_updated.connect(self.trading_record_tab.update_live_asset)
         self.trading_history_tab.status_message.connect(self._on_thread_status_message)
@@ -215,6 +220,9 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'trading_record_tab'):
             threads_to_stop.extend(self.trading_record_tab.collect_threads_to_stop())
+
+        if hasattr(self, 'strategy_tab'):
+            threads_to_stop.extend(self.strategy_tab.collect_threads_to_stop())
 
         for t in threads_to_stop:
             try:

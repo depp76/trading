@@ -101,18 +101,20 @@ class TestEveryTabBuildsUnderTheAppStylesheet(unittest.TestCase):
         from ui.universe_tab import UniverseTab
         from ui.history_tab import TradingHistoryTab
         from ui.assets_tab import TradingRecordTab
+        from ui.strategy_tab import StrategyTab
         u = UniverseTab()
         h = TradingHistoryTab()
         a = TradingRecordTab()
-        return u, h, a
+        s = StrategyTab()
+        return u, h, a, s
 
     def test_no_stylesheet_parse_warnings_and_everything_renders(self):
         with _capture_qt_messages() as messages, _all_tabs_patched():
-            u, h, a = self._build_all()
+            u, h, a, s = self._build_all()
             u.all_data = _universe()
             u._reload_table()            # exercises every StockTable cell type, index rows included
             u.filter_table()
-            for tab in (u, h, a):
+            for tab in (u, h, a, s):
                 tab.resize(1400, 800)
                 tab.show()
                 app.processEvents()

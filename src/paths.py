@@ -32,3 +32,15 @@ KIS_TOKEN_CACHE_FILE = root_path("kis_token_cache.json")
 
 # Automatic backups (AutoBackupThread) go to archive/auto_<timestamp>/
 ARCHIVE_DIR = root_path("archive")
+
+# Research data caches for the strategy layer (gitignored, rebuildable):
+# per-ticker investor-flow history (data/flows.py) and the CD 91-day rate
+# series (data/rates.py). An optional hand-made cd91.csv (Date,Rate in %) at
+# the repo root is the offline source for the risk-free rate.
+CACHE_DIR = root_path("cache")
+FLOWS_CACHE_DIR = root_path("cache", "investor_flows")
+CD91_CACHE_FILE = root_path("cache", "cd91.json")
+CD91_CSV_FILE = root_path("cd91.csv")
+
+# Backtest reports written by the Strategy tab ("Save Report").
+REPORTS_DIR = root_path("reports")

@@ -37,6 +37,9 @@ archive/
 # Scratch space
 scratch/
 
+# Rebuildable research caches (investor flows, CD91 rate) — see src/paths.py
+cache/
+
 # Editor settings (uncomment if you don't want to share these across machines)
 # .vscode/
 
