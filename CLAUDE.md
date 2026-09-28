@@ -34,7 +34,7 @@ working directory:
 ### Verification
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest src\tests -q      # ~225 tests, no network, ~10 s
+.\.venv\Scripts\python.exe -m pytest src\tests -q      # ~390 tests, no network, ~10 s
 .\.venv\Scripts\ruff.exe check src                      # pyflakes rules only (ruff.toml)
 ```
 
@@ -101,8 +101,10 @@ Dev tooling is in `requirements-dev.txt`
   `StockMaThread.finished(..., market, change_mode)`) instead of capturing it in a lambda.
 - **`src/data/`**: all external data access, layered bottom-up with no import cycles
   (module-level or lazy): `cache.py` (HTTP sessions, `_HIST_CACHE` LRU with
-  `_HIST_CACHE_STATS`, `_YF_BULK_CACHE`, `start_date()`, `is_kr_code()`, `is_us_market()`,
-  `safe_float`) ->
+  `_HIST_CACHE_STATS` and the per-key `_HIST_CACHE_FETCHED_AT` stamps that
+  `_hist_df_is_stale(df, fetched_at)` checks against `_HIST_CACHE_STALE_TTL` (30 min) so a
+  frame without today's bar is not re-fetched on every weekday lookup, `_YF_BULK_CACHE`,
+  `start_date()`, `is_kr_code()`, `is_us_market()`, `safe_float`) ->
   `frames.py` (`_to_polars`) -> `collectors/naver.py`, `kis.py`, `krx.py` -> `listing.py`
   (`get_stock_listing`, day-scoped single-flight cache), `history.py` (`get_historical_data`
   routing KR codes to Naver, bonds to cached series, else yfinance/yahooquery/FDR), `fx.py`

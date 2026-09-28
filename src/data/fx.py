@@ -14,12 +14,13 @@ def get_usd_krw_rate():
     """Returns USD/KRW FX rate."""
     usd_cache = _USD_KRW_CACHE
     with _MISC_CACHE_LOCK:
-        if usd_cache["rate"] is not None and not _hist_df_is_stale(usd_cache["df"]):
+        if usd_cache["rate"] is not None and not _hist_df_is_stale(usd_cache["df"], usd_cache.get("fetched_at")):
             return usd_cache["rate"]
         try:
             df = _to_polars(fdr.DataReader('USD/KRW'))
             if not df.is_empty():
                 usd_cache["df"] = df
+                usd_cache["fetched_at"] = datetime.now()
                 close_s = df.get_column("Close").drop_nulls()
                 rate = float(close_s[-1]) if len(close_s) > 0 else 1450.0
             else:

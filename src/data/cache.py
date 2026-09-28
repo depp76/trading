@@ -57,7 +57,7 @@ _FDR_ONLY_TICKERS = frozenset({
 })
 
 # Module-level USD/KRW rate cache (refreshed once per process run)
-_USD_KRW_CACHE: dict = {"rate": None, "df": None}
+_USD_KRW_CACHE: dict = {"rate": None, "df": None, "fetched_at": None}
 _INDEX_CLOSE_CACHE: dict = {}
 _JP10Y_CACHE: dict = {"df": None}
 _KR3Y_CACHE: dict = {"df": None}
@@ -79,6 +79,13 @@ _YF_BULK_CACHE: dict = {}
 _HIST_CACHE: OrderedDict = OrderedDict()  # (ticker, start) -> polars DataFrame
 _HIST_CACHE_LOCK = threading.Lock()
 _HIST_CACHE_MAX = 1000  # Maximum number of tickers cached in memory
+# Wall-clock time of the last successful network fetch per _HIST_CACHE key (same
+# key, same lock; data.history keeps the two dicts in step). Lets _hist_df_is_stale()
+# stop re-fetching a frame that merely has no bar for today yet (review_agy.md 2.1).
+_HIST_CACHE_FETCHED_AT: dict = {}
+# How long a frame whose last bar predates today is still served on a weekday
+# before it is fetched again to look for today's bar.
+_HIST_CACHE_STALE_TTL = timedelta(minutes=30)
 
 # ── Cache efficiency monitoring (see get_historical_data / _log_hist_cache_stats) ──
 # Counters live in one mutable dict rather than two module-level ints so that
@@ -155,21 +162,31 @@ def _log_hist_cache_stats() -> None:
         )
 
 
-def _hist_df_is_stale(df) -> bool:
-    """True if a cached polars daily-history df (with a "Date" column) predates
-    today and today could plausibly have new data (i.e. today is a weekday).
-    Used so session-lifetime caches don't keep serving yesterday's snapshot
-    once the current day's close is actually published."""
+def _hist_df_is_stale(df, fetched_at=None) -> bool:
+    """True if a cached polars daily-history df (with a "Date" column) should be
+    fetched again: its last bar predates today, today is a weekday, and the frame
+    was not fetched within the last _HIST_CACHE_STALE_TTL.
+
+    The last-bar test alone (the rule until 2026-09-28) made every weekday lookup
+    a miss whenever the source had no bar for today yet -- before the KR open, on
+    KR holidays, and for US-hours instruments all through the Korean day -- so the
+    cache re-fetched on every call (review_agy.md 2.1). The TTL bounds that to one
+    fetch per key per window while still picking up today's bar once it is
+    published. `fetched_at` is the datetime of the entry's last network fetch;
+    None (unknown) keeps the plain last-bar rule."""
     if df is None or df.is_empty():
         return False
-    if datetime.now().weekday() >= 5:  # Sat/Sun — markets closed, nothing new to fetch
+    now = datetime.now()
+    if now.weekday() >= 5:  # Sat/Sun — markets closed, nothing new to fetch
+        return False
+    if fetched_at is not None and now - fetched_at < _HIST_CACHE_STALE_TTL:
         return False
     try:
         last_date = df.get_column("Date")[-1]
     except Exception:
         logger.debug("_hist_df_is_stale: failed to read last date from df", exc_info=True)
         return False
-    return last_date < datetime.now().date()
+    return last_date < now.date()
 
 
 def _pdf_is_stale(pdf) -> bool:

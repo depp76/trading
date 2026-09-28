@@ -6,6 +6,7 @@ yahooquery -> FinanceDataReader. Does not import data.market or
 data.collectors.yahoo, so indicators/yahoo can import it without a cycle."""
 import logging
 import threading
+from datetime import datetime
 import pandas as pd
 import polars as pl
 import FinanceDataReader as fdr
@@ -32,9 +33,10 @@ def _cached_lookup(cache_key):
     """Fast-path cache read: the cached df if present and fresh, else None."""
     with _dc._HIST_CACHE_LOCK:
         cached = _dc._HIST_CACHE.get(cache_key)
+        fetched_at = _dc._HIST_CACHE_FETCHED_AT.get(cache_key)
         if cached is not None:
             _dc._HIST_CACHE.move_to_end(cache_key)
-    if cached is not None and not _hist_df_is_stale(cached):
+    if cached is not None and not _hist_df_is_stale(cached, fetched_at):
         return cached
     return None
 
@@ -85,11 +87,13 @@ def get_historical_data(ticker: str, start: str) -> pl.DataFrame:
                 with _dc._HIST_CACHE_LOCK:
                     if cache_key not in _dc._HIST_CACHE and len(_dc._HIST_CACHE) >= max_size:
                         try:
-                            _dc._HIST_CACHE.popitem(last=False)
+                            evicted_key, _ = _dc._HIST_CACHE.popitem(last=False)
+                            _dc._HIST_CACHE_FETCHED_AT.pop(evicted_key, None)
                         except Exception:
                             logger.debug("LRU cache eviction failed", exc_info=True)
                     _dc._HIST_CACHE[cache_key] = df
                     _dc._HIST_CACHE.move_to_end(cache_key)
+                    _dc._HIST_CACHE_FETCHED_AT[cache_key] = datetime.now()
                 return df
             return cached if cached is not None else df
         finally:

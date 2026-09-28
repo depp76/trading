@@ -4,6 +4,7 @@ tests/test_data_fetcher.py — LRU cache and yf_quote_batch tests (mock-based)
 import threading
 import time
 import unittest
+from datetime import date, datetime, timedelta
 from unittest.mock import patch, MagicMock
 
 import data_fetcher
@@ -13,8 +14,124 @@ import data.history as history
 
 def _reset_hist_cache():
     dcache._HIST_CACHE.clear()
+    dcache._HIST_CACHE_FETCHED_AT.clear()
     dcache._HIST_CACHE_STATS["hits"] = 0
     dcache._HIST_CACHE_STATS["misses"] = 0
+
+
+def _history_ending(end, n=5):
+    """n weekday rows ending on `end` (a date), Close rising by 1 per row."""
+    import polars as pl
+    from datetime import timedelta
+    dates = []
+    d = end
+    while len(dates) < n:
+        if d.weekday() < 5:
+            dates.append(d)
+        d -= timedelta(days=1)
+    dates.reverse()
+    closes = [100.0 + i for i in range(n)]
+    return pl.DataFrame({"Date": dates, "Close": closes, "Open": closes,
+                         "High": closes, "Low": closes, "Volume": [1000.0] * n})
+
+
+class TestHistDfIsStale(unittest.TestCase):
+    """_hist_df_is_stale's TTL rule (review_agy.md 2.1): a frame whose last bar
+    predates today is re-fetched on a weekday only when its last fetch is older
+    than _HIST_CACHE_STALE_TTL, so a source with no bar for today yet (before the
+    KR open, a holiday, US-hours instruments during the Korean day) no longer
+    turns every lookup into a network fetch."""
+
+    MONDAY = datetime(2026, 9, 28, 8, 30)      # a weekday, before the KR open
+    FRIDAY = date(2026, 9, 25)
+
+    def _stale(self, df, fetched_at, now):
+        with patch("data.cache.datetime") as mdt:
+            mdt.now.return_value = now
+            return dcache._hist_df_is_stale(df, fetched_at)
+
+    def test_unknown_fetch_time_keeps_last_bar_rule(self):
+        df = _history_ending(self.FRIDAY)
+        self.assertTrue(self._stale(df, None, self.MONDAY))
+
+    def test_recent_fetch_is_fresh_even_without_todays_bar(self):
+        df = _history_ending(self.FRIDAY)
+        fetched_at = self.MONDAY - timedelta(minutes=5)
+        self.assertFalse(self._stale(df, fetched_at, self.MONDAY))
+
+    def test_fetch_older_than_ttl_is_stale(self):
+        df = _history_ending(self.FRIDAY)
+        fetched_at = self.MONDAY - dcache._HIST_CACHE_STALE_TTL - timedelta(seconds=1)
+        self.assertTrue(self._stale(df, fetched_at, self.MONDAY))
+
+    def test_frame_with_todays_bar_never_stale(self):
+        df = _history_ending(self.MONDAY.date())
+        fetched_at = self.MONDAY - timedelta(hours=6)
+        self.assertFalse(self._stale(df, fetched_at, self.MONDAY))
+
+    def test_weekend_never_stale(self):
+        df = _history_ending(self.FRIDAY)
+        saturday = datetime(2026, 9, 26, 12, 0)
+        self.assertFalse(self._stale(df, None, saturday))
+        self.assertFalse(self._stale(df, saturday - timedelta(days=2), saturday))
+
+    def test_empty_or_none_never_stale(self):
+        import polars as pl
+        self.assertFalse(self._stale(None, None, self.MONDAY))
+        self.assertFalse(self._stale(pl.DataFrame(), None, self.MONDAY))
+
+
+class TestHistCacheFetchedAt(unittest.TestCase):
+    """get_historical_data records each fetch's time next to the frame and uses it
+    on the next lookup, so a weekday lookup of a frame without today's bar hits
+    the cache instead of re-fetching (the review_agy.md 2.1 scenario end to end)."""
+
+    MONDAY = datetime(2026, 9, 28, 8, 30)
+
+    def setUp(self):
+        _reset_hist_cache()
+
+    def _patched_now(self):
+        """One fixed weekday 'now' for both the fetch-time stamp (data.history)
+        and the stale check (data.cache)."""
+        p_cache = patch("data.cache.datetime")
+        p_hist = patch("data.history.datetime")
+        m_cache, m_hist = p_cache.start(), p_hist.start()
+        self.addCleanup(p_cache.stop)
+        self.addCleanup(p_hist.stop)
+        m_cache.now.return_value = self.MONDAY
+        m_hist.now.return_value = self.MONDAY
+
+    @patch("data.history._fetch_historical_uncached")
+    def test_weekday_lookup_without_todays_bar_hits_cache(self, mock_fetch):
+        mock_fetch.return_value = _history_ending(date(2026, 9, 25))   # ends Friday
+        self._patched_now()
+        data_fetcher.get_historical_data("005930", "2026-01-01")
+        data_fetcher.get_historical_data("005930", "2026-01-01")
+        mock_fetch.assert_called_once()
+        self.assertEqual(dcache._HIST_CACHE_STATS["hits"], 1)
+        self.assertIn(("005930", "2026-01-01"), dcache._HIST_CACHE_FETCHED_AT)
+
+    @patch("data.history._fetch_historical_uncached")
+    def test_lookup_after_ttl_refetches(self, mock_fetch):
+        mock_fetch.return_value = _history_ending(date(2026, 9, 25))
+        self._patched_now()
+        data_fetcher.get_historical_data("005930", "2026-01-01")
+        key = ("005930", "2026-01-01")
+        dcache._HIST_CACHE_FETCHED_AT[key] = self.MONDAY - dcache._HIST_CACHE_STALE_TTL - timedelta(seconds=1)
+        data_fetcher.get_historical_data("005930", "2026-01-01")
+        self.assertEqual(mock_fetch.call_count, 2)
+        self.assertEqual(dcache._HIST_CACHE_FETCHED_AT[key], self.MONDAY)   # re-stamped
+
+    @patch("data.history._fetch_historical_uncached")
+    def test_eviction_drops_fetch_time(self, mock_fetch):
+        mock_fetch.return_value = _history_ending(date(2026, 9, 25))
+        with patch.object(dcache, "_HIST_CACHE_MAX", 3), \
+             patch("data.history._hist_df_is_stale", return_value=False):
+            for i in range(5):
+                data_fetcher.get_historical_data(f"TICKER{i}", "2026-01-01")
+        self.assertEqual(set(dcache._HIST_CACHE_FETCHED_AT), set(dcache._HIST_CACHE))
+        self.assertLessEqual(len(dcache._HIST_CACHE_FETCHED_AT), 3)
 
 
 class TestHistCache(unittest.TestCase):

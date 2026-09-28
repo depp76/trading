@@ -1,6 +1,7 @@
 """data/indicators.py — Technical indicator calculations using Polars & NumPy
 (_compute_indicators, fetch_historical_changes)."""
 from datetime import datetime, timedelta
+import math
 import polars as pl
 import numpy as np
 import logging
@@ -50,6 +51,26 @@ def _compute_indicators(df: pl.DataFrame, windows=(10, 20, 60)) -> pl.DataFrame:
         div_exprs.append((pl.col("Close") / pl.col("MA20") * 100).alias("MA20_Div"))
     df = df.with_columns(div_exprs)
     return df
+
+
+def _current_session_index(last_date, last_close, current_price, n, now) -> int:
+    """Index, in a length-`n` array of closes, of the session `current_price`
+    belongs to -- so that "N sessions ago" is `closes[index - N]` in
+    fetch_historical_changes (review_agy.md 2.3).
+
+    The last bar (index n-1) *is* the current session when it is dated today,
+    when today is a weekend (no session can have started since), or when nothing
+    has traded since it (current_price equals its close: before the KR open, on a
+    holiday, or for US-hours instruments through the Korean day). Otherwise the
+    current session is a new one past the end of the array (index n), so 1d
+    compares against the last bar rather than the one before it. The old fixed
+    `n - 1 - N` offset was one session short whenever the source had no bar for
+    today yet, which turned every 1d figure into a two-session change."""
+    if last_date >= now.date() or now.weekday() >= 5:
+        return n - 1
+    if last_close > 0 and math.isclose(current_price, last_close, rel_tol=1e-6):
+        return n - 1
+    return n
 
 
 def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
@@ -105,13 +126,16 @@ def fetch_historical_changes(ticker, current_price, df_pd=None, mode='pct'):
                 changes["52w_low_diff"] = (current_price - low_52w) / low_52w * 100
 
         # ── Period changes (single numpy array pass) ───────────────────
-        closes = df.filter(pl.col("Close").is_not_null()).sort("Date").get_column("Close").to_numpy()
+        hist = df.filter(pl.col("Close").is_not_null()).sort("Date")
+        closes = hist.get_column("Close").to_numpy()
         n = len(closes)
         if n == 0:
             return changes
 
+        last_date = hist.get_column("Date").cast(pl.Date)[-1]
+        current_i = _current_session_index(last_date, float(closes[-1]), current_price, n, today)
         for label, td in _TD_PERIODS.items():
-            idx = n - 1 - td
+            idx = current_i - td
             if 0 <= idx < n:
                 old_price = float(closes[idx])
                 if old_price > 0:
