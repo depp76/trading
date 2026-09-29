@@ -238,37 +238,93 @@ class TestTrendScoreButton(unittest.TestCase):
         self.assertEqual(_FakeScoreThread.instances, [])
         self.assertTrue(tab.trend_score_btn.isEnabled())
 
-    def test_finished_opens_the_dialog_or_reports_the_error(self):
+    def _score_tab(self):
+        tab = self._tab()
+        tab.all_data = [_stock(t, cap) for t, cap in
+                        (("AAA", 900), ("UP", 800), ("DOWN", 700), ("BBB", 600), ("BOUNCE", 500),
+                         ("PULL", 400), ("THIN", 300), ("SPIKE", 200))]
+        return tab
+
+    @staticmethod
+    def _rec():
         from strategy.trend_following.config import StrategyParams
         from strategy.trend_following.scoring import compute_scores, weekly_recommendation
         from tests.strategy.trend_following.test_scoring import score_book
-        tab = self._tab()
+        book, _ = score_book()
+        p = StrategyParams()
+        return weekly_recommendation(compute_scores(book, p), book, p)
+
+    def test_finished_pins_top_then_bottom_then_the_rest(self):
+        tab = self._score_tab()
         statuses = []
         tab.status_text_changed.connect(statuses.append)
         with patch("ui.universe_tab.TrendScoreThread", _FakeScoreThread):
             tab._on_trend_score_clicked()
+        self.assertFalse(tab.trend_score_btn.isChecked())
         worker = _FakeScoreThread.instances[0]
         worker.progress.emit("Daily history 25/40")
         self.assertIn("Trend Score: Daily history 25/40", statuses[-1])
 
+        rec = self._rec()
+        top = [s.ticker for s in rec.top]
+        bottom = [s.ticker for s in rec.bottom]
+        self.assertEqual(sorted(top), ["PULL", "UP"])
+        self.assertEqual(len(bottom), 3)
+        with patch("ui.universe_tab.QMessageBox.warning") as warn:
+            worker.finished.emit(rec, "")
+        warn.assert_not_called()
+        self.assertTrue(tab.trend_score_btn.isEnabled())
+        self.assertTrue(tab.trend_score_btn.isChecked())
+        # Top rows in rank order, then Bottom rows, then the rest in cap order.
+        self.assertEqual([d["ticker"] for d in tab.all_data], top + bottom + ["AAA", "BBB", "THIN"])
+        self.assertTrue(tab.all_data[0]["trend_rank"].startswith("Top 1 ("))
+        self.assertTrue(tab.all_data[len(top)]["trend_rank"].startswith("Bottom 1 ("))
+        self.assertNotIn("trend_rank", tab.all_data[-1])
+        meta = tab.table.item(0, 0).data(0x0100)["meta"]      # identity UserRole payload
+        self.assertIn(" · Top 1 (", meta)
+        self.assertEqual(tab.table.item(0, 0).text(), f"S{top[0]}")
+        self.assertIn("pinned", statuses[-1])
+
+        # A full refresh keeps the pin (the labels are re-applied to the new dicts).
+        fresh = [_stock(t, cap) for t, cap in (("BBB", 600), ("PULL", 400), ("UP", 800), ("BOUNCE", 500))]
+        with patch.object(tab, "load_custom_settings"):
+            tab.custom_settings = {"added": [], "deleted": [], "highlights": {}}
+            tab.on_finished_all(fresh)
+        self.assertEqual([d["ticker"] for d in tab.all_data][:2], top)
+        self.assertEqual(tab.all_data[2]["ticker"], "BOUNCE")
+        self.assertTrue(tab.all_data[0]["trend_rank"].startswith("Top 1"))
+
+        # Clicking again unpins: default cap order, labels gone, button unchecked.
+        tab._on_trend_score_clicked()
+        self.assertFalse(tab.trend_score_btn.isChecked())
+        self.assertEqual(tab._trend_score_order, {})
+        self.assertEqual([d["ticker"] for d in tab.all_data], ["UP", "BBB", "BOUNCE", "PULL"])
+        self.assertFalse(any("trend_rank" in d for d in tab.all_data))
+        self.assertNotIn("Top", tab.table.item(0, 0).data(0x0100)["meta"])
+        self.assertIn("restored", statuses[-1])
+
+    def test_failure_leaves_the_order_alone_and_unchecks(self):
+        tab = self._score_tab()
+        before = [d["ticker"] for d in tab.all_data]
+        with patch("ui.universe_tab.TrendScoreThread", _FakeScoreThread):
+            tab._on_trend_score_clicked()
+        worker = _FakeScoreThread.instances[0]
         with patch("ui.universe_tab.QMessageBox.warning") as warn:
             worker.finished.emit(None, "boom")
         warn.assert_called_once()
         self.assertTrue(tab.trend_score_btn.isEnabled())
-        self.assertIsNone(getattr(tab, "_trend_score_dialog", None))
+        self.assertFalse(tab.trend_score_btn.isChecked())
+        self.assertEqual([d["ticker"] for d in tab.all_data], before)
+        self.assertEqual(tab._trend_score_order, {})
 
-        book, _ = score_book()
-        p = StrategyParams()
-        rec = weekly_recommendation(compute_scores(book, p), book, p)
-        with patch("ui.universe_tab.QMessageBox.warning") as warn:
-            tab._on_trend_score_finished(rec, "")
-        warn.assert_not_called()
-        dlg = tab._trend_score_dialog
-        self.assertEqual(dlg.top_table.rowCount(), len(rec.top))
-        self.assertIn("2 top / 3 bottom", statuses[-1])
-        # Double-clicking a row routes to the tab's MA-chart launcher.
-        with patch.object(tab, "_show_stock_ma") as show:
-            dlg.ticker_activated.emit("005930")
-        show.assert_called_once()
-        self.assertEqual(show.call_args[0][0], "005930")
-        dlg.close()
+    def test_pin_drops_the_column_sort_so_the_order_shows(self):
+        from PyQt6.QtCore import Qt
+        tab = self._score_tab()
+        tab._reload_table()
+        tab.table.sortItems(1, Qt.SortOrder.AscendingOrder)      # user sorted by price
+        tab.table._on_sort_indicator_changed(1, Qt.SortOrder.AscendingOrder)
+        self.assertEqual(tab.table._sort_col, 1)
+        tab._on_trend_score_finished(self._rec(), "")
+        self.assertEqual(tab.table._sort_col, -1)
+        rows = [tab.table.item(r, 0).data(0x0100)["ticker"] for r in range(tab.table.rowCount())]
+        self.assertEqual(rows, [d["ticker"] for d in tab.all_data])

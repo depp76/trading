@@ -688,6 +688,12 @@ class StockTable(QTableWidget):
         # for this emission, in whatever order, has finished.
         QTimer.singleShot(0, self._sync_frozen_column)
 
+    def reset_sort(self):
+        """Forget the user's column sort so the next load_data() shows the
+        data order again (the Universe tab pins its Trend Score rows that way)."""
+        self._sort_col = -1
+        self._sort_order = Qt.SortOrder.AscendingOrder
+
     def load_data(self, data, highlights=None):
         if highlights is None:
             highlights = {}
@@ -825,7 +831,10 @@ class StockTable(QTableWidget):
             "ticker": ticker,
             "name": item.get('name', ticker),
             "market": item.get('market', ''),
-            "meta": f"{ticker} · {item.get('market', '')}",
+            # The Universe's pinned Trend Score rows carry a "Top 3 (+0.79)" /
+            # "Bottom 7 (-0.41)" tag after the market (universe_tab._sort_all_data).
+            "meta": f"{ticker} · {item.get('market', '')}"
+                    + (f" · {item['trend_rank']}" if item.get('trend_rank') else ""),
             "status": status,
         })
         self.setItem(row, COL_IDENTITY, identity_item)

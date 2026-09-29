@@ -43,7 +43,6 @@ from threads.fetch_threads import (
 from threads.strategy_threads import TrendScoreThread, CANCELLED_MESSAGE
 from ui.widgets import StockTable
 from ui.dialogs.stock_report import show_stock_report_result
-from ui.dialogs.trend_score import show_trend_score
 from ui.ma_chart import StockMaLauncherMixin
 
 logger = logging.getLogger(__name__)
@@ -72,6 +71,9 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         self.market_status = {}
         self._market_filter = "ALL"
         self._status_filter_idx = 0      # index into _STATUS_FILTER_STATES
+        # ticker -> (group 0=Top/1=Bottom, rank, label) of the pinned Trend
+        # Score run; empty = default order (see _sort_all_data).
+        self._trend_score_order = {}
         # User-added tickers re-fetched after a full refresh (on_finished_all)
         # each arrive on their own thread; rendering once, a beat after the
         # last one lands, instead of a full table rebuild per ticker.
@@ -161,12 +163,16 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         add_layout.addStretch()
 
         # Weekly "trend + pullback" Top/Bottom recommendation
-        # (trend_following.md 2-5; scoring.py via TrendScoreThread).
+        # (trend_following.md 2-5; scoring.py via TrendScoreThread). Checked
+        # while a run's Top/Bottom rows are pinned to the top of the table;
+        # clicking it again restores the default order (user direction 2026-09-29).
         self.trend_score_btn = QPushButton("Trend Score")
         self.trend_score_btn.setFont(create_font(10, style_name="Semilight"))
         self.trend_score_btn.setFixedWidth(100)
-        self.trend_score_btn.setToolTip("Score the KOSPI/KOSDAQ rows with trend_following.md 2-5 and list the "
-                                        "weekly Top 10 / Bottom 10")
+        self.trend_score_btn.setCheckable(True)
+        self.trend_score_btn.setToolTip("Score the KOSPI/KOSDAQ rows with trend_following.md 2-5 and pin the "
+                                        "weekly Top 10 / Bottom 10 to the top of the table; click again to "
+                                        "restore the default order")
         self.trend_score_btn.clicked.connect(self._on_trend_score_clicked)
         add_layout.addWidget(self.trend_score_btn)
 
@@ -396,10 +402,27 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
             -float(item.get('market_cap', 0) or 0),
         )
 
+    def _order_key(self, item):
+        entry = self._trend_score_order.get(item.get('ticker'))
+        if entry is not None:
+            return (0, entry[0], entry[1])
+        return (1,) + self._sort_key(item)
+
     def _sort_all_data(self):
         """Index rows first (in their fixed order), then each market by
-        market cap descending."""
-        self.all_data.sort(key=self._sort_key)
+        market cap descending. While a Trend Score run is pinned
+        (_trend_score_order), its Top rows come first in rank order, then
+        its Bottom rows, then everything else in that default order; the
+        pinned items get a `trend_rank` label the identity cell shows after
+        the market, every other item loses it."""
+        order = self._trend_score_order
+        for item in self.all_data:
+            entry = order.get(item.get('ticker'))
+            if entry is None:
+                item.pop('trend_rank', None)
+            else:
+                item['trend_rank'] = entry[2]
+        self.all_data.sort(key=self._order_key)
 
     def filter_table(self, text=None):
         if text is None:
@@ -451,6 +474,13 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
                 if d.get("market") in self.TREND_SCORE_MARKETS and not d.get("is_index")]
 
     def _on_trend_score_clicked(self):
+        """Not pinned -> score the KR rows and pin the Top/Bottom lists to the
+        top of the table (the button turns checked when the run succeeds);
+        pinned -> unpin and restore the default order."""
+        if self._trend_score_order:
+            self._clear_trend_score()
+            return
+        self.trend_score_btn.setChecked(False)   # the click toggled it on; checked means "pinned"
         items = self._trend_score_items()
         if not items:
             QMessageBox.information(self, "Trend Score", "No KOSPI/KOSDAQ rows to score. Refresh the universe first.")
@@ -468,19 +498,39 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
     def _on_trend_score_finished(self, rec, error: str):
         self.trend_score_btn.setEnabled(True)
         if rec is None:
+            self.trend_score_btn.setChecked(False)
             if error != CANCELLED_MESSAGE:
                 QMessageBox.warning(self, "Trend Score", f"Scoring failed:\n{error}")
             self.status_text_changed.emit(f"Trend Score: {error}")
             return
-        old = getattr(self, "_trend_score_dialog", None)
-        if old is not None:
-            old.close()
-        dlg = show_trend_score(self, rec)
-        dlg.ticker_activated.connect(self._on_ma_chart_requested)
-        self._trend_score_dialog = dlg
+        order = {}
+        for i, s in enumerate(rec.top, 1):
+            order[s.ticker] = (0, i, f"Top {i} ({s.week_avg:+.2f})")
+        for i, s in enumerate(rec.bottom, 1):
+            order[s.ticker] = (1, i, f"Bottom {i} ({s.week_avg:+.2f})")
+        self._trend_score_order = order
+        self.trend_score_btn.setChecked(True)
+        self._apply_trend_score_order()
+        regime = {True: "Risk-on", False: "Risk-off"}.get(rec.regime_on, "n/a")
         self.status_text_changed.emit(
-            f"Trend Score as of {rec.as_of:%Y-%m-%d}: {len(rec.top)} top / {len(rec.bottom)} bottom "
-            f"(universe {rec.n_universe}, liquid {rec.n_liquid}, gate {rec.n_gated}).")
+            f"Trend Score as of {rec.as_of:%Y-%m-%d} ({len(rec.week_dates)} sessions): {len(rec.top)} top / "
+            f"{len(rec.bottom)} bottom pinned (universe {rec.n_universe}, liquid {rec.n_liquid}, "
+            f"gate {rec.n_gated}, KOSPI L1 {regime}). Click Trend Score again to restore the order.")
+
+    def _clear_trend_score(self):
+        self._trend_score_order = {}
+        self.trend_score_btn.setChecked(False)
+        self._apply_trend_score_order()
+        self.status_text_changed.emit("Trend Score order cleared; default order restored.")
+
+    def _apply_trend_score_order(self):
+        """Re-sort all_data (pinned rows first, if any), drop the user's
+        column sort so the data order is what shows, and rebuild the table."""
+        self._sort_all_data()
+        self.table.reset_sort()
+        self._reload_table()
+        self.filter_table()
+        self.table.scrollToTop()
 
     def refresh_data(self):
         self.refresh_btn.setEnabled(False)
@@ -587,7 +637,8 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
 
             filtered_data = [x for x in all_data if x.get("ticker", "") not in deleted]
 
-            self.all_data = sorted(filtered_data, key=self._sort_key)
+            self.all_data = filtered_data
+            self._sort_all_data()      # keeps a pinned Trend Score run on top
             self._reload_table()
             self.filter_table(self.search_input.text())
             self.update_total_status()

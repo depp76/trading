@@ -456,7 +456,7 @@ class CostModel:
 | `scoring.py` | 2-5 (1)~(3) | 날짜×종목 배열: MA50Div·Range52·MA20Div·R10·R3(ATR% 정규화 옵션), 유동성 종목 내 퍼센타일, 게이트(유동성·MA50Div>0·Range52≥0.70·MA20Div 상위 5% 제외), 추세·타이밍·총점, 게이트 통과 종목 내 총점순위(`compute_scores`); 주간 Top/Bottom 추천(`weekly_recommendation`); Universe 행 → `PriceBook` 로더(`load_score_inputs`) |
 | `data/flows.py`, `data/rates.py` | 5, 6-3 | 종목별 투자자 순매수 수집기(Naver frgn 페이지, `cache/investor_flows/` 캐시), CD91 수집기(ECOS API 키 → `cd91.csv` → 상수 3%) |
 | `ui/strategy_tab.py`, `ui/trend_following_tab.py`, `threads/strategy_threads.py` | 7 | Strategy 탭의 Trend Following 서브탭(폼 → 백그라운드 실행 → 스코어카드 표·NAV 차트·이벤트 스터디 표·리포트 저장) |
-| `ui/universe_tab.py`(Trend Score 버튼), `threads/strategy_threads.py::TrendScoreThread`, `ui/dialogs/trend_score.py` | 2-5, 9-4 | Trading Universe의 KOSPI/KOSDAQ 행을 2-5로 채점해 지난 1주일 평균 총점 기준 상위 10·하위 10을 표로 보여주는 비모달 다이얼로그(행 더블클릭 → MA 차트) |
+| `ui/universe_tab.py`(Trend Score 버튼), `threads/strategy_threads.py::TrendScoreThread` | 2-5, 9-4 | Trading Universe의 KOSPI/KOSDAQ 행을 2-5로 채점해 지난 1주일 평균 총점 기준 상위 10·하위 10을 **Universe 표 맨 위에 고정**(상위 → 하위 → 나머지 기존 순서, 식별 셀에 `Top n (점수)` / `Bottom n (점수)` 태그); 버튼을 다시 누르면 기본 순서 복원 |
 
 ### 9-2. 구현 결정과 스펙 대비 차이 (다음 버전에서 재검토)
 
@@ -488,8 +488,11 @@ class CostModel:
 ### 9-4. Trading Universe 주간 추천 — 2-5 스코어링 활용 (2026-09-29)
 
 Trading Universe 탭의 **Trend Score** 버튼이 표의 KOSPI/KOSDAQ 행(지수·금리·원자재 행과 미국 종목 제외)을
-`scoring.py`로 채점해 **지난 1주일간의 "추세 + 눌림" 점수 기준 상위 10개·하위 10개**를 다이얼로그로 보여준다.
-백테스트가 아니라 현재 시점의 신호 목록이며, 다음 결정은 2-5 본문에 없는 것이다.
+`scoring.py`로 채점해 **지난 1주일간의 "추세 + 눌림" 점수 기준 상위 10개·하위 10개**를 Universe 표의 맨 위에 올린다
+(상위 1~10 → 하위 1~10 → 나머지는 기존 순서, 식별 셀의 `티커 · 시장` 옆에 `Top n (주간 평균 총점)` / `Bottom n (…)` 태그; 사용자의 열 정렬은 해제).
+버튼은 고정 중 checked 상태이고 다시 누르면 기본 순서로 돌아간다. 전체 갱신 후에도 고정은 유지된다(다시 누를 때까지).
+처음(2026-09-29 1차)에는 점수·게이트·지표를 담은 별도 다이얼로그(`ui/dialogs/trend_score.py`)였으나 사용자 지시로 표 내 고정으로 바꾸고 다이얼로그는 삭제했다
+(git `20d5360` 이전). 백테스트가 아니라 현재 시점의 신호 목록이며, 다음 결정은 2-5 본문에 없는 것이다.
 
 - **유니버스**: 2-0의 KOSPI 200 구성종목이 아니라 **Trading Universe 표에 있는 종목 전체**(KOSPI + KOSDAQ, 사용자 추가분 포함).
   유동성 하한(20일 평균 거래대금 ≥ `min_avg_trading_value`, 기본 100억)은 그대로 적용되어 미달 종목은 퍼센타일·점수 계산에서 빠진다.
@@ -500,16 +503,15 @@ Trading Universe 탭의 **Trend Score** 버튼이 표의 KOSPI/KOSDAQ 행(지수
   일별 총점이 이미 횡단면 정규화돼 있어 날짜 간 평균이 가능하다. 최근 세션에 점수가 있고 5일 중 3일(`score_week_min_sessions`) 이상
   채점된 종목만 대상이다.
 - **상위 10 (매수 후보)**: 최근 세션에 **게이트를 통과한** 종목을 주간 평균 총점 내림차순. 2-5 (4)의 L1 Risk-on 조건은 목록에서 걸러내지 않고
-  헤더에 "KOSPI regime (L1): Risk-on/off"로 표시만 한다(Risk-off이면 신규 진입 금지가 스펙). 총점순위(`Rank`, 게이트 통과 종목 내 퍼센타일)도
-  최근 세션 값으로 병기하므로 매수 문턱 0.80은 사용자가 그 열로 확인한다.
+  상태 라벨에 "KOSPI L1 Risk-on/off"로 표시만 한다(Risk-off이면 신규 진입 금지가 스펙). 총점순위(게이트 통과 종목 내 퍼센타일)와 매수 문턱 0.80은
+  표에 노출하지 않는다(`ScoredName.latest_rank`에는 있다).
 - **하위 10 (약세·매도 후보)**: 게이트와 무관하게 **유동성 충족 종목 중 주간 평균 총점 최저** 순. 2-5의 부호 규칙상 총점이 가장 낮은 것은
-  "추세가 약한데 최근 며칠 급등한" 종목(약세 반등)이며, 게이트 탈락 사유(`MA50Div<0`, `Range52<0.70`, `Overheated`, `Illiquid`)를 Gate 열에 표시한다.
+  "추세가 약한데 최근 며칠 급등한" 종목(약세 반등)이며, 게이트 탈락 사유(`MA50Div<0`, `Range52<0.70`, `Overheated`, `Illiquid`)는 `ScoredName.reasons`에 담긴다(표에는 미표시).
   2-5 (5)의 매도 규칙(게이트 통과 & 순위 < 0.50, MA50Div < 0)을 그대로 적용한 목록은 아니다.
-- **표시 전용 20D**: 다이얼로그의 3D·10D 열은 점수의 R3·R10(종가 기준) 그 자체이고, 20D(20거래일 종가 수익률, `ScoredName.r20`)는
-  참고용으로만 붙인다(스펙에 R20은 없고 점수에도 쓰지 않는다).
+- **3D·10D·20D**: Universe 표의 3D/10D/20D 열이 그대로 보이며, 점수의 R3·R10은 같은 정의(종가 / N일 전 종가 − 1)다. `ScoredName.r20`(표시 전용, 점수 미사용)은 남겨 둔다.
 - **과열 게이트**: 정규화 MA20Div의 유동성 종목 내 퍼센타일이 `gate_overheat_pct`(0.95)를 **초과**하면 제외(유동성 종목 20개 미만이면 최댓값 1개만 해당).
 - **파라미터**: `StrategyParams`에 2-5 (6)의 제안값을 그대로 추가했고(`score_*`, `gate_*`), Universe 추천은 기본값으로만 실행한다(UI에 파라미터 입력 없음).
   `score_range_mode="high52_prox"`(C3)일 때도 게이트 문턱 0.70을 같은 값에 적용한다.
 - **테스트**: `tests/strategy/trend_following/test_scoring.py`(지표 정의, 유동성 종목 한정 퍼센타일, 게이트·사유, 점수 합성과 게이트 내 순위,
   눌림 종목의 타이밍 점수 우위, 약세 반등 종목이 최저 총점, 옵션 2종, 주간 평균·Top/Bottom 정렬·상한·상호 배타·최소 세션·L1 국면),
-  `tests/test_trend_score_dialog.py`, `tests/test_universe_tab.py`(버튼 → KR 행만 스레드로, 실패/성공 경로, 더블클릭 → MA 차트).
+  `tests/test_universe_tab.py`(버튼 → KR 행만 스레드로, 성공 시 상위 → 하위 → 나머지 순 고정·태그·전체 갱신 후 유지·재클릭 해제, 실패 시 순서 불변, 열 정렬 해제).
