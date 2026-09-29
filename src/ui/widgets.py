@@ -518,7 +518,7 @@ class StockTable(QTableWidget):
 
         menu = QMenu(self)
         status = data.get("status", "-")
-        toggle_label = {"On": "Set as Target", "Tg": "Clear Watch/Target"}.get(status, "Add to Watch")
+        toggle_label = {"On": "Set as Target", "Tg": "Clear Port/Target"}.get(status, "Add to Port")
         toggle_action = menu.addAction(toggle_label)
         ma_action = menu.addAction("📈 View MA Chart")
         report_action = menu.addAction("🤖 AI Stock Report")
@@ -952,13 +952,14 @@ class StockTable(QTableWidget):
         self._filter_header.set_active_filter_cols(set(self._col_filters.keys()))
         self.col_filter_changed.emit()
 
-    def apply_col_filters(self, text_filter="", tg_only=False, market="ALL"):
-        """Apply the toolbar's market filter, Target toggle and text
+    def apply_col_filters(self, text_filter="", status="", market="ALL"):
+        """Apply the toolbar's market filter, status filter and text
         search. Called by UniverseTab.filter_table(). `market` is one of
         "ALL"/"KOSPI"/"KOSDAQ" (docs/ui.md 2.1: replaced the old Market
         column's Excel-style dropdown with plain toolbar buttons, since
         Market is no longer a table column at all -- see the identity cell's
-        "ticker · market" meta text instead)."""
+        "ticker · market" meta text instead). `status` is "" (no filter),
+        "On" (Port) or "Tg" (Target): the toolbar's cycling status button."""
         text_lower = text_filter.lower()
 
         hdr = self._filter_header
@@ -974,7 +975,7 @@ class StockTable(QTableWidget):
             if market != "ALL" and data.get("market") != market:
                 hidden = True
 
-            if not hidden and tg_only and data.get("status") != "Tg":
+            if not hidden and status and data.get("status") != status:
                 hidden = True
 
             if not hidden and text_lower:

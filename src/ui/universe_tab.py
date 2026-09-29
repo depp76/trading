@@ -69,6 +69,7 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         self.all_data = []
         self.market_status = {}
         self._market_filter = "ALL"
+        self._status_filter_idx = 0      # index into _STATUS_FILTER_STATES
         # User-added tickers re-fetched after a full refresh (on_finished_all)
         # each arrive on their own thread; rendering once, a beat after the
         # last one lands, instead of a full table rebuild per ticker.
@@ -136,10 +137,10 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         # Market filter (docs/ui.md 2.1): ALL/KOSPI/KOSDAQ toolbar buttons,
         # replacing the old Excel-style dropdown on a Market table column
         # (Market isn't a column anymore -- see the identity cell's meta text).
-        # The four filter toggles (ALL/KOSPI/KOSDAQ and Target) share one
-        # size, the former Target List button's, and one gap -- the layout's
-        # default spacing, with no extra spacer before Target (user
-        # direction 2026-09-19).
+        # The four filter toggles (ALL/KOSPI/KOSDAQ and the status cycle)
+        # share one size, the former Target List button's, and one gap --
+        # the layout's default spacing, with no extra spacer before the
+        # status button (user direction 2026-09-19).
         add_layout.addSpacing(8)
         self._market_buttons = {}
         for m in ("ALL", "KOSPI", "KOSDAQ"):
@@ -148,8 +149,11 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
             add_layout.addWidget(btn)
             self._market_buttons[m] = btn
 
-        self.tg_filter_btn = self._filter_button("Target")
-        self.tg_filter_btn.clicked.connect(lambda: self.filter_table())
+        # Status filter: one button cycling blank (no filter) -> Port -> Target
+        # (user direction 2026-09-29); fixed width so the label change never
+        # resizes it. Blank = unchecked, Port/Target = checked.
+        self.tg_filter_btn = self._filter_button(self._STATUS_FILTER_STATES[0][1])
+        self.tg_filter_btn.clicked.connect(self._on_status_filter_clicked)
         add_layout.addWidget(self.tg_filter_btn)
 
         add_layout.addStretch()
@@ -172,6 +176,10 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         universe_layout.addWidget(self.table)
 
     _FILTER_BTN_W = 100
+    # (highlight status to show, button label): "" = no status filter. The
+    # status values are the ones custom_settings.json stores ("On" = Port,
+    # "Tg" = Target; docs/ui.md 1.7).
+    _STATUS_FILTER_STATES = (("", ""), ("On", "Port"), ("Tg", "Target"))
 
     @classmethod
     def _filter_button(cls, text: str, checked: bool = False) -> QPushButton:
@@ -186,6 +194,18 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         self._market_filter = market
         for m, btn in self._market_buttons.items():
             btn.setChecked(m == market)
+        self.filter_table()
+
+    @property
+    def _status_filter(self) -> str:
+        return self._STATUS_FILTER_STATES[self._status_filter_idx][0]
+
+    def _on_status_filter_clicked(self):
+        """Advance the status filter button: blank -> Port -> Target -> blank."""
+        self._status_filter_idx = (self._status_filter_idx + 1) % len(self._STATUS_FILTER_STATES)
+        status, label = self._STATUS_FILTER_STATES[self._status_filter_idx]
+        self.tg_filter_btn.setText(label)
+        self.tg_filter_btn.setChecked(bool(status))   # override the click's own toggle
         self.filter_table()
 
     def load_custom_settings(self):
@@ -246,7 +266,7 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
 
     def toggle_stock(self, ticker):
         """Cycles a ticker's highlight state -/On/Tg (docs/ui.md 1.7: shown
-        as a Watch/Target badge in the identity cell now, toggled from the
+        as a Port/Target badge in the identity cell now, toggled from the
         table's context menu instead of a persistent per-row button)."""
         highlights = self.custom_settings.setdefault("highlights", {})
         current = highlights.get(ticker, "-")
@@ -372,8 +392,7 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
     def filter_table(self, text=None):
         if text is None:
             text = self.search_input.text()
-        tg_only = getattr(self, 'tg_filter_btn', None) is not None and self.tg_filter_btn.isChecked()
-        self.table.apply_col_filters(text, tg_only=tg_only, market=self._market_filter)
+        self.table.apply_col_filters(text, status=self._status_filter, market=self._market_filter)
 
     # ---Per-stock MA (20 + 60) ---
     def _on_ma_chart_requested(self, ticker: str):

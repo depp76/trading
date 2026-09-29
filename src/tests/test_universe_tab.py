@@ -65,5 +65,50 @@ class TestStartupAddedTickersRenderOnce(unittest.TestCase):
         self.assertEqual([d["ticker"] for d in self.save_json.call_args.args[1]], ["100009"])
 
 
+class TestStatusFilterButton(unittest.TestCase):
+    """The toolbar's status button cycles blank -> Port -> Target -> blank
+    (user direction 2026-09-29) at a fixed size and drives the table filter."""
+
+    def setUp(self):
+        p = patch("ui.universe_tab.atomic_save_json")
+        p.start()
+        self.addCleanup(p.stop)
+        from ui.universe_tab import UniverseTab
+        with patch("ui.universe_tab.safe_load_json", side_effect=_no_disk):
+            self.tab = UniverseTab()
+
+    def test_cycles_label_checked_state_and_filter(self):
+        tab = self.tab
+        btn = tab.tg_filter_btn
+        width0 = btn.width()
+        self.assertEqual(btn.text(), "")
+        self.assertFalse(btn.isChecked())
+        seen = []
+        with patch.object(tab.table, "apply_col_filters", side_effect=lambda *a, **k: seen.append(k["status"])):
+            for expected_label, expected_status, expected_checked in (
+                    ("Port", "On", True), ("Target", "Tg", True), ("", "", False), ("Port", "On", True)):
+                btn.click()
+                self.assertEqual(btn.text(), expected_label)
+                self.assertEqual(btn.isChecked(), expected_checked)
+                self.assertEqual(tab._status_filter, expected_status)
+                self.assertEqual(btn.width(), width0)
+        self.assertEqual(seen, ["On", "Tg", "", "On"])
+        self.assertEqual(btn.minimumWidth(), btn.maximumWidth())     # fixed width: label changes never resize it
+
+    def test_filter_hides_rows_of_other_statuses(self):
+        from ui.widgets import StockTable
+        table = StockTable()
+        rows = {"A": "-", "B": "On", "C": "Tg"}
+        table.setRowCount(0)
+        with patch.object(table, "_row_identity", side_effect=lambda r: {"ticker": list(rows)[r],
+                                                                          "status": list(rows.values())[r],
+                                                                          "name": "", "market": "KOSPI"}):
+            table.setRowCount(3)
+            for status, visible in (("", {"A", "B", "C"}), ("On", {"B"}), ("Tg", {"C"})):
+                table.apply_col_filters("", status=status, market="ALL")
+                shown = {t for i, t in enumerate(rows) if not table.isRowHidden(i)}
+                self.assertEqual(shown, visible, status)
+
+
 if __name__ == "__main__":
     unittest.main()

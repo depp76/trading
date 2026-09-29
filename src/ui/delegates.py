@@ -112,11 +112,11 @@ class CellDelegate(QStyledItemDelegate):
 # Trading Universe (ui/widgets.py StockTable)
 # ---------------------------------------------------------------------------
 # docs/ui.md 1.7: one badge/marker vocabulary for the highlight states
-# custom_settings.json stores as "On"/"Tg" (kept as-is; only the two places
-# that display it -- this badge and the toolbar's "Target" filter --
-# agree on wording).
+# custom_settings.json stores as "On"/"Tg" (kept as-is; the places that
+# display it -- this badge, the toolbar's blank/Port/Target status filter
+# button and the row context menu -- agree on the Port/Target wording).
 STATUS_BADGE = {
-    "On": ("Watch", ACCENT_TEXT, ACCENT, ACCENT_BG),
+    "On": ("Port", ACCENT_TEXT, ACCENT, ACCENT_BG),
     "Tg": ("Target", "#ffffff", ACCENT, ACCENT),
 }
 STATUS_MARKER = {"On": ACCENT, "Tg": ACCENT}
