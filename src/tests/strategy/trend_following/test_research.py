@@ -19,7 +19,7 @@ class TestEventStudy(unittest.TestCase):
         self.assertGreater(by["all breakouts"]["n"], 100)
         self.assertEqual(by["V: volume >= 1.5x avg"]["n"] + by["V: volume < 1.5x avg"]["n"], by["all breakouts"]["n"])
         self.assertIn("F: FI net buy (20d)", by)
-        self.assertIn("retail-only breakout (5d: FI <= 0, retail > 0)", by)
+        self.assertIn("FI net-sell breakout (5d: FI < 0; retail proxy = -FI)", by)
         for k in ("mean_5", "hit_20", "excess_60", "median_60"):
             self.assertIn(k, by["all breakouts"])
         self.assertGreater(by["all breakouts"]["mean_20"], 0)   # synthetic breakouts trend on
@@ -73,6 +73,27 @@ class TestResearchRunner(unittest.TestCase):
         self.assertEqual({x.id for x in res.runs_at(1.0, "strategy")}, {"A0"})
         self.assertTrue(any("Investor-flow" in w for w in res.warnings))
         self.assertEqual(res.event_study, [])
+
+    def test_should_stop_cancels_the_matrix(self):
+        """review_agy.md 3.4: the Stop button's flag is polled before every run."""
+        from strategy.trend_following import ResearchCancelled
+        with self.assertRaises(ResearchCancelled):
+            run_research(self.ds, self.req, should_stop=lambda: True)
+        calls = []
+        def stop_after_two():
+            calls.append(1)
+            return len(calls) > 2
+        with self.assertRaises(ResearchCancelled):
+            run_research(self.ds, self.req, should_stop=stop_after_two)
+        self.assertEqual(len(calls), 3)
+
+    def test_should_stop_cancels_the_loader_before_any_fetch(self):
+        from unittest.mock import patch
+        from strategy.trend_following import ResearchCancelled, load_dataset
+        with patch("strategy.trend_following.dataset.get_historical_data") as fetch:
+            with self.assertRaises(ResearchCancelled):
+                load_dataset("2021-01-04", "2021-06-30", should_stop=lambda: True)
+        fetch.assert_not_called()
 
     def test_request_defaults_cover_the_whole_matrix(self):
         req = ResearchRequest(start=date(2021, 1, 4))

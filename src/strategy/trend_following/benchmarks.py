@@ -13,6 +13,7 @@ BM2 uses the strategy's own cost model.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 
 import numpy as np
@@ -123,9 +124,42 @@ def run_bm1(ds, params: StrategyParams, cost_model: CostModel) -> BacktestResult
     return eng.run(BuyAndHoldPolicy(ds.bm.tickers[0]))
 
 
+BM2_SEED_SCALE = 1000.0
+"""BM2 runs on ``seed_krw * BM2_SEED_SCALE``. With the real seed (10M KRW) and
+200 names the per-name budget is 50,000 KRW, so every share priced above that
+(most large caps) rounds to zero shares and the "equal weight" book is mostly
+cash (review_agy.md 2.1, 2026-09-29). The benchmark is a return index, not an
+order plan, so the run is scaled up and its KRW ledger scaled back down; NAV
+and every ratio metric are unaffected."""
+
+
+def _rescale_result(res: BacktestResult, factor: float) -> BacktestResult:
+    """Divide every KRW-denominated field of `res` by `factor` (share counts are
+    left as run, so per-trade quantities stay consistent with the fill ledger)."""
+    res.equity = res.equity / factor
+    res.cash = res.cash / factor
+    res.costs_by_year = {y: {k: v / factor for k, v in c.items()} for y, c in res.costs_by_year.items()}
+    res.traded_value_by_year = {y: v / factor for y, v in res.traded_value_by_year.items()}
+    res.banked_by_year = {y: v / factor for y, v in res.banked_by_year.items()}
+    res.topup_by_year = {y: v / factor for y, v in res.topup_by_year.items()}
+    for tr in res.trades:
+        tr.pnl /= factor
+        tr.cost = tr.cost.scaled(1.0 / factor)
+    for p in res.open_positions:
+        p["entry_costs"] /= factor
+        p["unrealized_pnl"] /= factor
+    return res
+
+
 def run_bm2(ds, feats: Features, params: StrategyParams, cost_model: CostModel) -> BacktestResult:
-    eng = Engine(ds.stocks, ds.rf_period, params, cost_model, ds.start_idx, "BM2", adv=feats.adv)
-    return eng.run(EqualWeightPolicy(feats.liquid))
+    scaled = replace(params, seed_krw=params.seed_krw * BM2_SEED_SCALE)
+    # adv is not passed: the liquidity slippage term (order value / ADV) would
+    # see the scaled-up orders, and the benchmark is not an execution plan.
+    eng = Engine(ds.stocks, ds.rf_period, scaled, cost_model, ds.start_idx, "BM2")
+    res = eng.run(EqualWeightPolicy(feats.liquid))
+    res.params = params.as_dict()
+    res.notes.append(f"run at {BM2_SEED_SCALE:g}x seed so whole shares of every name fit; KRW ledger rescaled")
+    return _rescale_result(res, BM2_SEED_SCALE)
 
 
 def run_bm3(ds, params: StrategyParams, cost_model: CostModel) -> BacktestResult | None:

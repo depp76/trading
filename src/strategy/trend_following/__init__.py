@@ -18,7 +18,7 @@ from strategy.trend_following.config import (
 )
 from strategy.trend_following.costs import CostModel, TradeCost, DEFAULT_TAX_TABLE, tick_size, snap_to_tick
 from strategy.trend_following.signals import Features, compute_features, regime_state, weekly_check_days
-from strategy.trend_following.dataset import Dataset, PriceBook, build_dataset, load_dataset
+from strategy.trend_following.dataset import Dataset, PriceBook, ResearchCancelled, build_dataset, load_dataset
 from strategy.trend_following.backtest import (
     BacktestResult, Trade, Engine, Policy, TrendFollowingPolicy, run_backtest,
 )
@@ -34,7 +34,7 @@ __all__ = [
     "BM_TR_TICKER", "BM_PRICE_FALLBACK_TICKER",
     "CostModel", "TradeCost", "DEFAULT_TAX_TABLE", "tick_size", "snap_to_tick",
     "Features", "compute_features", "regime_state", "weekly_check_days",
-    "Dataset", "PriceBook", "build_dataset", "load_dataset",
+    "Dataset", "PriceBook", "ResearchCancelled", "build_dataset", "load_dataset",
     "BacktestResult", "Trade", "Engine", "Policy", "TrendFollowingPolicy", "run_backtest",
     "run_benchmarks", "run_bm1", "run_bm2", "run_bm3", "run_bm4",
     "summarize_run", "run_event_study",

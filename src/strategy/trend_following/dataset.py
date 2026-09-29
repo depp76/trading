@@ -189,6 +189,9 @@ def build_dataset(calendar: list[date], index_close: np.ndarray, stock_frames: d
             # Amount proxy: net quantity x the same page's close (spec 2-3 normalises
             # by trading value, so both sides are in KRW).
             flow_fi[:, j] = (cols["Foreigner"] + cols["Institution"]) * px
+            # With the Naver frgn source "Retail" is -(Foreigner + Institution)
+            # (no retail column there), so flow_retail == -flow_fi and carries
+            # no independent information; a four-party source would change that.
             flow_retail[:, j] = cols["Retail"] * px
 
     if rf_frame is not None and not rf_frame.is_empty() and "Rate" in rf_frame.columns:
@@ -236,17 +239,31 @@ def _load_listing(universe_size: int) -> list[dict]:
     return rows or []
 
 
+class ResearchCancelled(RuntimeError):
+    """Raised by load_dataset / run_research when the caller's `should_stop`
+    callable returns True (the Stop button of the Trend Following tab)."""
+
+
+def _check_stop(should_stop, futures=None) -> None:
+    if should_stop is not None and should_stop():
+        for f in futures or ():
+            f.cancel()      # queued fetches never start; in-flight ones finish
+        raise ResearchCancelled("cancelled")
+
+
 def load_dataset(start, end=None, universe_size: int = 200, include_flows: bool = False,
                  params: StrategyParams | None = None, progress=None, max_workers: int = 8,
-                 min_rows: int = 60) -> Dataset:
+                 min_rows: int = 60, should_stop=None) -> Dataset:
     """Network path: KOSPI calendar + top-N KOSPI names + optional flows + BM
-    ETF + CD91, warmed up WARMUP_CALENDAR_DAYS before `start`."""
+    ETF + CD91, warmed up WARMUP_CALENDAR_DAYS before `start`. `should_stop`
+    (no-arg callable) is polled between fetches; True raises ResearchCancelled."""
     p = params or StrategyParams()
     start = _to_date(start)
     end = _to_date(end) if end else date.today()
     warm_start = start - timedelta(days=WARMUP_CALENDAR_DAYS)
     ws = warm_start.isoformat()
 
+    _check_stop(should_stop)
     _say(progress, "Loading KOSPI index history...")
     idx_df = get_historical_data("KS11", ws)
     if idx_df is None or idx_df.is_empty():
@@ -264,12 +281,14 @@ def load_dataset(start, end=None, universe_size: int = 200, include_flows: bool 
     codes = [str(r["Code"]).zfill(6) for r in listing]
     names = {str(r["Code"]).zfill(6): str(r.get("Name", "")) for r in listing}
 
+    _check_stop(should_stop)
     _say(progress, f"Loading daily history for {len(codes)} names...")
     frames: dict[str, pl.DataFrame] = {}
     done = 0
     with ThreadPoolExecutor(max_workers=max_workers) as exe:
         futures = {exe.submit(get_historical_data, c, ws): c for c in codes}
         for fut in as_completed(futures):
+            _check_stop(should_stop, futures)
             c = futures[fut]
             done += 1
             try:
@@ -293,6 +312,7 @@ def load_dataset(start, end=None, universe_size: int = 200, include_flows: bool 
         with ThreadPoolExecutor(max_workers=max(1, min(max_workers, 4))) as exe:
             futures = {exe.submit(get_investor_flows, c, ws): c for c in frames}
             for fut in as_completed(futures):
+                _check_stop(should_stop, futures)
                 c = futures[fut]
                 done += 1
                 try:
@@ -305,6 +325,7 @@ def load_dataset(start, end=None, universe_size: int = 200, include_flows: bool 
                 if done % 10 == 0 or done == len(frames):
                     _say(progress, f"Investor flows {done}/{len(frames)} ({len(flow_frames)} with data)")
 
+    _check_stop(should_stop)
     _say(progress, "Loading benchmark ETF...")
     bm_ticker, bm_tr = BM_TR_TICKER, True
     bm_df = get_historical_data(bm_ticker, ws)

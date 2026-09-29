@@ -3,7 +3,7 @@ index/MA series. Listings, history and FX live one layer down (data.listing / da
 data.fx) and are re-exported here for existing callers."""
 import re
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import polars as pl
 import FinanceDataReader as fdr
@@ -338,12 +338,29 @@ def fetch_single_stock(market, ticker):
         return None, str(e)
 
 
+def _index_lookback_start(target: date) -> str:
+    """Start of the history window for a `target` date lookup. The default
+    watchlist window (start_date(), 410 days) is reused while the target falls
+    inside it; older targets widen it to Jan 1 of the year before, so the
+    Total Assets tab keeps its KOSPI columns once its first snapshot ages
+    past 410 days (review_agy.md 2.3, 2026-09-29). Year-aligned starts keep
+    the number of distinct _HIST_CACHE keys small."""
+    default = start_date()
+    if target.isoformat() >= default:
+        return default
+    return f"{target.year - 1}-01-01"
+
+
 def get_index_close_for_date(ticker: str, date_str: str) -> float:
     """Returns the closing price for an index/ticker for a specific date (YYYY-MM-DD)."""
-    df = get_historical_data(ticker, start_date())
+    try:
+        target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        logger.debug("get_index_close_for_date: bad date %r", date_str)
+        return 0.0
+    df = get_historical_data(ticker, _index_lookback_start(target))
     if df is not None and not df.is_empty():
         try:
-            target = datetime.strptime(date_str, "%Y-%m-%d").date()
             sub = df.filter(pl.col("Date") <= target)
             if not sub.is_empty():
                 return float(sub.get_column("Close")[-1])

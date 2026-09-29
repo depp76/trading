@@ -10,21 +10,32 @@ import logging
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from strategy.trend_following import ResearchRequest, load_dataset, run_research
+from strategy.trend_following import ResearchCancelled, ResearchRequest, load_dataset, run_research
 
 logger = logging.getLogger(__name__)
+
+CANCELLED_MESSAGE = "Cancelled"
 
 
 class TrendFollowingResearchThread(QThread):
     """Loads the dataset for `request` and runs the 6-2 matrix / 6-1 event
     study. ``finished(result | None, error)``; ``progress(text)`` carries short
-    status lines for the tab's status label."""
+    status lines for the tab's status label. ``cancel()`` (any thread) makes
+    the loader and the matrix runner stop at their next check and finish with
+    ``(None, CANCELLED_MESSAGE)``."""
     progress = pyqtSignal(str)
     finished = pyqtSignal(object, str)
 
     def __init__(self, request: ResearchRequest):
         super().__init__()
         self.request = request
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def is_cancelled(self) -> bool:
+        return self._cancelled
 
     def run(self):
         req = self.request
@@ -32,9 +43,13 @@ class TrendFollowingResearchThread(QThread):
             ds = load_dataset(
                 req.start, req.end, universe_size=req.params.universe_size,
                 include_flows=req.include_flows, params=req.params, progress=self.progress.emit,
+                should_stop=self.is_cancelled,
             )
-            result = run_research(ds, req, progress=self.progress.emit)
+            result = run_research(ds, req, progress=self.progress.emit, should_stop=self.is_cancelled)
             self.finished.emit(result, "")
+        except ResearchCancelled:
+            logger.info("Trend Following research run cancelled by the user")
+            self.finished.emit(None, CANCELLED_MESSAGE)
         except Exception as e:
             logger.warning("Trend Following research run failed", exc_info=True)
             self.finished.emit(None, str(e))

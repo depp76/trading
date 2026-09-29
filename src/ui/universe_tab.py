@@ -338,11 +338,23 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         self.filter_table()  # restore filter state
         self.ticker_input.clear()
         self.update_total_status(prefix=f"Added '{result.get('name', ticker)}' ({ticker}).")
+        self._save_universe_cache()
 
     def _render_startup_batch(self):
         self._sort_all_data()
         self._reload_table()
         self.filter_table()
+        self._save_universe_cache()
+
+    def _save_universe_cache(self):
+        """Persist ``all_data`` so the next start's instant table already holds
+        the user-added tickers. on_finished_all() wrote the cache before those
+        were re-fetched, so they were missing until the next full refresh
+        (review_agy.md 2.4, 2026-09-29)."""
+        try:
+            atomic_save_json(UNIVERSE_CACHE_FILE, self.all_data)
+        except Exception as e:
+            logger.warning("Error caching universe data: %s", e, exc_info=True)
 
     @staticmethod
     def _sort_key(item):
@@ -508,11 +520,9 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
             self.update_total_status()
             self.update_last_sync_time()
 
-            # Cache the newly fetched data
-            try:
-                atomic_save_json(UNIVERSE_CACHE_FILE, self.all_data)
-            except Exception as e:
-                logger.warning("Error caching universe data: %s", e, exc_info=True)
+            # Cache the newly fetched data (the user-added tickers below are
+            # appended by _render_startup_batch, which saves again)
+            self._save_universe_cache()
 
             existing_tickers = {x.get("ticker") for x in self.all_data}
             missing_added = [x for x in added if x["ticker"] not in existing_tickers and x["ticker"] not in deleted]

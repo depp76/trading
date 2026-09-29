@@ -117,10 +117,29 @@ class TestCostAmounts(unittest.TestCase):
 
     def test_limit_move_detection(self):
         cm = CostModel()
-        self.assertTrue(cm.is_limit_up(13_000, 10_000))
-        self.assertFalse(cm.is_limit_up(12_000, 10_000))
-        self.assertTrue(cm.is_limit_down(7_000, 10_000))
-        self.assertFalse(cm.is_limit_down(8_000, 10_000))
+        d = date(2026, 3, 2)
+        self.assertTrue(cm.is_limit_up(d, "KOSPI", 13_000, 10_000))
+        self.assertFalse(cm.is_limit_up(d, "KOSPI", 12_000, 10_000))
+        self.assertTrue(cm.is_limit_down(d, "KOSPI", 7_000, 10_000))
+        self.assertFalse(cm.is_limit_down(d, "KOSPI", 8_000, 10_000))
+
+    def test_limit_prices_truncate_to_the_tick_of_the_limit_band(self):
+        """KRX truncates the 30% move to the tick of the band the limit price
+        falls in, so the real limit can sit below prev * 1.30 and a fixed
+        tolerance misses it (review_agy.md 2.2)."""
+        cm = CostModel()
+        pre = date(2022, 6, 1)                         # 1,030 -> up in band 1,000-5,000 (tick 5)
+        self.assertEqual(cm.limit_prices(pre, "KOSPI", 1_030), (721.0, 1_335.0))   # down band < 1,000: tick 1
+        self.assertTrue(cm.is_limit_up(pre, "KOSPI", 1_335, 1_030))
+        self.assertFalse(cm.is_limit_up(pre, "KOSPI", 1_330, 1_030))
+        self.assertTrue(cm.is_limit_down(pre, "KOSPI", 721, 1_030))
+        # 10,000 -> up 13,000 sits in the 10,000-50,000 band (tick 50 pre-reform)
+        self.assertEqual(cm.limit_prices(pre, "KOSPI", 10_000), (7_000.0, 13_000.0))
+        # Post-reform 12,340 -> 16,042 band 5,000-20,000 tick 10 -> 3,700 move -> 16,040
+        post = date(2026, 3, 2)
+        self.assertEqual(cm.limit_prices(post, "KOSPI", 12_340)[1], 16_040.0)
+        self.assertTrue(cm.is_limit_up(post, "KOSPI", 16_040, 12_340))
+        self.assertFalse(cm.is_limit_up(post, "KOSPI", 16_030, 12_340))
 
     def test_tradecost_addition(self):
         a = TradeCost(1, 2, 3)

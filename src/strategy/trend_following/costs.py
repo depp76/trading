@@ -141,11 +141,23 @@ class CostModel:
             return float(raw_price)
         return snap_to_tick(float(raw_price), tick_size(trade_date, market, float(raw_price)), side)
 
-    def is_limit_up(self, open_price: float, prev_close: float) -> bool:
-        return prev_close > 0 and open_price >= prev_close * (1.0 + self.limit_move_pct) * 0.999
+    def limit_prices(self, trade_date: date, market, prev_close: float) -> tuple[float, float]:
+        """(limit-down, limit-up) prices the KRX way: the +-30% move is truncated
+        to the tick of the price band the limit falls in, so a low-priced name's
+        real limit sits below prev_close * 1.30 (e.g. 1,030 -> 1,335, +29.6%).
+        A fixed 0.1% tolerance missed those (review_agy.md 2.2, 2026-09-29)."""
+        move = prev_close * self.limit_move_pct
+        up_tick = tick_size(trade_date, market, prev_close + move)
+        down_tick = tick_size(trade_date, market, max(prev_close - move, 1.0))
+        up = prev_close + math.floor(move / up_tick + 1e-9) * up_tick
+        down = prev_close - math.floor(move / down_tick + 1e-9) * down_tick
+        return float(down), float(up)
 
-    def is_limit_down(self, open_price: float, prev_close: float) -> bool:
-        return prev_close > 0 and open_price <= prev_close * (1.0 - self.limit_move_pct) * 1.001
+    def is_limit_up(self, trade_date: date, market, open_price: float, prev_close: float) -> bool:
+        return prev_close > 0 and open_price >= self.limit_prices(trade_date, market, prev_close)[1] - 1e-6
+
+    def is_limit_down(self, trade_date: date, market, open_price: float, prev_close: float) -> bool:
+        return prev_close > 0 and open_price <= self.limit_prices(trade_date, market, prev_close)[0] + 1e-6
 
     # -- costs -----------------------------------------------------------------
     def buy_cost(self, trade_date: date, market, price: float, qty: int, adv=None) -> TradeCost:

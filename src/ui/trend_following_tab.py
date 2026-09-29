@@ -31,7 +31,7 @@ from strategy.trend_following import (
 )
 from strategy.trend_following.research import SUMMARY_COLUMNS
 from strategy.trend_following.event_study import HORIZONS
-from threads.strategy_threads import TrendFollowingResearchThread
+from threads.strategy_threads import TrendFollowingResearchThread, CANCELLED_MESSAGE
 from ui.common import create_font, ThreadOwnerMixin, FONT_HEADING, FONT_SMALL, FONT_BODY
 from ui.theme import TEXT_MUTED, LINE, DANGER
 
@@ -158,11 +158,17 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         self.run_btn.setObjectName("primary")
         self.run_btn.setFont(create_font(FONT_BODY, QFont.Weight.Bold))
         self.run_btn.clicked.connect(self._on_run_clicked)
+        self.stop_btn = QPushButton("■  Stop")
+        self.stop_btn.setObjectName("danger")
+        self.stop_btn.setFont(create_font(FONT_BODY))
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._on_stop_clicked)
         self.save_btn = QPushButton("Save Report")
         self.save_btn.setFont(create_font(FONT_BODY))
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._on_save_clicked)
         variants_row.addWidget(self.run_btn)
+        variants_row.addWidget(self.stop_btn)
         variants_row.addWidget(self.save_btn)
         root.addLayout(variants_row)
 
@@ -257,16 +263,27 @@ class TrendFollowingTab(ThreadOwnerMixin, QWidget):
         thread.finished.connect(self._on_research_finished)
         self._track_thread(thread, "_research_thread")
         self.run_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
         self.status_lbl.setText("Starting...")
         thread.start()
+
+    def _on_stop_clicked(self):
+        """Ask the running research thread to stop at its next check
+        (review_agy.md 3.4, 2026-09-29); _on_research_finished re-enables Run."""
+        thread = self._research_thread
+        if thread is not None and thread.isRunning():
+            thread.cancel()
+            self.stop_btn.setEnabled(False)
+            self.status_lbl.setText("Stopping after the current step...")
 
     def _on_progress(self, text: str):
         self.status_lbl.setText(text)
 
     def _on_research_finished(self, result, error: str):
         self.run_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
         if result is None:
-            self.status_lbl.setText(f"Run failed: {error}")
+            self.status_lbl.setText(error if error == CANCELLED_MESSAGE else f"Run failed: {error}")
             return
         self._result = result
         self.save_btn.setEnabled(True)

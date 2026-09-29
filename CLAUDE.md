@@ -44,7 +44,7 @@ working directory:
 ### Verification
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest src\tests -q      # ~220 tests, no network, ~10 s
+.\.venv\Scripts\python.exe -m pytest src\tests -q      # ~320 tests, no network, ~10 s
 .\.venv\Scripts\ruff.exe check src                      # pyflakes rules only (ruff.toml)
 ```
 

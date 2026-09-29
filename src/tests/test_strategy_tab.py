@@ -21,12 +21,16 @@ class _FakeThread:
     def __init__(self, request):
         self.request = request
         self.started = False
+        self.cancelled = False
         self.progress = _Sig()
         self.finished = _Sig()
         _FakeThread.instances.append(self)
 
     def start(self):
         self.started = True
+
+    def cancel(self):
+        self.cancelled = True
 
     def isRunning(self):
         return False
@@ -88,6 +92,25 @@ class TestTrendFollowingTab(unittest.TestCase):
         worker.finished.emit(None, "boom")
         self.assertTrue(tab.run_btn.isEnabled())
         self.assertIn("boom", tab.status_lbl.text())
+        self.assertFalse(tab.save_btn.isEnabled())
+
+    def test_stop_cancels_the_worker_and_reports_cancelled(self):
+        from threads.strategy_threads import CANCELLED_MESSAGE
+        tab = TrendFollowingTab()
+        self.assertFalse(tab.stop_btn.isEnabled())
+        _FakeThread.instances.clear()
+        with patch("ui.trend_following_tab.TrendFollowingResearchThread", _FakeThread):
+            tab._on_run_clicked()
+        worker = _FakeThread.instances[0]
+        self.assertTrue(tab.stop_btn.isEnabled())
+        with patch.object(worker, "isRunning", return_value=True):
+            tab._on_stop_clicked()
+        self.assertTrue(worker.cancelled)
+        self.assertFalse(tab.stop_btn.isEnabled())
+        self.assertIn("Stopping", tab.status_lbl.text())
+        worker.finished.emit(None, CANCELLED_MESSAGE)
+        self.assertEqual(tab.status_lbl.text(), CANCELLED_MESSAGE)
+        self.assertTrue(tab.run_btn.isEnabled())
         self.assertFalse(tab.save_btn.isEnabled())
 
     def test_populate_from_a_real_result(self):

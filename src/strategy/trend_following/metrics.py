@@ -30,18 +30,25 @@ def nav_returns(nav: np.ndarray) -> np.ndarray:
     return out
 
 
+NAV_BASE = 1.0
+"""Every return below is measured from the seed (nav 1.0), not from ``nav[0]``:
+a policy that fills on the first session (BM1/BM2) already carries that day's
+costs and open-to-close move in ``nav[0]``, and dividing by it would drop
+them (review_agy.md 3.2, 2026-09-29)."""
+
+
 def total_return(nav: np.ndarray) -> float:
     nav = np.asarray(nav, dtype=float)
-    return float(nav[-1] / nav[0] - 1.0) if len(nav) and nav[0] > 0 else 0.0
+    return float(nav[-1] / NAV_BASE - 1.0) if len(nav) else 0.0
 
 
 def cagr(nav: np.ndarray, dates: list[date]) -> float:
-    if len(nav) < 2 or nav[0] <= 0:
+    if len(nav) < 2:
         return 0.0
     days = (dates[-1] - dates[0]).days
     if days <= 0:
         return 0.0
-    return float((nav[-1] / nav[0]) ** (365.0 / days) - 1.0)
+    return float((nav[-1] / NAV_BASE) ** (365.0 / days) - 1.0)
 
 
 def annual_vol(rets: np.ndarray) -> float:
@@ -74,7 +81,7 @@ def calmar(cagr_value: float, mdd: float) -> float:
 
 def yearly_returns(nav: np.ndarray, dates: list[date]) -> dict[int, float]:
     out: dict[int, float] = {}
-    prev_nav = nav[0] if len(nav) else 1.0
+    prev_nav = NAV_BASE
     year = dates[0].year if dates else None
     for i in range(len(nav)):
         if dates[i].year != year:
@@ -90,7 +97,7 @@ def monthly_returns(nav: np.ndarray, dates: list[date]) -> dict[tuple[int, int],
     out: dict[tuple[int, int], float] = {}
     if len(nav) == 0:
         return out
-    prev_nav = nav[0]
+    prev_nav = NAV_BASE
     key = (dates[0].year, dates[0].month)
     for i in range(len(nav)):
         k = (dates[i].year, dates[i].month)
@@ -151,7 +158,7 @@ def period_returns(nav: np.ndarray, dates: list[date], periods=PERIODS) -> dict[
             out[label] = None
             continue
         i0, i1 = idx[0], idx[-1]
-        base = nav[i0 - 1] if i0 > 0 else nav[i0]
+        base = nav[i0 - 1] if i0 > 0 else NAV_BASE
         out[label] = float(nav[i1] / base - 1.0) if base > 0 else None
     return out
 
@@ -192,7 +199,9 @@ def summarize_run(res: BacktestResult, bm1: BacktestResult | None = None,
         "calmar": calmar(c, mdd),
         "yearly": yearly_returns(nav, dates),
         "periods": period_returns(nav, dates),
-        "turnover": (res.total_traded_value / mean_equity / years) if mean_equity > 0 and years > 0 else 0.0,
+        # Round-trip turnover: the engine's traded value counts both the buy and
+        # the sell leg, so halve it (spec 4-1 "20 turns a year" is round trips).
+        "turnover": (res.total_traded_value / 2.0 / mean_equity / years) if mean_equity > 0 and years > 0 else 0.0,
         "cost_total": costs.total,
         "cost_commission": costs.commission,
         "cost_tax": costs.tax,

@@ -15,6 +15,7 @@ from strategy.trend_following.config import (
     SPEC_VERSION, COST_MULTIPLIERS, PERIODS, VARIANTS, StrategyParams,
 )
 from strategy.trend_following.costs import CostModel
+from strategy.trend_following.dataset import ResearchCancelled
 from strategy.trend_following.event_study import run_event_study, HORIZONS
 from strategy.trend_following.metrics import summarize_run
 from strategy.trend_following.signals import compute_features
@@ -74,7 +75,14 @@ def _say(progress, msg):
         progress(msg)
 
 
-def run_research(ds, req: ResearchRequest, progress=None) -> ResearchResult:
+def _check_stop(should_stop) -> None:
+    if should_stop is not None and should_stop():
+        raise ResearchCancelled("cancelled")
+
+
+def run_research(ds, req: ResearchRequest, progress=None, should_stop=None) -> ResearchResult:
+    """`should_stop` (no-arg callable) is polled before every backtest and the
+    event study; True raises ResearchCancelled."""
     p = req.params
     warnings: list[str] = []
     _say(progress, "Computing signals...")
@@ -88,14 +96,19 @@ def run_research(ds, req: ResearchRequest, progress=None) -> ResearchResult:
     if not feats.has_flows:
         warnings.append("Investor-flow data not loaded: A3/A4/A5 (F, FX) and the flow groups of the event study "
                         "were skipped.")
-    elif feats.flow_coverage < 0.5:
-        warnings.append(f"Investor-flow coverage is only {feats.flow_coverage:.0%} of date x ticker cells.")
+    else:
+        if feats.flow_coverage < 0.5:
+            warnings.append(f"Investor-flow coverage is only {feats.flow_coverage:.0%} of date x ticker cells.")
+        warnings.append("Retail flow is a proxy: the Naver frgn source has only foreigner and institution, so "
+                        "retail = -(FI) and 'other corporations' (buybacks, block deals) are folded into it; the "
+                        "event study's FI net-sell group is that proxy, not an independent retail signal.")
     warnings.append(ds.info.get("universe", ""))
 
     runs: list[RunSummary] = []
     if req.run_backtests:
         for mult in req.cost_multipliers:
             cm = req.cost_model.scaled(mult)
+            _check_stop(should_stop)
             _say(progress, f"Benchmarks at {mult:g}x costs...")
             bms = run_benchmarks(ds, feats, p, cm)
             bm1, bm3 = bms.get("BM1"), bms.get("BM3")
@@ -103,6 +116,7 @@ def run_research(ds, req: ResearchRequest, progress=None) -> ResearchResult:
                 v = VARIANTS[vid]
                 if v.needs_flows and not feats.has_flows:
                     continue
+                _check_stop(should_stop)
                 _say(progress, f"Backtest {vid} at {mult:g}x costs...")
                 res: BacktestResult = run_backtest(ds, feats, p, v, cm)
                 runs.append(RunSummary(vid, v.label, "strategy", mult, summarize_run(res, bm1, bm3),
@@ -113,6 +127,7 @@ def run_research(ds, req: ResearchRequest, progress=None) -> ResearchResult:
 
     events: list[dict] = []
     if req.run_event_study:
+        _check_stop(should_stop)
         _say(progress, "Event study...")
         events = run_event_study(ds, feats, p)
 
@@ -151,7 +166,7 @@ SUMMARY_COLUMNS = [
     ("Trades", lambda r: str(r.metrics["n_trades"])),
     ("Win", lambda r: _pct(r.metrics["win_rate"], 0)),
     ("Hold(d)", lambda r: _num(r.metrics["avg_holding_days"], 0)),
-    ("Turnover", lambda r: _num(r.metrics["turnover"], 1)),
+    ("Turnover", lambda r: _num(r.metrics["turnover"], 1)),     # round trips per year (6-4)
     ("Cost/yr", lambda r: _pct(r.metrics["cost_pct_per_year"], 2)),
     ("Cash", lambda r: _pct(r.metrics["avg_cash_weight"], 0)),
     ("vs BM1", lambda r: _pct(r.metrics.get("bm1_excess_cagr"))),

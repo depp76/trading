@@ -82,7 +82,9 @@ class Trade:
 class BacktestResult:
     id: str
     dates: list[date]
-    nav: np.ndarray             # chained, starts at 1.0
+    nav: np.ndarray             # chained; 1.0 = seed. nav[0] < 1.0 when the policy fills on
+                                # the first session (its costs and open-to-close move), so
+                                # metrics measure from 1.0, never from nav[0]
     equity: np.ndarray          # in-year account value (KRW)
     cash: np.ndarray
     exposure: np.ndarray        # invested fraction of equity
@@ -254,7 +256,8 @@ class Engine:
                 o.tries += 1
                 keep.append(o)
                 continue
-            if self.cm.block_limit_up_down and np.isfinite(prev_close) and self.cm.is_limit_down(px, prev_close):
+            if self.cm.block_limit_up_down and np.isfinite(prev_close) and self.cm.is_limit_down(
+                    d, b.market_of(pos.ticker), px, prev_close):
                 o.tries += 1
                 keep.append(o)
                 continue
@@ -270,7 +273,8 @@ class Engine:
             px = b.open[t, col]
             prev_close = b.close[t - 1, col] if t > 0 else np.nan
             blocked = (not np.isfinite(px) or px <= 0) or (
-                self.cm.block_limit_up_down and np.isfinite(prev_close) and self.cm.is_limit_up(px, prev_close))
+                self.cm.block_limit_up_down and np.isfinite(prev_close)
+                and self.cm.is_limit_up(d, b.market_of(o.ticker), px, prev_close))
             if blocked:
                 o.tries += 1
                 if o.tries <= self.params.max_order_retries:

@@ -4,7 +4,7 @@ from datetime import date
 
 import numpy as np
 
-from strategy.trend_following.benchmarks import run_benchmarks, run_bm3, run_bm4
+from strategy.trend_following.benchmarks import run_benchmarks, run_bm2, run_bm3, run_bm4
 from strategy.trend_following.config import StrategyParams
 from strategy.trend_following.costs import CostModel
 from strategy.trend_following.metrics import (
@@ -60,6 +60,27 @@ class TestBenchmarks(unittest.TestCase):
         self.assertEqual(bm2.n_positions[0], 4)
         self.assertGreater(bm2.exposure[0], 0.9)
 
+    def test_bm2_holds_every_name_even_when_the_seed_cannot_buy_one_share_each(self):
+        """review_agy.md 2.1: with 10M KRW over 200 names the per-name budget is
+        below most share prices, so BM2 used to round to zero shares and sit in
+        cash. The run is scaled up and its KRW ledger scaled back down."""
+        p = StrategyParams(seed_krw=50_000.0)          # 12,500 per name vs 10,000-20,000 prices
+        bm2 = run_bm2(self.ds, self.feats, p, CostModel())
+        self.assertEqual(bm2.n_positions[0], 4)
+        self.assertGreater(bm2.exposure[0], 0.9)
+        self.assertAlmostEqual(bm2.equity[0] / p.seed_krw, bm2.nav[0], places=9)   # ledger back in seed units
+        self.assertLess(bm2.total_costs.total, p.seed_krw)
+        self.assertEqual(bm2.params["seed_krw"], p.seed_krw)
+        self.assertTrue(any("seed" in n for n in bm2.notes))
+
+    def test_turnover_counts_round_trips(self):
+        """review_agy.md 3.3: the engine's traded value has both legs, so the
+        reported turnover is half of it per year of mean equity."""
+        bm1 = self.bms["BM1"]
+        m = summarize_run(bm1)
+        years = (bm1.dates[-1] - bm1.dates[0]).days / 365.0
+        self.assertAlmostEqual(m["turnover"], bm1.total_traded_value / 2.0 / np.nanmean(bm1.equity) / years)
+
     def test_bm4_compounds_the_rate(self):
         bm4 = run_bm4(self.ds, self.p)
         years = (self.ds.eval_dates[-1] - self.ds.eval_dates[0]).days / 365.0
@@ -90,6 +111,21 @@ class TestMetrics(unittest.TestCase):
         self.assertAlmostEqual(y[2022], nav[-1] / nav[last_2021] - 1)
         m = monthly_returns(nav, dates)
         self.assertEqual(set(m), {(2021, 12), (2022, 1)})
+
+    def test_returns_are_measured_from_the_seed_not_from_nav0(self):
+        """review_agy.md 3.2: a first-session fill leaves nav[0] < 1 (its costs
+        and open-to-close move); the first year/month, CAGR and total return
+        must include that, so they divide by 1.0, not by nav[0]."""
+        from strategy.trend_following.metrics import total_return
+        dates = business_days(date(2021, 12, 28), 10)
+        nav = np.linspace(0.98, 1.20, 10)
+        y = yearly_returns(nav, dates)
+        last_2021 = max(i for i, d in enumerate(dates) if d.year == 2021)
+        self.assertAlmostEqual(y[2021], nav[last_2021] - 1.0)
+        self.assertAlmostEqual(monthly_returns(nav, dates)[(2021, 12)], nav[last_2021] - 1.0)
+        self.assertAlmostEqual(total_return(nav), 0.20)
+        self.assertAlmostEqual(cagr(nav, dates), 1.20 ** (365.0 / (dates[-1] - dates[0]).days) - 1.0)
+        self.assertAlmostEqual(period_returns(nav, dates, [("all", 2021, 2022)])["all"], 0.20)
 
     def test_capture_beta_ir(self):
         bm = {(2021, 1): 0.02, (2021, 2): -0.01, (2021, 3): 0.03}

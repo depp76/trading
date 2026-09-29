@@ -74,11 +74,14 @@ def run_event_study(ds, feats: Features, params: StrategyParams, horizons=HORIZO
         known = np.isfinite(fs)
         groups.append(("F: FI net buy (20d)", known & (fs > 0)))
         groups.append(("F: FI net sell (20d)", known & (fs <= 0)))
+        # Spec 6-1's "retail-only breakout" group. The Naver frgn source has no
+        # retail column: dataset.py derives retail = -(foreigner + institution),
+        # so "FI <= 0 and retail > 0" collapses to "FI < 0" (review_agy.md 3.1,
+        # 2026-09-29). Labelled as what it measures; a true retail split needs
+        # a four-party source (KRX) that also separates "other corporations".
         fi5 = rolling(ds.flow_fi, params.flow_short_window, "sum")[ts, js]
-        retail5 = rolling(ds.flow_retail, params.flow_short_window, "sum")[ts, js] \
-            if ds.flow_retail is not None else np.full(ts.size, np.nan)
-        known5 = np.isfinite(fi5) & np.isfinite(retail5)
-        groups.append(("retail-only breakout (5d: FI <= 0, retail > 0)", known5 & (fi5 <= 0) & (retail5 > 0)))
+        known5 = np.isfinite(fi5)
+        groups.append(("FI net-sell breakout (5d: FI < 0; retail proxy = -FI)", known5 & (fi5 < 0)))
         groups.append(("FI-backed breakout (5d: FI > 0)", known5 & (fi5 > 0)))
 
     rows = []
