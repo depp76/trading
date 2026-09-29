@@ -110,5 +110,49 @@ class TestStatusFilterButton(unittest.TestCase):
                 self.assertEqual(shown, visible, status)
 
 
+class TestRowStatusButton(unittest.TestCase):
+    """The identity cell's fixed-size blank/Port/Target button cycles the
+    row's status on click (user direction 2026-09-29); other clicks in the
+    cell do not."""
+
+    def _table(self):
+        from ui.widgets import StockTable
+        table = StockTable()
+        table.resize(900, 300)
+        table.show()
+        rows = [{"name": n, "ticker": t, "market": "KOSPI", "market_cap": 1e11, "trailing_per": 10.0,
+                 "forward_per": 9.0, "price": 100.0, "currency": "", "change_mode": "pct", "changes": {}}
+                for t, n in (("000001", "A"), ("000002", "B"))]
+        table.load_data(rows, highlights={"000002": "On"})
+        return table
+
+    def test_click_on_the_button_emits_toggle_for_that_row_only(self):
+        from PyQt6.QtCore import QPoint, QRect, Qt
+        from PyQt6.QtTest import QTest
+        from ui.delegates import IdentityDelegate
+        from ui.widgets import COL_IDENTITY
+        table = self._table()
+        seen = []
+        table.toggle_requested.connect(seen.append)
+        col_w = table.columnWidth(COL_IDENTITY)
+        for row in (0, 1):
+            cell = QRect(0, table.rowViewportPosition(row), col_w, table.rowHeight(row))
+            btn = IdentityDelegate.status_button_rect(cell)
+            QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=btn.center())
+            # the name area of the same cell is an ordinary click
+            QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(cell.x() + 20, cell.center().y()))
+        self.assertEqual(seen, ["000001", "000002"])
+        table.close()
+
+    def test_button_rect_is_the_same_size_in_every_state(self):
+        from PyQt6.QtCore import QRect
+        from ui.delegates import IdentityDelegate, STATUS_BUTTON
+        self.assertEqual(set(STATUS_BUTTON), {"-", "On", "Tg"})
+        for w in (150, 260, 400):
+            r = IdentityDelegate.status_button_rect(QRect(0, 0, w, 28))
+            self.assertEqual((r.width(), r.height()), (IdentityDelegate.STATUS_BTN_W, IdentityDelegate.STATUS_BTN_H))
+            self.assertEqual(r.right(), w - 1 - IdentityDelegate.STATUS_BTN_MARGIN)
+
+
 if __name__ == "__main__":
     unittest.main()

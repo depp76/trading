@@ -323,8 +323,10 @@ class StockTable(QTableWidget):
     add_action_buttons()/setCellWidget(); that's gone (docs/ui.md's own
     issue #7: 900 button widgets for 300 rows, always-visible Delete risking
     misclicks). What replaced it:
-      - status badge: painted inline by IdentityDelegate, toggled via the
-        context menu instead of clicked directly
+      - status button: painted inline by IdentityDelegate at one fixed size
+        (blank / Port / Target); a click on it cycles the status
+        (toggle_requested, user direction 2026-09-29), as does the context
+        menu entry
       - MA chart: double-click or Enter/Return on a row (ma_chart_requested)
       - Delete: context menu, still confirmed by the caller (delete_requested)
       - AI Stock Report: context menu (ai_report_requested, unchanged)
@@ -489,6 +491,45 @@ class StockTable(QTableWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._stretch_columns()
+
+    def _status_button_ticker_at(self, pos):
+        """Ticker whose identity-cell status button is under `pos` (viewport
+        coordinates), else None. x < columnWidth(0) is column 0 whatever the
+        horizontal scroll: the frozen overlay paints column 0 there and is
+        transparent to mouse events, so this is what the user sees clicked."""
+        col_w = self.columnWidth(COL_IDENTITY)
+        if pos.x() >= col_w:
+            return None
+        row = self.rowAt(pos.y())
+        if row < 0:
+            return None
+        cell = QRect(0, self.rowViewportPosition(row), col_w, self.rowHeight(row))
+        if not IdentityDelegate.status_button_rect(cell).contains(pos):
+            return None
+        data = self._row_identity(row)
+        return data["ticker"] if data else None
+
+    def mousePressEvent(self, event):
+        """A left click on a row's status button cycles that row's status
+        (toggle_requested); every other click behaves as before."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            ticker = self._status_button_ticker_at(event.pos())
+            if ticker is not None:
+                self.toggle_requested.emit(ticker)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        """Two quick clicks on the status button advance it twice instead of
+        opening the MA chart (the second press arrives as this event)."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            ticker = self._status_button_ticker_at(event.pos())
+            if ticker is not None:
+                self.toggle_requested.emit(ticker)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
 
     def _row_identity(self, row):
         """The (ticker, status) UserRole payload for a view row, or None.

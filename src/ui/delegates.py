@@ -111,11 +111,15 @@ class CellDelegate(QStyledItemDelegate):
 # ---------------------------------------------------------------------------
 # Trading Universe (ui/widgets.py StockTable)
 # ---------------------------------------------------------------------------
-# docs/ui.md 1.7: one badge/marker vocabulary for the highlight states
-# custom_settings.json stores as "On"/"Tg" (kept as-is; the places that
-# display it -- this badge, the toolbar's blank/Port/Target status filter
-# button and the row context menu -- agree on the Port/Target wording).
-STATUS_BADGE = {
+# docs/ui.md 1.7: one vocabulary for the highlight states custom_settings.json
+# stores as "On"/"Tg" (kept as-is; the places that display it -- this
+# button, the toolbar's blank/Port/Target status filter button and the row
+# context menu -- agree on the Port/Target wording). The "-" (blank) state is
+# drawn too: the per-row status button keeps one fixed size in every state
+# (user direction 2026-09-29) so clicking it cycles - -> On -> Tg without the
+# cell reflowing. (label, text, border, fill); fill None = outline only.
+STATUS_BUTTON = {
+    "-": ("", TEXT_FAINT, LINE, None),
     "On": ("Port", ACCENT_TEXT, ACCENT, ACCENT_BG),
     "Tg": ("Target", "#ffffff", ACCENT, ACCENT),
 }
@@ -124,8 +128,20 @@ STATUS_MARKER = {"On": ACCENT, "Tg": ACCENT}
 
 class IdentityDelegate(CellDelegate):
     """Column 0: status marker + name with the "ticker · market" meta to
-    its right + status badge, replacing the old separate Name/Market/Ticker
-    columns and the per-row Pf button (docs/ui.md 2.2, 1.7)."""
+    its right + a fixed-size status button, replacing the old separate
+    Name/Market/Ticker columns and the per-row Pf button (docs/ui.md 2.2,
+    1.7). The button is painted here and hit-tested by StockTable's mouse
+    handlers through status_button_rect()."""
+
+    STATUS_BTN_W = 56
+    STATUS_BTN_H = 18
+    STATUS_BTN_MARGIN = 6
+
+    @classmethod
+    def status_button_rect(cls, cell: QRect) -> QRect:
+        """Where the status button sits inside an identity cell rect."""
+        return QRect(cell.right() + 1 - cls.STATUS_BTN_W - cls.STATUS_BTN_MARGIN,
+                     cell.y() + (cell.height() - cls.STATUS_BTN_H) // 2, cls.STATUS_BTN_W, cls.STATUS_BTN_H)
 
     def paint(self, painter, option, index):
         painter.save()
@@ -139,19 +155,19 @@ class IdentityDelegate(CellDelegate):
 
         self.draw_marker(painter, rect, rect.x() + 4, STATUS_MARKER.get(status, LINE))
 
-        badge = STATUS_BADGE.get(status)
-        font = self.badge_font(option.font)
-        badge_w = self.badge_width(font, badge[0]) + 6 if badge else 0
-
+        btn_rect = self.status_button_rect(rect)
         text_x = rect.x() + 4 + self.MARKER_W + 8
-        text_w = max(10, rect.width() - (text_x - rect.x()) - badge_w - 6)
+        text_w = max(10, btn_rect.x() - 6 - text_x)
         self.draw_name_and_meta(painter, option, text_x, text_w, name, meta)
 
-        if badge:
-            label, fg, border, bg = badge
-            bw, bh = self.badge_width(font, label), 16
-            self.draw_badge(painter, QRect(rect.right() - bw - 6, rect.y() + (rect.height() - bh) // 2, bw, bh),
-                            label, fg, border, bg, font)
+        label, fg, border, fill = STATUS_BUTTON.get(status, STATUS_BUTTON["-"])
+        painter.setPen(QPen(QColor(border)))
+        painter.setBrush(QColor(fill) if fill else Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(btn_rect, 4, 4)
+        if label:
+            painter.setPen(QColor(fg))
+            painter.setFont(self.badge_font(option.font))
+            painter.drawText(btn_rect, Qt.AlignmentFlag.AlignCenter, label)
         painter.restore()
 
     def sizeHint(self, option, index):

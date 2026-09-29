@@ -266,8 +266,8 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
 
     def toggle_stock(self, ticker):
         """Cycles a ticker's highlight state -/On/Tg (docs/ui.md 1.7: shown
-        as a Port/Target badge in the identity cell now, toggled from the
-        table's context menu instead of a persistent per-row button)."""
+        as the fixed-size blank/Port/Target button in the identity cell,
+        which cycles on click; the table's context menu does the same)."""
         highlights = self.custom_settings.setdefault("highlights", {})
         current = highlights.get(ticker, "-")
 
