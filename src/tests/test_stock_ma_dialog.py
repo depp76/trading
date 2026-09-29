@@ -53,6 +53,17 @@ class TestStockChart(unittest.TestCase):
         d = self.dlg
         self.assertEqual(list(d._panel_axes), ["price", "vol", "div", "rsi"])
         self.assertEqual(d._panel_on, {"vol": True, "div": True, "rsi": False})
+        # Opens in "Close only" (user direction 2026-09-29): no MA line visible.
+        # A fresh dialog, since the shared one is left in whatever view the
+        # other tests chose last.
+        fresh = StockMaDialog("005930", "Samsung", "KOSPI", _df())
+        self.assertEqual(fresh._view, "close")
+        self.assertTrue(fresh._view_buttons["close"].isChecked())
+        self.assertEqual({k: fresh._lines[k].get_visible() for k in MA_RAMP},
+                         {"MA5": False, "MA10": False, "MA20": False, "MA50": False})
+        self.assertTrue(fresh._lines["Close"].get_visible())
+        self.assertEqual(set(fresh._end_labels), {"Close"})
+        d._set_view("short")
         self.assertEqual({k: d._lines[k].get_visible() for k in MA_RAMP},
                          {"MA5": True, "MA10": True, "MA20": True, "MA50": False})
         self.assertIsNone(d._panel_axes["price"].get_legend())      # issue #3: no legend

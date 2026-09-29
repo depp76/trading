@@ -74,6 +74,9 @@ _SEG_H = 26
 
 _PERIODS = [("1M", 1), ("3M", 3), ("6M", 6), ("1Y", 12), ("3Y", 36), ("All", None)]
 _DEFAULT_PERIOD = "1Y"
+# The view the dialog opens in: close price only, no moving averages
+# (user direction 2026-09-29; it was "short" before).
+_DEFAULT_VIEW = "close"
 
 # view key -> (label, MA windows shown, note)
 _VIEWS = {
@@ -157,7 +160,7 @@ class StockMaDialog(QDialog):
         self._crosshairs = []     # one axvline per panel
         self._panel_axes = {}     # "price" | "vol" | "div" | "rsi" -> Axes
         self._panel_on = {"vol": False, "div": False, "rsi": False}
-        self._view = "short"
+        self._view = _DEFAULT_VIEW
         self._x = None
         self._pan_start = None
         self._cursor_idx = None
@@ -267,12 +270,12 @@ class StockMaDialog(QDialog):
         if self._has_data and "EqualWeight" in self._df.columns and not self._is_simple_chart:
             keys.append("ew")
         for key in keys:
-            btn = _segment_button(_VIEWS[key][0], self._view_group, checked=(key == "short"))
+            btn = _segment_button(_VIEWS[key][0], self._view_group, checked=(key == _DEFAULT_VIEW))
             btn.clicked.connect(lambda _c, k=key: self._set_view(k))
             row.addWidget(btn)
             self._view_buttons[key] = btn
 
-        self._view_note = QLabel(_VIEWS["short"][2] if keys else "")
+        self._view_note = QLabel(_VIEWS[_DEFAULT_VIEW][2] if keys else "")
         self._view_note.setFont(create_font(FONT_SMALL, style_name="Semilight"))
         self._view_note.setStyleSheet(f"color:{TEXT_MUTED};")
         row.addSpacing(4)
@@ -543,7 +546,7 @@ class StockMaDialog(QDialog):
 
         self._install_pan_zoom()
         self._install_crosshair()
-        self._set_view("short" if not self._is_simple_chart else "close", initial=True)
+        self._set_view(_DEFAULT_VIEW if not self._is_simple_chart else "close", initial=True)
         self._apply_period(_DEFAULT_PERIOD)
         self._update_readout(None)
 

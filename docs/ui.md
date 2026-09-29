@@ -399,6 +399,7 @@ MA Cross는 **비활성 탭 + `준비중` 배지**로 명시한다. 회색 안�
 - **twin axis 제거**: RSI는 독립 패널, ax1의 Div twin 삭제(이격도 패널이 유일한 자리), EqualWeight는 종가 첫 값 기준으로 리베이스해 가격 축에.
 - **이격도 밴드 3겹**: `100±MA_DIV_NEUTRAL_PCT`(`ui/colors.py`, 표와 공유) 위 과열(PROFIT 틴트)/중립/아래 침체(LOSS 틴트), 기준선 100이 패널 중앙에 오도록 y 범위 대칭.
 - **뷰 세그먼트(배타, `QButtonGroup`)**: Short(MA5·10·20) / Long(MA20·50) / Close only / Divergence(이격도 패널 확대) / Equal Weight(열이 있을 때). 항상 하나가 선택됨.
+  **열 때의 기본은 Close only**(2026-09-29 사용자 지시, `stock_ma._DEFAULT_VIEW`; 그 전에는 Short). 이동평균은 세그먼트를 눌러야 나타난다.
 - **기간 버튼**: 1M / 3M / 6M / 1Y / 3Y / All. 휠 줌·드래그 팬·스크롤바는 미세 조정용으로 유지. 보이는 구간에 맞춰 각 패널 Y 자동 맞춤.
 - **패널 토글(독립)**: Volume / Divergence / RSI. 표시 패널만 다시 그리드(`_apply_layout`).
 - **십자선 + 고정 리드아웃**: 모든 패널을 관통하는 수직선, 헤더 아래 고정 행에 날짜·종가·표시 중인 MA·거래량·Div·RSI를 동시에 표시. 커서가 밖이면 최신 봉.
