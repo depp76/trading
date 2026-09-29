@@ -313,3 +313,38 @@ class TestSignalSlotArity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _Cancellable(_Worker):
+    cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class TestCooperativeCancel(unittest.TestCase):
+    """review_agy.md 2.3: retiring a running worker cancels its work too."""
+
+    def test_retiring_a_running_cancellable_thread_cancels_it(self):
+        o = _Owner()
+        with patch.object(_Cancellable, "isRunning", return_value=True):
+            first = o._track_thread(_Cancellable(), "_t")
+            o._track_thread(_Cancellable(), "_t")
+        self.assertTrue(first.cancelled)
+        self.assertTrue(first.signalsBlocked())
+
+    def test_a_thread_without_cancel_or_not_running_is_left_alone(self):
+        o = _Owner()
+        idle = o._track_thread(_Cancellable(), "_t")
+        o._track_thread(_Worker(), "_t")             # idle: not running, so not cancelled
+        self.assertFalse(idle.cancelled)
+        with patch.object(_Worker, "isRunning", return_value=True):
+            o._track_thread(_Worker(), "_u")
+            o._track_thread(_Worker(), "_u")         # no cancel(): must not raise
+
+    def test_cancel_thread_swallows_errors(self):
+        from ui.common import cancel_thread
+        bad = MagicMock()
+        bad.cancel.side_effect = RuntimeError("deleted")
+        cancel_thread(bad)
+        cancel_thread(object())

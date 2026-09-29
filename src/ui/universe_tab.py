@@ -189,6 +189,7 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         self.table.ai_report_requested.connect(self._on_ai_report_requested)
         self.table.ma_chart_requested.connect(self._on_ma_chart_requested)
         self.table.delete_requested.connect(self.delete_stock)
+        self.table.user_sorted.connect(self._on_user_sorted)
         self.table.toggle_requested.connect(self.toggle_stock)
 
         universe_layout.addWidget(self.table)
@@ -516,6 +517,20 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
             f"Trend Score as of {rec.as_of:%Y-%m-%d} ({len(rec.week_dates)} sessions): {len(rec.top)} top / "
             f"{len(rec.bottom)} bottom pinned (universe {rec.n_universe}, liquid {rec.n_liquid}, "
             f"gate {rec.n_gated}, KOSPI L1 {regime}). Click Trend Score again to restore the order.")
+
+    def _on_user_sorted(self):
+        """A header click re-sorts the whole table, which would scatter the
+        pinned rows; treat it as leaving the Trend Score order (button
+        unchecked, tags removed) instead of showing a stale pin. The user's
+        sort stays (review_agy.md 2.2, 2026-09-29)."""
+        if not self._trend_score_order:
+            return
+        self._trend_score_order = {}
+        self.trend_score_btn.setChecked(False)
+        self._sort_all_data()      # strips the trend_rank tags, default data order
+        self._reload_table()       # re-applies the user's sort
+        self.filter_table()
+        self.status_text_changed.emit("Trend Score order cleared (column sort).")
 
     def _clear_trend_score(self):
         self._trend_score_order = {}

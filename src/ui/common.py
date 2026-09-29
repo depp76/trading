@@ -182,6 +182,17 @@ def _mk_field_validator(edit: QLineEdit, check_fn: Callable[[str], bool], error_
 # ---------------------------------------------------------------------------
 # QThread lifecycle helper
 # ---------------------------------------------------------------------------
+def cancel_thread(thread) -> None:
+    """Ask a worker that supports it (TrendFollowingResearchThread,
+    TrendScoreThread) to stop at its next check; a no-op for the rest."""
+    cancel = getattr(thread, "cancel", None)
+    if callable(cancel):
+        try:
+            cancel()
+        except Exception:
+            logger.debug("thread cancel() failed", exc_info=True)
+
+
 def retire_thread(owner, attr_name: str) -> None:
     """Abandon the QThread stored at ``owner.<attr_name>`` so a replacement can
     be started, without letting a still-running one be garbage-collected.
@@ -205,6 +216,7 @@ def retire_thread(owner, attr_name: str) -> None:
     try:
         if thread.isRunning():
             thread.blockSignals(True)
+            cancel_thread(thread)   # cooperative: stop the work, not just its signals
             zombies = [t for t in getattr(owner, "_zombie_threads", []) if t.isRunning()]
             zombies.append(thread)
             owner._zombie_threads = zombies

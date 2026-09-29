@@ -16,6 +16,7 @@ from ui.common import (
     apply_matplotlib_font,
     FONT_FAMILY_CSS,
     FONT_TITLE,
+    cancel_thread,
 )
 from ui.theme import app_qss, ACCENT_TEXT
 
@@ -227,6 +228,7 @@ class MainWindow(QMainWindow):
         for t in threads_to_stop:
             try:
                 if t.isRunning():
+                    cancel_thread(t)   # cancellable workers exit at their next check
                     t.quit()
                     if not t.wait(2000):   # wait up to 2 s
                         t.terminate()     # force-kill if still alive

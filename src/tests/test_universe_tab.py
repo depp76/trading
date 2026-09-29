@@ -328,3 +328,23 @@ class TestTrendScoreButton(unittest.TestCase):
         self.assertEqual(tab.table._sort_col, -1)
         rows = [tab.table.item(r, 0).data(0x0100)["ticker"] for r in range(tab.table.rowCount())]
         self.assertEqual(rows, [d["ticker"] for d in tab.all_data])
+
+    def test_user_column_sort_unpins_and_a_refresh_does_not_bring_it_back(self):
+        from PyQt6.QtCore import Qt
+        tab = self._score_tab()
+        tab._on_trend_score_finished(self._rec(), "")
+        self.assertTrue(tab.trend_score_btn.isChecked())
+        # load_data's own indicator re-apply must not count as a user sort.
+        self.assertTrue(tab._trend_score_order)
+        tab.table.sortItems(1, Qt.SortOrder.DescendingOrder)     # header click on Price
+        tab.table._filter_header.sortIndicatorChanged.emit(1, Qt.SortOrder.DescendingOrder)
+        self.assertFalse(tab.trend_score_btn.isChecked())
+        self.assertEqual(tab._trend_score_order, {})
+        self.assertFalse(any("trend_rank" in d for d in tab.all_data))
+        self.assertNotIn("Top", tab.table.item(0, 0).data(0x0100)["meta"])
+        self.assertEqual(tab.table._sort_col, 1)                 # the user's sort stays
+        with patch.object(tab, "load_custom_settings"):
+            tab.custom_settings = {"added": [], "deleted": [], "highlights": {}}
+            tab.on_finished_all([_stock("UP", 800), _stock("PULL", 400)])
+        self.assertFalse(tab.trend_score_btn.isChecked())
+        self.assertFalse(any("trend_rank" in d for d in tab.all_data))

@@ -333,6 +333,7 @@ class StockTable(QTableWidget):
       - Ctrl+C: copies the selected rows as TSV
     """
     col_filter_changed = pyqtSignal()  # emitted when any column filter changes
+    user_sorted = pyqtSignal()         # a header click chose a sort column (not load_data's own re-apply)
     ai_report_requested = pyqtSignal(str)  # emitted with the row's ticker (roadmap 2-1)
     ma_chart_requested = pyqtSignal(str)   # emitted with the row's ticker
     delete_requested = pyqtSignal(str)     # emitted with the row's ticker
@@ -372,6 +373,7 @@ class StockTable(QTableWidget):
         # (docs/ui.md 1.8/1.9). -1 means "no sort / insertion order".
         self._sort_col = -1
         self._sort_order = Qt.SortOrder.AscendingOrder
+        self._loading = False    # True inside load_data, whose indicator re-apply is not a user sort
         self._filter_header.sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         self._col_filters = {}  # col_index -> frozenset | None
         self.verticalHeader().setVisible(False)
@@ -676,6 +678,8 @@ class StockTable(QTableWidget):
     def _on_sort_indicator_changed(self, col, order):
         self._sort_col = col
         self._sort_order = order
+        if col >= 0 and not self._loading:
+            self.user_sorted.emit()
         # A live header click reaches here through Qt's own internal
         # sortIndicatorChanged handling, not through load_data()/
         # apply_col_filters(), so the frozen overlay needs its own resync
@@ -699,6 +703,7 @@ class StockTable(QTableWidget):
             highlights = {}
 
         self.setUpdatesEnabled(False)  # UI Batch Repaint Optimization
+        self._loading = True
         try:
             self.setSortingEnabled(False)
             self.clearContents()
@@ -722,6 +727,7 @@ class StockTable(QTableWidget):
             self._stretch_columns()
             self._sync_frozen_column()
         finally:
+            self._loading = False
             self.setUpdatesEnabled(True)
 
     def _ticker_to_row(self) -> dict:
