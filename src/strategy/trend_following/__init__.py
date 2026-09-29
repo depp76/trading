@@ -1,8 +1,9 @@
 """strategy.trend_following — Trend Following strategy (spec: trend_following.md
-in this folder, currently v03).
+in this folder, currently v04).
 
 Facade: UI and thread code import from here; the modules underneath are
   config      parameters, the 6-2 variant matrix, cost scenarios
+  scoring     2-5 "trend + pullback" indicators, gate, scores and the weekly Top/Bottom list
   costs       4-1 cost model (tax table, tick sizes, commission, slippage)
   signals     layer signals L1..L4 and the exit conditions as date x ticker arrays
   dataset     aligned price / flow / rate arrays (build_dataset is pure, load_dataset fetches)
@@ -28,6 +29,10 @@ from strategy.trend_following.event_study import run_event_study
 from strategy.trend_following.research import (
     ResearchRequest, ResearchResult, RunSummary, run_research, render_markdown,
 )
+from strategy.trend_following.scoring import (
+    ScoreBook, ScoredName, Recommendation, compute_scores, weekly_recommendation, load_score_inputs,
+    run_universe_scoring,
+)
 
 __all__ = [
     "SPEC_VERSION", "SPEC_FILE", "StrategyParams", "Variant", "VARIANTS", "COST_MULTIPLIERS", "PERIODS",
@@ -39,4 +44,6 @@ __all__ = [
     "run_benchmarks", "run_bm1", "run_bm2", "run_bm3", "run_bm4",
     "summarize_run", "run_event_study",
     "ResearchRequest", "ResearchResult", "RunSummary", "run_research", "render_markdown",
+    "ScoreBook", "ScoredName", "Recommendation", "compute_scores", "weekly_recommendation", "load_score_inputs",
+    "run_universe_scoring",
 ]

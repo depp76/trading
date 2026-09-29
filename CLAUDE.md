@@ -22,7 +22,11 @@ its section 9 lists the module <-> spec mapping and every implementation decisio
 deviates from the text (current-constituent universe, year-end trim at the close, no weekly
 re-weighting, no sector cap, KODEX 200TR as BM1 data, CD91 from ECOS/CSV/constant). Real-data
 results have not been recorded in the spec yet: run the tab, save the report, then paste the
-table under section 9 with the version number.
+table under section 9 with the version number. Spec v04 (2026-09-29) added the 2-5 "trend +
+pullback" scoring mode: `scoring.py` implements its indicators, gate and percentile scores and
+the weekly Top 10 / Bottom 10 list that the Trading Universe tab's "Trend Score" button shows
+(`TrendScoreThread` -> `ui/dialogs/trend_score.py`; decisions in spec section 9-4). The C1-C3
+backtest policies and the 6-1-2 IC analysis are still unimplemented.
 
 The repo is a git repository (branch `master`). Commit or branch as usual; the old
 `archive/backup_<timestamp>/` copy-before-editing convention is no longer needed.
@@ -74,7 +78,10 @@ Dev tooling is in `requirements-dev.txt`
   with sells first, cash interest, annual reset at the year's last close, per-year cost
   ledger; `TrendFollowingPolicy`), `benchmarks.py` (BM1-BM4 as policies on the same engine),
   `metrics.py` (6-4 scorecard incl. the BM1/BM3-relative block), `event_study.py` (6-1),
-  `research.py` (`ResearchRequest` -> `run_research` -> `ResearchResult.to_markdown()`).
+  `research.py` (`ResearchRequest` -> `run_research` -> `ResearchResult.to_markdown()`),
+  `scoring.py` (2-5: `compute_scores` -> `ScoreBook`, `weekly_recommendation` ->
+  `Recommendation`, `load_score_inputs` / `run_universe_scoring` for the Universe button; the
+  loader uses `data.cache.start_date()` so a fresh Universe refresh means no network calls).
   Strategy code imports `data.*` directly (never `data_fetcher`); `data/` never imports it.
   Tests live in `src/tests/strategy/trend_following/` on synthetic price paths
   (`helpers.synthetic_dataset`).
@@ -97,7 +104,8 @@ Dev tooling is in `requirements-dev.txt`
   `QCalendarWidget` rules have no current caller and are kept for the next `QDateEdit`),
   `dialogs/` (one module per
   dialog group: `index_ma`, `stock_ma`, `trade_edit`, `trade_history`, `assets_graph`,
-  `holdings_summary`, `stock_report`; import from `ui.dialogs`),
+  `holdings_summary`, `stock_report`, `trend_score` (the Universe's weekly Top/Bottom
+  recommendation, non-modal, double-click -> MA chart); import from `ui.dialogs`),
   `history_table.py` (cell factories, `fill_table_rows`, `SectionTable` + the column
   `SECTIONS` for the history grid), `history_calc.py` (pure P/L maths, no Qt:
   `compute_pl_fields`, `build_monthly_rows`, `summarize_positions`), `common.py`
@@ -113,7 +121,8 @@ Dev tooling is in `requirements-dev.txt`
   `RealtimePriceThread`, `StockMaThread`, `IndexMaThread`, `SingleStockFetchThread`,
   `TickerValidateThread`, `AssetMetricsPreloadThread`, `AccountDepositThread`,
   `GeminiStockReportThread`, `AutoBackupThread`; `strategy_threads.py` holds
-  `TrendFollowingResearchThread`, which loads the dataset and runs the research matrix).
+  `TrendFollowingResearchThread`, which loads the dataset and runs the research matrix, and
+  `TrendScoreThread`, the Universe tab's 2-5 scoring run).
   Never call `data_fetcher` functions from a
   slot on the UI thread; add a thread class instead. Connect `finished` signals to bound
   methods, not closures, so Qt queues them onto the UI thread; when a slot needs per-request

@@ -40,8 +40,10 @@ from threads.fetch_threads import (
     UniverseLightweightFetchThread,
     GeminiStockReportThread,
 )
+from threads.strategy_threads import TrendScoreThread, CANCELLED_MESSAGE
 from ui.widgets import StockTable
 from ui.dialogs.stock_report import show_stock_report_result
+from ui.dialogs.trend_score import show_trend_score
 from ui.ma_chart import StockMaLauncherMixin
 
 logger = logging.getLogger(__name__)
@@ -157,6 +159,16 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
         add_layout.addWidget(self.tg_filter_btn)
 
         add_layout.addStretch()
+
+        # Weekly "trend + pullback" Top/Bottom recommendation
+        # (trend_following.md 2-5; scoring.py via TrendScoreThread).
+        self.trend_score_btn = QPushButton("Trend Score")
+        self.trend_score_btn.setFont(create_font(10, style_name="Semilight"))
+        self.trend_score_btn.setFixedWidth(100)
+        self.trend_score_btn.setToolTip("Score the KOSPI/KOSDAQ rows with trend_following.md 2-5 and list the "
+                                        "weekly Top 10 / Bottom 10")
+        self.trend_score_btn.clicked.connect(self._on_trend_score_clicked)
+        add_layout.addWidget(self.trend_score_btn)
 
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setFont(create_font(10, style_name="Semilight"))
@@ -427,6 +439,48 @@ class UniverseTab(StockMaLauncherMixin, ThreadOwnerMixin, QWidget):
             return
         self.status_text_changed.emit(f"AI report ready for {name} ({ticker}).")
         show_stock_report_result(self, ticker, name, result_text)
+
+    # ---Trend + pullback score (trend_following.md 2-5) ---
+    TREND_SCORE_MARKETS = ("KOSPI", "KOSDAQ")
+    TREND_SCORE_TOP_N = 10
+
+    def _trend_score_items(self) -> list:
+        """The rows the scoring runs on: KR equities (index/yield/commodity
+        rows and US names are skipped; the spec's universe is KR stocks)."""
+        return [d for d in self.all_data
+                if d.get("market") in self.TREND_SCORE_MARKETS and not d.get("is_index")]
+
+    def _on_trend_score_clicked(self):
+        items = self._trend_score_items()
+        if not items:
+            QMessageBox.information(self, "Trend Score", "No KOSPI/KOSDAQ rows to score. Refresh the universe first.")
+            return
+        self.trend_score_btn.setEnabled(False)
+        self.status_text_changed.emit(f"Scoring {len(items)} names (trend + pullback)...")
+        thread = self._track_thread(TrendScoreThread(items, n_top=self.TREND_SCORE_TOP_N), "_trend_score_thread")
+        thread.progress.connect(self._on_trend_score_progress)
+        thread.finished.connect(self._on_trend_score_finished)
+        thread.start()
+
+    def _on_trend_score_progress(self, text: str):
+        self.status_text_changed.emit(f"Trend Score: {text}")
+
+    def _on_trend_score_finished(self, rec, error: str):
+        self.trend_score_btn.setEnabled(True)
+        if rec is None:
+            if error != CANCELLED_MESSAGE:
+                QMessageBox.warning(self, "Trend Score", f"Scoring failed:\n{error}")
+            self.status_text_changed.emit(f"Trend Score: {error}")
+            return
+        old = getattr(self, "_trend_score_dialog", None)
+        if old is not None:
+            old.close()
+        dlg = show_trend_score(self, rec)
+        dlg.ticker_activated.connect(self._on_ma_chart_requested)
+        self._trend_score_dialog = dlg
+        self.status_text_changed.emit(
+            f"Trend Score as of {rec.as_of:%Y-%m-%d}: {len(rec.top)} top / {len(rec.bottom)} bottom "
+            f"(universe {rec.n_universe}, liquid {rec.n_liquid}, gate {rec.n_gated}).")
 
     def refresh_data(self):
         self.refresh_btn.setEnabled(False)

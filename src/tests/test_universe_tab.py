@@ -156,3 +156,119 @@ class TestRowStatusButton(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _FakeScoreThread:
+    instances = []
+
+    def __init__(self, items, params=None, n_top=10):
+        self.items = list(items)
+        self.n_top = n_top
+        self.started = False
+        self.progress = _FakeSignal()
+        self.finished = _FakeSignal()
+        _FakeScoreThread.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def isRunning(self):
+        return False
+
+    def isFinished(self):
+        return not self.started
+
+    def blockSignals(self, _b):
+        pass
+
+
+class _FakeSignal:
+    def __init__(self):
+        self.slots = []
+
+    def connect(self, fn):
+        self.slots.append(fn)
+
+    def emit(self, *a):
+        for s in self.slots:
+            s(*a)
+
+
+class TestTrendScoreButton(unittest.TestCase):
+    """The Trend Score button scores the KR rows on a tracked worker and
+    opens the recommendation dialog when the worker finishes."""
+
+    def setUp(self):
+        p = patch("ui.universe_tab.atomic_save_json")
+        p.start()
+        self.addCleanup(p.stop)
+        _FakeScoreThread.instances.clear()
+
+    def _tab(self):
+        from ui.universe_tab import UniverseTab
+        with patch("ui.universe_tab.safe_load_json", side_effect=_no_disk):
+            tab = UniverseTab()
+        tab.all_data = [
+            _stock("005930", 500), {**_stock("035720", 50), "market": "KOSDAQ"},
+            {**_stock("AAPL", 900), "market": "NASDAQ 100"},
+            {**_stock("KS11", 0), "market": "Index", "is_index": True},
+        ]
+        return tab
+
+    def test_scores_only_kr_equities_on_a_tracked_thread(self):
+        tab = self._tab()
+        with patch("ui.universe_tab.TrendScoreThread", _FakeScoreThread):
+            tab._on_trend_score_clicked()
+        self.assertEqual(len(_FakeScoreThread.instances), 1)
+        worker = _FakeScoreThread.instances[0]
+        self.assertTrue(worker.started)
+        self.assertEqual([d["ticker"] for d in worker.items], ["005930", "035720"])
+        self.assertEqual(worker.n_top, 10)
+        self.assertFalse(tab.trend_score_btn.isEnabled())
+        self.assertIn(worker, tab.collect_threads_to_stop())
+        self.assertIs(tab._trend_score_thread, worker)
+
+    def test_empty_universe_warns_instead_of_starting(self):
+        tab = self._tab()
+        tab.all_data = [{**_stock("AAPL", 900), "market": "NASDAQ 100"}]
+        with patch("ui.universe_tab.TrendScoreThread", _FakeScoreThread), \
+             patch("ui.universe_tab.QMessageBox.information") as info:
+            tab._on_trend_score_clicked()
+        info.assert_called_once()
+        self.assertEqual(_FakeScoreThread.instances, [])
+        self.assertTrue(tab.trend_score_btn.isEnabled())
+
+    def test_finished_opens_the_dialog_or_reports_the_error(self):
+        from strategy.trend_following.config import StrategyParams
+        from strategy.trend_following.scoring import compute_scores, weekly_recommendation
+        from tests.strategy.trend_following.test_scoring import score_book
+        tab = self._tab()
+        statuses = []
+        tab.status_text_changed.connect(statuses.append)
+        with patch("ui.universe_tab.TrendScoreThread", _FakeScoreThread):
+            tab._on_trend_score_clicked()
+        worker = _FakeScoreThread.instances[0]
+        worker.progress.emit("Daily history 25/40")
+        self.assertIn("Trend Score: Daily history 25/40", statuses[-1])
+
+        with patch("ui.universe_tab.QMessageBox.warning") as warn:
+            worker.finished.emit(None, "boom")
+        warn.assert_called_once()
+        self.assertTrue(tab.trend_score_btn.isEnabled())
+        self.assertIsNone(getattr(tab, "_trend_score_dialog", None))
+
+        book, _ = score_book()
+        p = StrategyParams()
+        rec = weekly_recommendation(compute_scores(book, p), book, p)
+        with patch("ui.universe_tab.QMessageBox.warning") as warn:
+            tab._on_trend_score_finished(rec, "")
+        warn.assert_not_called()
+        dlg = tab._trend_score_dialog
+        self.assertEqual(dlg.top_table.rowCount(), len(rec.top))
+        self.assertIn("2 top / 3 bottom", statuses[-1])
+        # Double-clicking a row routes to the tab's MA-chart launcher.
+        with patch.object(tab, "_show_stock_ma") as show:
+            dlg.ticker_activated.emit("005930")
+        show.assert_called_once()
+        self.assertEqual(show.call_args[0][0], "005930")
+        dlg.close()

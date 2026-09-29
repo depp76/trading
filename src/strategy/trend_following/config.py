@@ -1,5 +1,5 @@
 """strategy/trend_following/config.py — Parameters of the Trend Following
-strategy (trend_following.md v03, sections 2-4 and 6-2).
+strategy (trend_following.md v04, sections 2-4, 2-5 and 6-2).
 
 Everything a backtest can vary lives here as a frozen dataclass so a run can
 be reproduced from its parameter snapshot. Defaults are the spec's proposed
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 
-SPEC_VERSION = "v03"
+SPEC_VERSION = "v04"
 SPEC_FILE = "trend_following.md"
 
 
@@ -53,6 +53,21 @@ class StrategyParams:
     # 6-3 benchmarks
     bm_ma: int = 200                         # BM3: hold the KOSPI 200 ETF when close > MA200
     risk_free_fallback: float = 0.03         # annual CD91 stand-in when no rate series is available
+    # 2-5 scoring mode "trend + pullback" (C-series, v04; scoring.py)
+    score_ma_long: int = 50                  # MA50Div = close / MA50 - 1 (trend direction, +)
+    score_ma_short: int = 20                 # MA20Div = close / MA20 - 1 (overheat gate)
+    score_r_short: int = 3                   # R3 = close / close[t-3] - 1 (entry timing, -)
+    score_r_mid: int = 10                    # R10 = close / close[t-10] - 1 (short-term reversal, -)
+    score_r_mid_weight: float = 0.5          # weight of pct(R10) in the timing score
+    score_range_window: int = 252            # Range52 = (close - low252) / (high252 - low252)
+    gate_range_min: float = 0.70             # gate: Range52 >= 0.70 (top 30% of the 52-week range)
+    gate_overheat_pct: float = 0.95          # gate: MA20Div percentile above this -> no new entry
+    score_buy_pct: float = 0.80              # buy: total-score percentile (within gated names) >= 0.80
+    score_sell_pct: float = 0.50             # weekly relative sell: percentile < 0.50 (hysteresis)
+    score_vol_normalize: bool = True         # divide R3, R10, MA20Div by ATR20 / close
+    score_range_mode: str = "range"          # "range" (Range52) | "high52_prox" (close / high252, C3)
+    score_week_sessions: int = 5             # Universe recommendation: sessions averaged ("last week")
+    score_week_min_sessions: int = 3         # ... and how many of them a name must be scored on
 
     def as_dict(self) -> dict:
         return asdict(self)

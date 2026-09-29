@@ -136,11 +136,16 @@ def update_changed_rows(self, data, changed_rows, highlights=None):
 
 ```
 헤더:   앱명 · 탭 · [Auto update 상태] · [+ Ticker]
-툴바:   [검색] [ALL|KOSPI|KOSDAQ] [ |Port|Target 순환] [저장된 뷰…] ····· [컬럼 그룹] [밀도]
+툴바:   [검색] [ALL|KOSPI|KOSDAQ] [ |Port|Target 순환] [저장된 뷰…] ····· [Trend Score] [Refresh]
 Market rail:  지수·금리·원자재 카드 (표에서 분리)
 표:     13열, 유동 폭, 가로 스크롤 없음
 푸터:   건수 · 정렬 상태 · 모멘텀 공통 스케일 범례
 ```
+
+- (2026-09-29) **Trend Score** 버튼: 표의 KOSPI/KOSDAQ 행을 `trend_following.md` 2-5(추세 + 눌림 점수)로 채점해
+  지난 1주일 평균 총점 기준 상위 10·하위 10을 비모달 다이얼로그(`ui/dialogs/trend_score.py`)로 보여준다. 표 두 개(Top/Bottom),
+  숫자 열은 `NumericItem` 정렬, 수익률·이격도 열은 PROFIT/LOSS 글자색, 결측은 `-`, 행 더블클릭 → MA 차트. 계산은
+  `TrendScoreThread`에서, 진행 상황은 하단 상태 라벨에. 스펙 9-4에 결정 사항.
 
 ### 2.2 표 컬럼
 
