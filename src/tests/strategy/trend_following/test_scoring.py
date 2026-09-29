@@ -172,6 +172,9 @@ class TestWeeklyRecommendation(unittest.TestCase):
             self.assertEqual(s.sessions, p.score_week_sessions)
             self.assertEqual(s.name, s.ticker.title())
             self.assertEqual(s.market, "KOSPI")
+            j = sb.tickers.index(s.ticker)
+            self.assertAlmostEqual(s.r20, self.book.close[t, j] / self.book.close[t - 20, j] - 1.0)
+            self.assertAlmostEqual(s.r3, sb.r3[t, j])
         self.assertEqual(rec.top[0].reasons, ())
         self.assertTrue(all(s.gate for s in rec.top))
         reasons = {s.ticker: s.reasons for s in rec.bottom}

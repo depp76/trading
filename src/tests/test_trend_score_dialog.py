@@ -44,7 +44,7 @@ class TestTrendScoreDialog(unittest.TestCase):
     def test_missing_values_render_as_dash_and_sort_last(self):
         s = ScoredName(ticker="X", name="X", market="KOSDAQ", close=1234.0, week_avg=float("nan"),
                        latest_total=0.5, latest_rank=float("nan"), sessions=3, liquid=True, gate=False,
-                       overheated=False, ma50_div=0.1, range52=float("nan"), ma20_div=-0.02, r10=0.0, r3=0.01,
+                       overheated=False, ma50_div=0.1, range52=float("nan"), ma20_div=-0.02, r10=0.0, r3=0.01, r20=-0.05,
                        reasons=("No 52w range",))
         rec = Recommendation(as_of=date(2026, 9, 25), week_dates=[date(2026, 9, 25)], top=[], bottom=[s],
                              n_universe=1, n_liquid=1, n_gated=0, regime_on=True, params=StrategyParams())
@@ -55,6 +55,9 @@ class TestTrendScoreDialog(unittest.TestCase):
         self.assertEqual(dlg.bottom_table.item(0, 3).text(), "1,234")
         self.assertEqual(dlg.bottom_table.item(0, 8).text(), "+10.0")
         self.assertEqual(dlg.bottom_table.item(0, 7).text(), "No 52w range")
+        self.assertEqual(dlg.bottom_table.item(0, 11).text(), "+1.0")   # 3D = R3
+        self.assertEqual(dlg.bottom_table.item(0, 12).text(), "+0.0")   # 10D = R10
+        self.assertEqual(dlg.bottom_table.item(0, 13).text(), "-5.0")   # 20D
         self.assertIn("Risk-on", dlg.summary_lbl.text())
         self.assertEqual(len(row_values(1, s)), len(COLUMNS))
 

@@ -37,8 +37,9 @@ COLUMNS = [
     ("MA50Div %", 72, "pct"),
     ("Range52", 62, "ratio"),
     ("MA20Div %", 72, "pct"),
-    ("R10 %", 58, "pct"),
-    ("R3 %", 58, "pct"),
+    ("3D (R3) %", 68, "pct"),
+    ("10D (R10) %", 74, "pct"),
+    ("20D %", 58, "pct"),
     ("Days", 44, "num"),
 ]
 COL_NAME, COL_WEEK_AVG, COL_GATE = 1, 4, 7
@@ -86,7 +87,7 @@ def row_values(rank: int, s: ScoredName) -> list:
     gate = "Pass" if s.gate else ", ".join(s.reasons) or "Fail"
     return [
         str(rank), f"{s.name}  {s.ticker}", s.market, s.close, s.week_avg, s.latest_total, s.latest_rank,
-        gate, s.ma50_div, s.range52, s.ma20_div, s.r10, s.r3, s.sessions,
+        gate, s.ma50_div, s.range52, s.ma20_div, s.r3, s.r10, s.r20, s.sessions,
     ]
 
 
@@ -190,8 +191,8 @@ class TrendScoreDialog(QDialog):
             "liquid names (20-day average value ≥ floor), R3 / R10 / MA20Div are divided by ATR20 / close. Gate = "
             "MA50Div > 0, Range52 ≥ 0.70, not in the top 5% of MA20Div. \"Week avg\" is the mean of the daily total "
             "over the listed sessions; \"Rank\" is the latest total's percentile within the gated names. Top: gate "
-            "passed, highest week average. Bottom: liquid names with the lowest week average. Double-click a row "
-            "for its MA chart. Research signal only, not investment advice."
+            "passed, highest week average. Bottom: liquid names with the lowest week average. 3D / 10D are the score's R3 / R10 "
+            "(close-to-close), 20D is shown for context only. Double-click a row for its MA chart. Research signal only, not investment advice."
         )
         note.setObjectName("muted")
         note.setFont(create_font(FONT_SMALL))

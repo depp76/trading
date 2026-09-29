@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 INDEX_TICKER = "KS11"          # KOSPI: the trading calendar and the L1 regime input
 INDICATORS = ("ma50_div", "range52", "ma20_div", "r10", "r3")
+DISPLAY_RETURN_WINDOW = 20     # the 20D change shown next to R3 / R10 (display only, not scored)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +171,7 @@ class ScoredName:
     ma20_div: float
     r10: float
     r3: float
+    r20: float                 # 20-session close-to-close return (display only, spec has no R20)
     reasons: tuple[str, ...] = ()   # why the gate failed on the latest session ("" when it passed)
 
 
@@ -225,6 +227,12 @@ def weekly_recommendation(sb: ScoreBook, book: PriceBook, params: StrategyParams
     week_avg = np.where(sessions > 0, sums / np.maximum(sessions, 1), np.nan)
     eligible = np.isfinite(sb.total[t_last]) & (sessions >= min_sessions)
 
+    def _ret(j: int, n: int) -> float:
+        if t_last - n < 0:
+            return float("nan")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return float(book.close[t_last, j] / book.close[t_last - n, j] - 1.0)
+
     def _scored(j: int) -> ScoredName:
         return ScoredName(
             ticker=sb.tickers[j], name=book.names.get(sb.tickers[j], sb.tickers[j]),
@@ -235,6 +243,7 @@ def weekly_recommendation(sb: ScoreBook, book: PriceBook, params: StrategyParams
             overheated=bool(sb.overheated[t_last, j]),
             ma50_div=float(sb.ma50_div[t_last, j]), range52=float(sb.range52[t_last, j]),
             ma20_div=float(sb.ma20_div[t_last, j]), r10=float(sb.r10[t_last, j]), r3=float(sb.r3[t_last, j]),
+            r20=_ret(j, DISPLAY_RETURN_WINDOW),
             reasons=_gate_reasons(sb, t_last, j, p),
         )
 
