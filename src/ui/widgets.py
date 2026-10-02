@@ -19,7 +19,7 @@ from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygon, QKeySequence
 from ui.common import create_font, FONT_FAMILY_CSS, FONT_SMALL
 from ui.delegates import IdentityDelegate, RangeBarDelegate, TrendDelegate
 from ui.colors import fg_for, heatmap_bg, PROFIT, LOSS, FLAT
-from ui.theme import ACCENT, TEXT, TEXT_FAINT, TEXT_EMPTY, TEXT_SUB
+from ui.theme import ACCENT, TEXT, TEXT_FAINT, TEXT_EMPTY, TEXT_SUB, LINE_GROUP
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +91,15 @@ assert [c.key for c in COLUMNS] == [
     "identity", "cap", "tper", "fper", "range52w", "ma20div", "ma50div",
     "price", "chg", "d3", "d10", "d20", "d60", "d120", "trend",
 ]
+
+# Column groups (user direction 2026-10-02): [Cap, tPER, fPER], [52W Range,
+# MA20 Div, MA50 Div], [Price, Chg], [3D..120D], [Trend]. A thin gray
+# (GROUP_LINE_W px, LINE_GROUP = the table's outer-frame gray) vertical
+# divider sits on the boundary on the left of each group's first column
+# (the previous column's last pixel, where the grid line is): that also
+# covers the left of Cap and the right of 120D (= the left of Trend).
+GROUP_START_COLS = (COL_CAP, COL_RANGE52W, COL_PRICE, COL_D3, COL_TREND)
+GROUP_LINE_W = 1
 
 # Momentum columns paired with the changes{} dict key each one reads.
 _MOMENTUM_COLS = [(COL_D3, "3d"), (COL_D10, "10d"), (COL_D20, "20d"), (COL_D60, "60d"), (COL_D120, "120d")]
@@ -280,6 +289,10 @@ class FilterableHeader(QHeaderView):
         super().__init__(orientation, parent)
         self.setSectionsClickable(True)
         self._active_filter_cols = set()
+        # Columns whose left edge carries a group divider (StockTable sets
+        # GROUP_START_COLS); painted per section so the header lines up with
+        # the body's dividers.
+        self.divider_cols = ()
 
     def set_active_filter_cols(self, cols):
         self._active_filter_cols = set(cols)
@@ -287,6 +300,17 @@ class FilterableHeader(QHeaderView):
 
     def paintSection(self, painter, rect, logicalIndex):
         super().paintSection(painter, rect, logicalIndex)
+        if logicalIndex in self.divider_cols:
+            painter.save()
+            painter.fillRect(rect.left(), rect.top(), GROUP_LINE_W // 2, rect.height(), QColor(LINE_GROUP))
+            painter.restore()
+        if logicalIndex + 1 in self.divider_cols:
+            # The divider sits on this section's right edge (the last pixel
+            # before the next group's first column), over its own border.
+            painter.save()
+            w = GROUP_LINE_W - GROUP_LINE_W // 2
+            painter.fillRect(rect.right() - w + 1, rect.top(), w, rect.height(), QColor(LINE_GROUP))
+            painter.restore()
         if logicalIndex in self.FILTER_COLS:
             is_active = logicalIndex in self._active_filter_cols
             icon_w, icon_h = 10, 6
@@ -358,7 +382,10 @@ class StockTable(QTableWidget):
         # instance rather than per cell.
         self._numeric_font = create_font(FONT_SMALL, style_name="Semilight")
         self.setStyleSheet(
-            "QTableWidget { gridline-color: #d0d0d0; " + FONT_FAMILY_CSS + " font-size: 9pt; }"
+            # Outer frame: one thin (1px) gray line, square corners (user
+            # direction 2026-10-02; same gray as the grid lines).
+            "QTableWidget { gridline-color: #d0d0d0; border: 1px solid #d0d0d0; border-radius: 0px; "
+            + FONT_FAMILY_CSS + " font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
         )
         self._identity_delegate = IdentityDelegate(self)
@@ -369,6 +396,7 @@ class StockTable(QTableWidget):
         self.setItemDelegateForColumn(COL_TREND, self._trend_delegate)
         # Use filterable header
         self._filter_header = FilterableHeader(Qt.Orientation.Horizontal, self)
+        self._filter_header.divider_cols = GROUP_START_COLS
         self._filter_header.setFont(create_font(9, QFont.Weight.Bold))
         self._filter_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._filter_header.filter_requested.connect(self._show_filter_popup)
@@ -403,6 +431,25 @@ class StockTable(QTableWidget):
         self._filter_header.sectionResized.connect(self._on_section_resized)
         self.verticalHeader().setDefaultSectionSize(self.ROW_HEIGHT)
         self._frozen.verticalHeader().setDefaultSectionSize(self.ROW_HEIGHT)
+
+    def paintEvent(self, event):
+        """Default cell painting, then a vertical divider on the left edge of
+        each column group (GROUP_START_COLS). Drawn over the viewport so it
+        covers delegate-painted and plain cells alike and follows horizontal
+        scrolling via columnViewportPosition."""
+        super().paintEvent(event)
+        vp = self.viewport()
+        painter = QPainter(vp)
+        h = vp.height()
+        for col in GROUP_START_COLS:
+            if self.isColumnHidden(col):
+                continue
+            x = self.columnViewportPosition(col)
+            if 0 <= x < vp.width():
+                # The grid line sits on the previous column's last pixel
+                # (x - 1); the divider replaces it there.
+                painter.fillRect(x - GROUP_LINE_W + GROUP_LINE_W // 2, 0, GROUP_LINE_W, h, QColor(LINE_GROUP))
+        painter.end()
 
     def _build_frozen_column(self):
         """Pins the Name column on horizontal scroll (docs/ui.md 1.5:

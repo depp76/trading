@@ -168,6 +168,10 @@ Market rail:  지수·금리·원자재 카드 (표에서 분리)
 - `tPER`/`fPER`는 대문자 변환하지 않는다.
 - 열 순서는 2026-10-02 사용자 지시로 Cap → tPER → fPER → 52W Range → MA20 Div → MA50 Div → Price → Chg → 3D…
   (Price/Chg를 모멘텀 블록 앞으로 이동). `ui/widgets.py::COLUMNS`가 단일 기준이고 셀은 `COL_*` 상수로만 접근.
+- 열 그룹 구분선(2026-10-02, 사용자 지시): [Cap·tPER·fPER] / [52W Range·MA20 Div·MA50 Div] / [Price·Chg] / [3D~120D·Trend] 사이에
+  외곽선과 같은 얇은 회색 세로선(`theme.LINE_GROUP` `#d0d0d0`, `GROUP_LINE_W`=1px, Cap 왼쪽·Trend 왼쪽(=120D 오른쪽) 포함, 격자선 위치에 그림)을 `StockTable.paintEvent`가 그룹 첫 열(`GROUP_START_COLS`) 왼쪽 가장자리에 그리고,
+  헤더(`FilterableHeader.divider_cols`)도 같은 열의 `paintSection`에서 같은 선을 그려 제목 행까지 이어진다.
+- 표 외곽선은 1px 얇은 회색(`#d0d0d0`, 격자선과 동일)·직각 모서리로 통일(2026-10-02, 임시 — 이후 디자인 통일 시 재검토).
 - 표는 위 목업 이후에도 계속 조정됨(roadmap.md 변경 이력 참고): 10D 재추가(2026-09-19),
   MA20 Div 옆에 **MA50 Div 재추가**(2026-09-22, 사용자 지시 — `ma20_div`와 같은 산식
   `price/MA50*100`, `ui/widgets.py::COLUMNS`의 `ma50div`).

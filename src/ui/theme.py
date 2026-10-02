@@ -28,6 +28,7 @@ TEXT_EMPTY  = "#c3c6d4"   # "-" / disabled
 LINE_STRONG = "#cfd3e5"
 LINE        = "#e4e7f5"
 LINE_SOFT   = "#f0f1f8"
+LINE_GROUP  = "#d0d0d0"   # vertical divider between column groups (Trading Universe); same thin gray as its outer frame
 ACCENT      = "#9184d9"
 ACCENT_TEXT = "#5d5294"
 ACCENT_BG   = "#f5f4ff"
