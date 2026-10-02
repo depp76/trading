@@ -293,6 +293,10 @@ class FilterableHeader(QHeaderView):
         # GROUP_START_COLS); painted per section so the header lines up with
         # the body's dividers.
         self.divider_cols = ()
+        # When set, paintEvent adds a 1px line on the viewport's last pixel
+        # (the table's right outer edge; the last section's own border only
+        # lands there when the sections end exactly at the viewport edge).
+        self.right_edge = False
 
     def set_active_filter_cols(self, cols):
         self._active_filter_cols = set(cols)
@@ -327,6 +331,13 @@ class FilterableHeader(QHeaderView):
             ])
             painter.drawPolygon(pts)
             painter.restore()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.right_edge:
+            painter = QPainter(self.viewport())
+            painter.fillRect(self.viewport().width() - 1, 0, 1, self.viewport().height(), QColor(LINE_GROUP))
+            painter.end()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -403,6 +414,7 @@ class StockTable(QTableWidget):
         # Use filterable header
         self._filter_header = FilterableHeader(Qt.Orientation.Horizontal, self)
         self._filter_header.divider_cols = GROUP_START_COLS
+        self._filter_header.right_edge = True
         self._filter_header.setFont(create_font(9, QFont.Weight.Bold))
         self._filter_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._filter_header.filter_requested.connect(self._show_filter_popup)
