@@ -321,7 +321,7 @@ class TestTrendScoreButton(unittest.TestCase):
         from PyQt6.QtCore import Qt
         tab = self._score_tab()
         tab._reload_table()
-        tab.table.sortItems(1, Qt.SortOrder.AscendingOrder)      # user sorted by price
+        tab.table.sortItems(1, Qt.SortOrder.AscendingOrder)      # user sorted by Cap
         tab.table._on_sort_indicator_changed(1, Qt.SortOrder.AscendingOrder)
         self.assertEqual(tab.table._sort_col, 1)
         tab._on_trend_score_finished(self._rec(), "")
@@ -336,7 +336,7 @@ class TestTrendScoreButton(unittest.TestCase):
         self.assertTrue(tab.trend_score_btn.isChecked())
         # load_data's own indicator re-apply must not count as a user sort.
         self.assertTrue(tab._trend_score_order)
-        tab.table.sortItems(1, Qt.SortOrder.DescendingOrder)     # header click on Price
+        tab.table.sortItems(1, Qt.SortOrder.DescendingOrder)     # header click on Cap
         tab.table._filter_header.sortIndicatorChanged.emit(1, Qt.SortOrder.DescendingOrder)
         self.assertFalse(tab.trend_score_btn.isChecked())
         self.assertEqual(tab._trend_score_order, {})

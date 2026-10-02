@@ -56,18 +56,23 @@ ColSpec = namedtuple("ColSpec", ["key", "label", "min_width", "weight", "group",
 # User direction 2026-09-19: Price and Cap are a fixed 80 px (a seven-digit
 # won price or market cap is not wall-to-wall); Chg, MA20 Div and every
 # momentum column share the 3D column's width; 10D is back next to 3D.
+# User direction 2026-10-02: column order is Cap, tPER, fPER, 52W Range,
+# MA20 Div, MA50 Div, Price, Chg, 3D ... (Price/Chg moved next to the
+# momentum block; the PER pair sits right of Cap). _populate_row still builds cells in its own order and
+# addresses them by the COL_* constants, so only this list and the
+# constants below changed.
 _NARROW_W, _NARROW_WEIGHT = 58, 0.62
 
 COLUMNS = [
     ColSpec("identity",  "Name / Ticker", 150, 2.4,  None,       None),
-    ColSpec("price",     "Price",          80, None, "price",    None),
-    ColSpec("chg",       "Chg",            _NARROW_W, _NARROW_WEIGHT, "price",    5),
     ColSpec("cap",       "Cap",            80, None, "price",    None),
-    ColSpec("range52w",  "52W Range",     112, 1.5,  "price",    None),
     ColSpec("tper",      "tPER",           54, 0.55, "value",    None),
     ColSpec("fper",      "fPER",           54, 0.55, "value",    None),
+    ColSpec("range52w",  "52W Range",     112, 1.5,  "price",    None),
     ColSpec("ma20div",   "MA20 Div",       _NARROW_W, _NARROW_WEIGHT, "momentum", 20),
     ColSpec("ma50div",   "MA50 Div",       _NARROW_W, _NARROW_WEIGHT, "momentum", 20),
+    ColSpec("price",     "Price",          80, None, "price",    None),
+    ColSpec("chg",       "Chg",            _NARROW_W, _NARROW_WEIGHT, "price",    5),
     ColSpec("d3",        "3D",             _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
     ColSpec("d10",       "10D",            _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
     ColSpec("d20",       "20D",            _NARROW_W, _NARROW_WEIGHT, "momentum", 10),
@@ -80,11 +85,11 @@ COLUMNS = [
 # truth, but spelling out "self.item(row, 1)" everywhere a specific column
 # is meant makes future reordering a silent bug. Kept in sync with COLUMNS
 # by the assertion below (fails loudly at import time if they drift).
-COL_IDENTITY, COL_PRICE, COL_CHG, COL_CAP, COL_RANGE52W, COL_TPER, COL_FPER, \
-    COL_MA20DIV, COL_MA50DIV, COL_D3, COL_D10, COL_D20, COL_D60, COL_D120, COL_TREND = range(len(COLUMNS))
+COL_IDENTITY, COL_CAP, COL_TPER, COL_FPER, COL_RANGE52W, COL_MA20DIV, COL_MA50DIV, \
+    COL_PRICE, COL_CHG, COL_D3, COL_D10, COL_D20, COL_D60, COL_D120, COL_TREND = range(len(COLUMNS))
 assert [c.key for c in COLUMNS] == [
-    "identity", "price", "chg", "cap", "range52w", "tper", "fper",
-    "ma20div", "ma50div", "d3", "d10", "d20", "d60", "d120", "trend",
+    "identity", "cap", "tper", "fper", "range52w", "ma20div", "ma50div",
+    "price", "chg", "d3", "d10", "d20", "d60", "d120", "trend",
 ]
 
 # Momentum columns paired with the changes{} dict key each one reads.
@@ -845,7 +850,7 @@ class StockTable(QTableWidget):
         })
         self.setItem(row, COL_IDENTITY, identity_item)
 
-        # col 1: Price -- NumericItem (see its docstring: setData(EditRole)
+        # COL_PRICE: Price -- NumericItem (see its docstring: setData(EditRole)
         # + setText() alone would silently make this column sort as text).
         price_item = NumericItem(price_text, price_raw)
         price_item.setTextAlignment(right)
@@ -854,7 +859,7 @@ class StockTable(QTableWidget):
 
         changes = item.get('changes', {})
 
-        # col 2: Chg -- day-over-day change (data/cache.py's _TD_PERIODS has
+        # COL_CHG: Chg -- day-over-day change (data/cache.py's _TD_PERIODS has
         # a "1d" entry now, computed the same way as 3D/20D/60D/120D).
         chg = float(changes.get("1d", 0.0) or 0.0)
         chg_item = NumericItem(_fmt_change(chg, mode), chg)
@@ -866,7 +871,7 @@ class StockTable(QTableWidget):
             chg_item.setBackground(bg)
         self.setItem(row, COL_CHG, chg_item)
 
-        # col 3: Cap (market_cap is in KRW; 100,000,000 = 100M KRW). Index,
+        # COL_CAP: Cap (market_cap is in KRW; 100,000,000 = 100M KRW). Index,
         # yield and commodity rows have no market cap.
         cap_eok = None
         if not is_index:
@@ -884,7 +889,7 @@ class StockTable(QTableWidget):
         cap_item.setFont(numeric_font)
         self.setItem(row, COL_CAP, cap_item)
 
-        # col 4: 52W Range bar (docs/ui.md 2.3) -- replaces the old separate
+        # COL_RANGE52W: 52W Range bar (docs/ui.md 2.3) -- replaces the old separate
         # 52W High/High Diff/Low/Low Diff columns. UserRole is left unset
         # (RangeBarDelegate paints nothing) when there's no valid range yet.
         low = float(changes.get("52w_low", 0.0) or 0.0)
@@ -901,7 +906,7 @@ class StockTable(QTableWidget):
             range_item = NumericItem("", -1.0)
         self.setItem(row, COL_RANGE52W, range_item)
 
-        # cols 5/6: tPER / fPER. tPER's color is a cheap/expensive value
+        # COL_TPER / COL_FPER: tPER / fPER. tPER's color is a cheap/expensive value
         # judgment (docs/ui.md mockup: green <12x, warning-red >60x), a
         # different axis from the PROFIT/LOSS up/down convention, so it
         # intentionally does not reuse those two colors.
@@ -920,7 +925,7 @@ class StockTable(QTableWidget):
                 cell.setForeground(QColor(TEXT_EMPTY))
             self.setItem(row, col, cell)
 
-        # col 7: MA20 Div
+        # COL_MA20DIV: MA20 Div
         ma20_div = float(changes.get("ma20_div", 0.0) or 0.0)
         if ma20_div != 0.0:
             diff = ma20_div - 100.0
@@ -937,7 +942,7 @@ class StockTable(QTableWidget):
             ma_item.setForeground(QColor(TEXT_EMPTY))
         self.setItem(row, COL_MA20DIV, ma_item)
 
-        # col 8: MA50 Div (re-added 2026-09-22 by user direction; same
+        # COL_MA50DIV: MA50 Div (re-added 2026-09-22 by user direction; same
         # price/MA50*100 divergence ratio, mirrors the MA20 Div cell above)
         ma50_div = float(changes.get("ma50_div", 0.0) or 0.0)
         if ma50_div != 0.0:

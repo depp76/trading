@@ -9,7 +9,7 @@ wrote a changed ticker's new price into whatever row happened to sit at that
 index on screen -- a different stock entirely.
 
 Column indices below are the docs/ui.md 2.2 redesign's 13-column layout
-(col 0 = merged identity cell, col 1 = Price); ticker/name/status live in
+(col 0 = merged identity cell, Price at COL_PRICE); ticker/name/status live in
 col 0's Qt.ItemDataRole.UserRole payload rather than separate columns.
 """
 import unittest
