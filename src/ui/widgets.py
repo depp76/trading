@@ -383,10 +383,16 @@ class StockTable(QTableWidget):
         self._numeric_font = create_font(FONT_SMALL, style_name="Semilight")
         self.setStyleSheet(
             # Outer frame: one thin (1px) gray line, square corners (user
-            # direction 2026-10-02; same gray as the grid lines).
-            "QTableWidget { gridline-color: #d0d0d0; border: 1px solid #d0d0d0; border-radius: 0px; "
+            # direction 2026-10-02; same gray as the grid lines). The right
+            # side is painted in paintEvent instead: the last column's own
+            # grid line already sits on the viewport's last pixel, so a frame
+            # border there would make a 2 px line.
+            "QTableWidget { gridline-color: #d0d0d0; border: 1px solid #d0d0d0; border-right: none; border-radius: 0px; "
             + FONT_FAMILY_CSS + " font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
+            # Header borders in the same gray (the global rule uses two other,
+            # lighter tints, so the header lines read differently from the body's).
+            "QHeaderView::section { border-bottom: 1px solid #d0d0d0; border-right: 1px solid #d0d0d0; }"
         )
         self._identity_delegate = IdentityDelegate(self)
         self._range_delegate = RangeBarDelegate(self)
@@ -449,6 +455,10 @@ class StockTable(QTableWidget):
                 # The grid line sits on the previous column's last pixel
                 # (x - 1); the divider replaces it there.
                 painter.fillRect(x - GROUP_LINE_W + GROUP_LINE_W // 2, 0, GROUP_LINE_W, h, QColor(LINE_GROUP))
+        # Right outer edge: one pixel on the viewport's last column, which is
+        # also where the last column's grid line falls when the columns fill
+        # the viewport (so the two coincide rather than stacking).
+        painter.fillRect(vp.width() - 1, 0, 1, h, QColor(LINE_GROUP))
         painter.end()
 
     def _build_frozen_column(self):
@@ -478,7 +488,7 @@ class StockTable(QTableWidget):
         self._frozen.setFont(self.font())
         self._frozen.setFrameShape(QFrame.Shape.NoFrame)
         self._frozen.setStyleSheet(
-            "QTableWidget { gridline-color: #d0d0d0; border: none; border-right: 1px solid #b7bac7; "
+            "QTableWidget { gridline-color: #d0d0d0; border: none; border-right: 1px solid #d0d0d0; "
             + FONT_FAMILY_CSS + " font-size: 9pt; }"
             "QTableWidget::item { padding: 1px 3px; }"
         )

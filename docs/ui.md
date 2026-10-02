@@ -171,7 +171,7 @@ Market rail:  지수·금리·원자재 카드 (표에서 분리)
 - 열 그룹 구분선(2026-10-02, 사용자 지시): [Cap·tPER·fPER] / [52W Range·MA20 Div·MA50 Div] / [Price·Chg] / [3D~120D·Trend] 사이에
   외곽선과 같은 얇은 회색 세로선(`theme.LINE_GROUP` `#d0d0d0`, `GROUP_LINE_W`=1px, Cap 왼쪽·Trend 왼쪽(=120D 오른쪽) 포함, 격자선 위치에 그림)을 `StockTable.paintEvent`가 그룹 첫 열(`GROUP_START_COLS`) 왼쪽 가장자리에 그리고,
   헤더(`FilterableHeader.divider_cols`)도 같은 열의 `paintSection`에서 같은 선을 그려 제목 행까지 이어진다.
-- 표 외곽선은 1px 얇은 회색(`#d0d0d0`, 격자선과 동일)·직각 모서리로 통일(2026-10-02, 임시 — 이후 디자인 통일 시 재검토).
+- 표 외곽선은 1px 얇은 회색(`#d0d0d0`, 격자선과 동일)·직각 모서리로 통일(2026-10-02, 임시 — 이후 디자인 통일 시 재검토). 오른쪽 가장자리는 마지막 열 격자선과 외곽 틀이 겹쳐 2px이 되던 것을 틀의 오른쪽 테두리를 없애고 `paintEvent`가 뷰포트 마지막 픽셀에 1px로 그리도록 정리. 고정 이름 열 오버레이의 오른쪽 선(`#b7bac7`)과 헤더의 아래·오른쪽 선(`#cfd3e5`/`#e4e7f5`)도 같은 회색으로 맞춤.
 - 표는 위 목업 이후에도 계속 조정됨(roadmap.md 변경 이력 참고): 10D 재추가(2026-09-19),
   MA20 Div 옆에 **MA50 Div 재추가**(2026-09-22, 사용자 지시 — `ma20_div`와 같은 산식
   `price/MA50*100`, `ui/widgets.py::COLUMNS`의 `ma50div`).
