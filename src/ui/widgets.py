@@ -534,11 +534,12 @@ class StockTable(QTableWidget):
     def _sync_frozen_column(self):
         """Mirror column 0's cell content and row-hidden state into the
         frozen overlay. Called after anything that reorders or (un)hides
-        rows -- load_data()'s sort reapply and apply_col_filters()'s
-        row-hide pass. Not needed after update_changed_rows(): the
-        lightweight refresh never touches the identity cell (see its
-        docstring). IdentityDelegate reads Qt.ItemDataRole.UserRole, so that
-        has to be copied along with the display text."""
+        rows -- load_data()'s sort reapply, apply_col_filters()'s row-hide
+        pass and update_changed_rows() (its setSortingEnabled(True) re-sorts
+        by the current indicator without emitting sortIndicatorChanged, so a
+        price change under a Price/Chg sort moves rows the overlay would
+        otherwise not follow). IdentityDelegate reads Qt.ItemDataRole.UserRole,
+        so that has to be copied along with the display text."""
         if self._frozen.rowCount() != self.rowCount():
             self._frozen.setRowCount(self.rowCount())
         for row in range(self.rowCount()):
@@ -876,6 +877,7 @@ class StockTable(QTableWidget):
                     continue
                 self._populate_row(view_row, item, highlights)
             self.setSortingEnabled(True)
+            self._sync_frozen_column()
         finally:
             self.setUpdatesEnabled(True)
 

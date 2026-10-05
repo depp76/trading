@@ -68,6 +68,24 @@ class TestUpdateChangedRowsAfterSort(unittest.TestCase):
         self.assertEqual(table.item(1, COL_IDENTITY).data(Qt.ItemDataRole.UserRole)["ticker"], "000003")
         self.assertEqual(table.item(1, COL_PRICE).text(), "200")
 
+    def test_frozen_overlay_follows_a_resort_caused_by_the_update(self):
+        # Under a Price sort, a price change moves the row: update_changed_rows()'s
+        # setSortingEnabled(True) re-sorts without emitting sortIndicatorChanged,
+        # so the frozen identity overlay must be resynced there explicitly or it
+        # shows the old order's names next to the new order's prices.
+        table = StockTable()
+        table.load_data([_mk("000001", "A", 100), _mk("000002", "B", 300), _mk("000003", "C", 200)])
+        table._filter_header.setSortIndicator(COL_PRICE, Qt.SortOrder.AscendingOrder)
+        app.processEvents()
+
+        updated = [_mk("000001", "A", 100), _mk("000002", "B", 50), _mk("000003", "C", 200)]
+        table.update_changed_rows(updated, {1})
+
+        main = [table.item(r, COL_IDENTITY).text() for r in range(table.rowCount())]
+        frozen = [table._frozen.item(r, 0).text() for r in range(table._frozen.rowCount())]
+        self.assertEqual(main, ["B", "A", "C"])
+        self.assertEqual(frozen, main)
+
     def test_unknown_or_out_of_range_changed_index_is_skipped(self):
         table = StockTable()
         data = [_mk("000001", "A", 100)]
